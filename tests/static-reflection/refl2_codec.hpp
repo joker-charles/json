@@ -9,12 +9,15 @@
 // measured cost.
 //
 // Dispatch (serialize_one / deserialize_one), highest priority first:
-//   5  nested basic_json value          -> j = v / v = j  (native nesting)
+//   6  nested basic_json value          -> j = v / v = j  (native nesting)
+//   5  std::optional<T>                 -> T / null (any refl2-serializable T)
 //   4  adl branch (strings + non-container adl-able types, i.e. user
-//      to_json/from_json, scalars, enums, optional, pair, tuple, ...)
+//      to_json/from_json, scalars, enums, pair, tuple, ...)
 //   3  array-like container             -> per-element recursion
 //   2  object-like container (map-like) -> per-value recursion (string keys)
 //   1  reflectable struct               -> per-member reflection recursion
+//      (base-class members included; private bases / duplicate names are
+//      compile errors, see "Inheritance" below)
 //   0  anything else                    -> static_assert diagnostic
 //
 // Containers are deliberately excluded from the adl branch (adl_branch_eligible):
@@ -43,21 +46,22 @@
 // members only, the default); codec<true> switches to unchecked() for
 // library-internal use.
 //
+// Inheritance: base-class members ARE serialized. nonstatic_data_members_of
+// sees only direct members, so the member facts are computed from
+// subobjects_of (direct base subobjects + direct data members,
+// access-filtered, bases first) with a consteval recursion into each base
+// via type_of(base_info) — multi-level, depth-first, layout order. Verified
+// on this toolchain: the member-access splice v.[:m:] works for members of
+// base classes. Two inheritance shapes are compile errors instead of silent
+// loss: private/protected bases under codec<false> (has_inaccessible_bases;
+// use codec<true> or a to_json) and duplicate member names across the
+// hierarchy (e.g. same name in base and derived, or diamond inheritance) —
+// they would silently overwrite JSON keys.
+//
 // Coverage boundary (what is NOT handled — falls to the priority-0
 // static_assert with an actionable message):
-//   * inheritance: nonstatic_data_members_of reports only DIRECTLY-declared
-//     members, so base-class members are silently ignored (would need
-//     bases_of recursion, ~15 lines)
-//   * private/protected base classes; unions; std::variant (would need
-//     variant_size/variant_alternative integration, ~20 lines)
-//   * std::optional<T>: handled via the adl branch (nlohmann's native
-//     optional support) — serializes as T / null, NOT as an array. This
-//     needs an explicit is_optional exclusion from is_array_like: C++23
-//     added begin()/end() + value_type to std::optional, which would
-//     otherwise misclassify it as array-like and silently serialize
-//     optional<int>{5} as "[5]" instead of "5" (verified before the fix).
-//     optional<PlainStruct> (T not nlohmann-constructible) falls to the
-//     priority-0 static_assert.
+//   * unions; std::variant (would need variant_size/variant_alternative
+//     integration, ~20 lines, plus a discriminator design)
 //   * pointers / self-referential types
 //   * ranges with begin/end but no value_type member: NOT excluded — they
 //     fall through to the adl branch (nlohmann's range-array path accepts
@@ -67,6 +71,16 @@
 //     the clean static_assert
 //   * non-default-constructible container elements (from_json needs
 //     value_type{}); map keys other than string-like / arithmetic
+//   * C arrays: not supported, but a clean compile error (char[N] still
+//     serializes as a string)
+//
+// std::optional<T> is fully supported via its own dispatch branch
+// (priority 5): serializes as T / null for ANY refl2-serializable T
+// (reflectable structs, containers, nested json, ...). The is_optional
+// exclusion from is_array_like is still required: C++23 added begin()/end()
+// + value_type to std::optional, which would otherwise misclassify it as
+// array-like and silently serialize optional<int>{5} as "[5]" instead of
+// "5" (verified before the fix).
 #pragma once
 
 #include <charconv>   // from_chars
@@ -145,6 +159,89 @@ consteval std::meta::access_context reflect_context(bool unchecked)
     return std::meta::access_context::unprivileged();
 }
 
+// --- compile-time member facts (flat: base members first, then direct) -----
+// nonstatic_data_members_of sees only DIRECT members, so a derived type
+// would silently drop its base-class members. subobjects_of returns the
+// direct base subobjects + direct data members (access-filtered, bases
+// first, in declaration order), so inheritance is handled by recursing
+// into each base via type_of(base_info) — depth-first, base-before-member,
+// matching the object layout order. The member-access splice v.[:m:] works
+// for members of base classes too (verified on this toolchain).
+consteval std::size_t flat_member_count(std::meta::info cls, std::meta::access_context ctx)
+{
+    std::size_t n = 0;
+    const std::size_t nsub = std::meta::subobjects_of(cls, ctx).size();
+    for (std::size_t i = 0; i < nsub; ++i)
+    {
+        const auto s = std::meta::subobjects_of(cls, ctx)[i];
+        if (std::meta::is_base(s))
+        {
+            n += flat_member_count(std::meta::type_of(s), ctx);
+        }
+        else
+        {
+            ++n;
+        }
+    }
+    return n;
+}
+
+consteval std::meta::info flat_member(std::meta::info cls, std::meta::access_context ctx, std::size_t I)
+{
+    const std::size_t nsub = std::meta::subobjects_of(cls, ctx).size();
+    for (std::size_t i = 0; i < nsub; ++i)
+    {
+        const auto s = std::meta::subobjects_of(cls, ctx)[i];
+        if (std::meta::is_base(s))
+        {
+            const std::size_t cnt = flat_member_count(std::meta::type_of(s), ctx);
+            if (I < cnt)
+            {
+                return flat_member(std::meta::type_of(s), ctx, I);
+            }
+            I -= cnt;
+        }
+        else if (I == 0)
+        {
+            return s;
+        }
+        else
+        {
+            --I;
+        }
+    }
+    return std::meta::info{};
+}
+
+// duplicate member names across the flattened list (same name in a base and
+// a derived class, or diamond inheritance) would silently overwrite JSON
+// keys -> compile error
+template<bool U, typename T>
+consteval bool has_duplicate_member_keys()
+{
+    const std::size_t n = flat_member_count(^^T, reflect_context(U));
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        for (std::size_t j = i + 1; j < n; ++j)
+        {
+            if (std::meta::identifier_of(flat_member(^^T, reflect_context(U), i)) ==
+                std::meta::identifier_of(flat_member(^^T, reflect_context(U), j)))
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// private/protected bases: subobjects_of(unprivileged) filters them out, so
+// their members would be silently dropped — a compile error under codec<false>
+template<bool U, typename T>
+consteval bool has_inaccessible_bases_p()
+{
+    return std::meta::has_inaccessible_bases(^^T, reflect_context(U));
+}
+
 template<bool U, typename T, typename = void>
 struct is_reflectable_struct : std::false_type {};
 template<bool U, typename T>
@@ -152,8 +249,11 @@ struct is_reflectable_struct<U, T, std::enable_if_t<
     std::is_class<T>::value && !std::is_scalar<T>::value && !std::is_union<T>::value
     && !std::is_array<T>::value && !is_array_like<T>::value && !is_object_like<T>::value>>
 {
+    // also reflectable when there is an inaccessible base, so the reflect
+    // branch's dedicated static_assert (not the generic fallback) fires
     static constexpr bool value =
-        (std::meta::nonstatic_data_members_of(^^T, reflect_context(U)).size() > 0);
+        (flat_member_count(^^T, reflect_context(U)) > 0)
+        || std::meta::has_inaccessible_bases(^^T, reflect_context(U));
 };
 
 // Eligibility for the adl branch. Containers (array-like, except strings;
@@ -171,14 +271,11 @@ inline constexpr bool adl_branch_eligible =
     && !(is_array_like<T>::value && !is_string_like<B, T>::value)
     && !(std::is_array<T>::value && !is_string_like<B, T>::value);
 
-// --- compile-time member facts (the robust codec pattern, no template for) --
 template<bool U, typename T>
-inline constexpr std::size_t member_count =
-    std::meta::nonstatic_data_members_of(^^T, reflect_context(U)).size();
+inline constexpr std::size_t member_count = flat_member_count(^^T, reflect_context(U));
 
 template<bool U, typename T, std::size_t I>
-inline constexpr std::meta::info member_v =
-    std::meta::nonstatic_data_members_of(^^T, reflect_context(U))[I];
+inline constexpr std::meta::info member_v = flat_member(^^T, reflect_context(U), I);
 
 template<bool U, typename T, std::size_t I>
 inline constexpr std::string_view member_key_v =
@@ -195,9 +292,23 @@ struct codec
     // ---- to_json side -----------------------------------------------------
     template<typename B, typename T>
     requires is_nested_json<B, T>::value
-    static void serialize_one_impl(B& j, const T& v, priority_tag<5>)
+    static void serialize_one_impl(B& j, const T& v, priority_tag<6>)
     {
         j = v; // native value nesting; MUST precede adl (string_like trap)
+    }
+
+    template<typename B, typename T>
+    requires is_optional<T>::value
+    static void serialize_one_impl(B& j, const T& v, priority_tag<5>)
+    {
+        if (v)
+        {
+            serialize_one(j, *v); // any refl2-serializable T (struct, container, json, ...)
+        }
+        else
+        {
+            j = nullptr; // native nlohmann optional form
+        }
     }
 
     template<typename B, typename T>
@@ -233,6 +344,14 @@ struct codec
     requires is_reflectable_struct<Unchecked, T>::value
     static void serialize_one_impl(B& j, const T& v, priority_tag<1>)
     {
+        static_assert(Unchecked || !has_inaccessible_bases_p<Unchecked, T>(),
+                      "refl2: private/protected base class under the unprivileged "
+                      "policy would silently drop its members — use codec<true> or "
+                      "add a to_json for the type");
+        static_assert(!has_duplicate_member_keys<Unchecked, T>(),
+                      "refl2: duplicate member names across the class hierarchy "
+                      "(e.g. same name in a base and a derived class, or diamond "
+                      "inheritance) would collide in the JSON object");
         reflect_to_json(j, v);
     }
 
@@ -249,15 +368,30 @@ struct codec
     template<typename B, typename T>
     static void serialize_one(B& j, const T& v)
     {
-        serialize_one_impl(j, v, priority_tag<5>{});
+        serialize_one_impl(j, v, priority_tag<6>{});
     }
 
     // ---- from_json side (symmetric) --------------------------------------
     template<typename B, typename T>
     requires is_nested_json<B, T>::value
-    static void deserialize_one_impl(const B& j, T& v, priority_tag<5>)
+    static void deserialize_one_impl(const B& j, T& v, priority_tag<6>)
     {
         v = j;
+    }
+
+    template<typename B, typename T>
+    requires is_optional<T>::value
+    static void deserialize_one_impl(const B& j, T& v, priority_tag<5>)
+    {
+        if (j.is_null())
+        {
+            v.reset();
+        }
+        else
+        {
+            v.emplace();
+            deserialize_one(j, *v);
+        }
     }
 
     template<typename B, typename T>
@@ -315,6 +449,14 @@ struct codec
     requires is_reflectable_struct<Unchecked, T>::value
     static void deserialize_one_impl(const B& j, T& v, priority_tag<1>)
     {
+        static_assert(Unchecked || !has_inaccessible_bases_p<Unchecked, T>(),
+                      "refl2: private/protected base class under the unprivileged "
+                      "policy would silently drop its members — use codec<true> or "
+                      "add a from_json for the type");
+        static_assert(!has_duplicate_member_keys<Unchecked, T>(),
+                      "refl2: duplicate member names across the class hierarchy "
+                      "(e.g. same name in a base and a derived class, or diamond "
+                      "inheritance) would collide in the JSON object");
         reflect_from_json(j, v);
     }
 
@@ -331,7 +473,7 @@ struct codec
     template<typename B, typename T>
     static void deserialize_one(const B& j, T& v)
     {
-        deserialize_one_impl(j, v, priority_tag<5>{});
+        deserialize_one_impl(j, v, priority_tag<6>{});
     }
 
     // ---- reflected struct: member loop with pre-built static keys ---------

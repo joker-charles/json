@@ -146,6 +146,21 @@ class OnlyPrivate
     int b{};
 };
 
+// (F) inheritance
+struct Base2 { std::string base_name; int base_id{}; };
+struct Mid2 : Base2 { std::string mid; };
+struct Derived2 : Mid2 { std::string own; };
+struct PrivBase2 { int hidden{}; };
+struct DerivedPriv : Base2, private PrivBase2
+{
+    // private base => not an aggregate (C++17); ctor needed
+    DerivedPriv(std::string bn, int bid, int h) : Base2{std::move(bn), bid}, PrivBase2{h} {}
+    int own{};
+};
+struct Collide1 { int x{}; };
+struct Collide2 { int x{}; };
+struct Dia2 : Collide1, Collide2 { int y{}; };
+
 // member-count facts used by the [0] classification checks
 template<typename T>
 inline constexpr std::size_t member_count_public =
@@ -314,12 +329,10 @@ int main()
     check("unchecked: private member included",
           jau.dump() == R"({"balance":42.5,"owner":"ada","secret_id_":99})");
 
-    // ---- (D) std::optional (C++23 begin/end misclassification guard) ------
-    std::printf("\n[D] std::optional: native via adl, never array-like\n");
-    check("optional classification: int -> adl branch, PlainStruct -> not",
-          refl2::adl_branch_eligible<json, std::optional<int>> &&
+    // ---- (D) std::optional (dedicated branch, never array-like) -----------
+    std::printf("\n[D] std::optional: dedicated branch, never array-like\n");
+    check("optional classification: never array-like",
           !refl2::is_array_like<std::optional<int>>::value &&
-          !refl2::adl_branch_eligible<json, std::optional<Address>> &&
           !refl2::is_array_like<std::optional<Address>>::value);
     {
         json ja1, ja2, jn1, jn2;
@@ -333,6 +346,51 @@ int main()
         codec_public::from_json(ja1, out);
         check("optional<int>: from_json round-trip",
               out.has_value() && *out == 5);
+    }
+    {
+        std::optional<Address> oa{Address{"5 Oak", "Town", 33333}};
+        json jo;
+        codec_public::to_json(jo, oa);
+        check("optional<Address>: serializes as object, not array",
+              jo.dump() == R"({"city":"Town","street":"5 Oak","zip":33333})");
+        std::optional<Address> oa2;
+        codec_public::from_json(jo, oa2);
+        check("optional<Address>: from_json round-trip",
+              oa2.has_value() && oa2->city == "Town" && oa2->zip == 33333);
+        json jnull;
+        codec_public::to_json(jnull, std::optional<Address>{});
+        check("optional<Address>: empty -> null", jnull.is_null());
+        std::optional<Address> oa3{Address{"x", "y", 1}};
+        codec_public::from_json(jnull, oa3);
+        check("optional<Address>: null -> nullopt", !oa3.has_value());
+    }
+
+    // ---- (F) inheritance: base-class members are serialized ---------------
+    std::printf("\n[F] inheritance: base members via subobjects_of recursion\n");
+    {
+        Derived2 d2{"base", 7, "mid", "own"};
+        json jd2;
+        codec_public::to_json(jd2, d2);
+        check("derived serializes base members too (multi-level)",
+              jd2.dump() == R"({"base_id":7,"base_name":"base","mid":"mid","own":"own"})");
+        Derived2 d3{};
+        codec_public::from_json(jd2, d3);
+        json jd3;
+        codec_public::to_json(jd3, d3);
+        check("derived round-trip preserves base members", jd3 == jd2);
+    }
+    check("private base detected under unprivileged (compile-time guard)",
+          refl2::has_inaccessible_bases_p<false, DerivedPriv>() &&
+          !refl2::has_inaccessible_bases_p<false, Derived2>());
+    check("duplicate member names across hierarchy detected (compile-time guard)",
+          refl2::has_duplicate_member_keys<false, Dia2>() &&
+          !refl2::has_duplicate_member_keys<false, Derived2>());
+    {
+        DerivedPriv dp{"b", 1, 42};
+        json jdp;
+        codec_all::to_json(jdp, dp);
+        check("codec<true>: private base included (unchecked)",
+              jdp.dump() == R"({"base_id":1,"base_name":"b","hidden":42,"own":0})");
     }
 
     // ---- (E) v1 compatibility on flat structs ------------------------------

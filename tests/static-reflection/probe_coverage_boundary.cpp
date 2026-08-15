@@ -1,14 +1,17 @@
 // probe_coverage_boundary.cpp — verify what the refl2 coverage-boundary
 // categories (EVALUATION.md §2.1) actually DO today: trait classification
-// for each deliberately-unsupported case, the silent-inheritance drop, and
-// the std::optional guard (adl branch, not array-like).
+// for each deliberately-unsupported case, the inheritance behavior
+// (base-class members are now serialized via the subobjects_of recursion),
+// and the std::optional dedicated branch (never array-like).
 //
 // Negative cases (compile-time) are documented in EVALUATION.md §2.1 and
-// verified separately: union / std::variant / optional<PlainStruct> hit the
-// clean priority-0 static_assert; map<exotic-key,int> errors in refl2's
-// key_string; vector<non-default-constructible> from_json errors via the
-// element's priority-0 static_assert; value_type-less incompatible ranges
-// die deep in nlohmann's range path (adl branch).
+// verified separately: union / std::variant hit the clean priority-0
+// static_assert; map<exotic-key,int> errors in refl2's key_string;
+// vector<non-default-constructible> from_json errors via the element's
+// priority-0 static_assert; value_type-less incompatible ranges die deep in
+// nlohmann's range path (adl branch); private/protected bases and duplicate
+// member names across the hierarchy are clean static_asserts (inheritance
+// guards).
 //
 // Compile: g++-16 -std=c++26 -freflection -O0 -Itests/static-reflection -Iinclude \
 //            -o /tmp/pcb tests/static-reflection/probe_coverage_boundary.cpp && /tmp/pcb
@@ -73,18 +76,22 @@ int main()
     SHOW("std::map<Key,int>", MapKey);
     SHOW("std::vector<NoDefault>", VecNoDefault);
 
-    std::printf("\n=== runtime: inheritance (silent base-member drop?) ===\n");
+    std::printf("\n=== runtime: inheritance (base members now serialized) ===\n");
     Derived d;
     d.base_name = "base"; d.base_id = 7; d.own = "own";
     json j;
     refl2::codec<false>::to_json(j, d);
     std::printf("Derived serialized: %s\n", j.dump().c_str());
 
-    std::printf("\n=== runtime: std::optional<int> via adl branch ===\n");
+    std::printf("\n=== runtime: std::optional (dedicated branch) ===\n");
     OptInt oi = 5;
     json jo;
     refl2::codec<false>::to_json(jo, oi);
     std::printf("optional<int> serialized: %s\n", jo.dump().c_str());
+    OptPlain op{Plain{3}};
+    json jp;
+    refl2::codec<false>::to_json(jp, op);
+    std::printf("optional<Plain> serialized: %s\n", jp.dump().c_str());
 
     std::printf("\nPROBE COVERAGE DONE\n");
     return 0;
