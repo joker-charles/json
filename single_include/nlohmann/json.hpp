@@ -3722,71 +3722,71 @@ NLOHMANN_JSON_NAMESPACE_END
 // SPDX-License-Identifier: MIT
 
 #ifndef INCLUDE_NLOHMANN_JSON_FWD_HPP_
-    #define INCLUDE_NLOHMANN_JSON_FWD_HPP_
+#define INCLUDE_NLOHMANN_JSON_FWD_HPP_
 
-    #include <cstdint> // int64_t, uint64_t
-    #include <map> // map
-    #include <memory> // allocator
-    #include <string> // string
-    #include <vector> // vector
+#include <cstdint> // int64_t, uint64_t
+#include <map> // map
+#include <memory> // allocator
+#include <string> // string
+#include <vector> // vector
 
-    // #include <nlohmann/detail/abi_macros.hpp>
+// #include <nlohmann/detail/abi_macros.hpp>
 
 
-    /*!
-    @brief namespace for Niels Lohmann
-    @see https://github.com/nlohmann
-    @since version 1.0.0
-    */
-    NLOHMANN_JSON_NAMESPACE_BEGIN
+/*!
+@brief namespace for Niels Lohmann
+@see https://github.com/nlohmann
+@since version 1.0.0
+*/
+NLOHMANN_JSON_NAMESPACE_BEGIN
 
-    /*!
-    @brief default JSONSerializer template argument
+/*!
+@brief default JSONSerializer template argument
 
-    This serializer ignores the template arguments and uses ADL
-    ([argument-dependent lookup](https://en.cppreference.com/w/cpp/language/adl))
-    for serialization.
-    */
-    template<typename T = void, typename SFINAE = void>
-    struct adl_serializer;
+This serializer ignores the template arguments and uses ADL
+([argument-dependent lookup](https://en.cppreference.com/w/cpp/language/adl))
+for serialization.
+*/
+template<typename T = void, typename SFINAE = void>
+struct adl_serializer;
 
-    /// a class to store JSON values
-    /// @sa https://json.nlohmann.me/api/basic_json/
-    template<template<typename U, typename V, typename... Args> class ObjectType =
-    std::map,
-    template<typename U, typename... Args> class ArrayType = std::vector,
-    class StringType = std::string, class BooleanType = bool,
-    class NumberIntegerType = std::int64_t,
-    class NumberUnsignedType = std::uint64_t,
-    class NumberFloatType = double,
-    template<typename U> class AllocatorType = std::allocator,
-    template<typename T, typename SFINAE = void> class JSONSerializer =
-    adl_serializer,
-    class BinaryType = std::vector<std::uint8_t>, // cppcheck-suppress syntaxError
-    class CustomBaseClass = void>
-    class basic_json;
+/// a class to store JSON values
+/// @sa https://json.nlohmann.me/api/basic_json/
+template<template<typename U, typename V, typename... Args> class ObjectType =
+         std::map,
+         template<typename U, typename... Args> class ArrayType = std::vector,
+         class StringType = std::string, class BooleanType = bool,
+         class NumberIntegerType = std::int64_t,
+         class NumberUnsignedType = std::uint64_t,
+         class NumberFloatType = double,
+         template<typename U> class AllocatorType = std::allocator,
+         template<typename T, typename SFINAE = void> class JSONSerializer =
+         adl_serializer,
+         class BinaryType = std::vector<std::uint8_t>, // cppcheck-suppress syntaxError
+         class CustomBaseClass = void>
+class basic_json;
 
-    /// @brief JSON Pointer defines a string syntax for identifying a specific value within a JSON document
-    /// @sa https://json.nlohmann.me/api/json_pointer/
-    template<typename RefStringType>
-    class json_pointer;
+/// @brief JSON Pointer defines a string syntax for identifying a specific value within a JSON document
+/// @sa https://json.nlohmann.me/api/json_pointer/
+template<typename RefStringType>
+class json_pointer;
 
-    /*!
-    @brief default specialization
-    @sa https://json.nlohmann.me/api/json/
-    */
-    using json = basic_json<>;
+/*!
+@brief default specialization
+@sa https://json.nlohmann.me/api/json/
+*/
+using json = basic_json<>;
 
-    /// @brief a minimal map-like container that preserves insertion order
-    /// @sa https://json.nlohmann.me/api/ordered_map/
-    template<class Key, class T, class IgnoredLess, class Allocator>
-    struct ordered_map;
+/// @brief a minimal map-like container that preserves insertion order
+/// @sa https://json.nlohmann.me/api/ordered_map/
+template<class Key, class T, class IgnoredLess, class Allocator>
+struct ordered_map;
 
-    /// @brief specialization that maintains the insertion order of object keys
-    /// @sa https://json.nlohmann.me/api/ordered_json/
-    using ordered_json = basic_json<nlohmann::ordered_map>;
+/// @brief specialization that maintains the insertion order of object keys
+/// @sa https://json.nlohmann.me/api/ordered_json/
+using ordered_json = basic_json<nlohmann::ordered_map>;
 
-    NLOHMANN_JSON_NAMESPACE_END
+NLOHMANN_JSON_NAMESPACE_END
 
 #endif  // INCLUDE_NLOHMANN_JSON_FWD_HPP_
 
@@ -5260,6 +5260,137 @@ NLOHMANN_JSON_NAMESPACE_END
 
 // #include <nlohmann/detail/value_t.hpp>
 
+#ifdef JSON_HAS_CPP_20
+    // #include <nlohmann/detail/concepts/concepts.hpp>
+// concepts.hpp — C++20 concepts layer for nlohmann::detail (modernization).
+//
+// Modernization track of the feature/static-reflection branch: replace the
+// hand-written SFINAE detection traits with C++20 concepts where the semantics
+// are a pure "category check" on a template parameter. This header is gated by
+// JSON_HAS_CPP_20 so the library keeps a complete C++11 path.
+//
+// Design rules (see docs/static-reflection/M4_ASSESSMENT.md):
+//   * Only express "is this type in library category X" — the C-class of pure
+//     external-type-capability probes (has_to_json / is_compatible_*_type
+//     against user types that may not exist yet) stays in type_traits.hpp and
+//     is deliberately NOT concept-ified: it needs SFINAE soft-failure, which a
+//     concept cannot provide.
+//   * A concept constrained overload must select the SAME overload as the
+//     enable_if_t it replaces (verified by differential tests).
+//   * Consumers in to_json.hpp / from_json.hpp use `#ifdef JSON_HAS_CPP_20`
+//     to route to the concept-constrained overloads, else the enable_if ones.
+
+
+
+#include <type_traits> // is_integral, is_floating_point, is_enum, is_same, underlying_type
+#include <utility>     // declval
+
+// #include <nlohmann/detail/macro_scope.hpp>
+ // JSON_HAS_CPP_20, JSON_HAS_RANGES
+
+#ifdef JSON_HAS_CPP_20
+
+// Dependency note: this header does NOT include type_traits.hpp (doing so
+// would re-define make_void/nonesuch/detector in TUs that already bring in the
+// full library). Consumers that instantiate the layer-2 concepts must include
+// <nlohmann/detail/meta/type_traits.hpp> first (nlohmann's conversions headers
+// already do). The layer-2 concepts reference nlohmann::detail::is_constructible
+// which has pair/tuple specializations the concepts must match (see §7).
+
+namespace nlohmann
+{
+namespace detail
+{
+namespace concepts
+{
+
+// ---- arithmetic scalar categories (map 1:1 to enable_if_t<is_*>) ----
+template<typename T>
+concept integral_not_bool =
+    std::is_integral_v<std::remove_cvref_t<T>> &&
+    !std::is_same_v<std::remove_cvref_t<T>, bool>;
+
+template<typename T>
+concept boolean_like =
+    std::is_same_v<std::remove_cvref_t<T>, bool>;
+
+template<typename T>
+concept floating_point =
+    std::is_floating_point_v<std::remove_cvref_t<T>>;
+
+template<typename T>
+concept enum_type =
+    std::is_enum_v<std::remove_cvref_t<T>>;
+
+// ---------------------------------------------------------------------------
+// Layer 1: atomic probes (replace the is_detected templates).
+// NOTE: each probe must mirror the EXACT target the corresponding library trait
+// checks — `iterator` (not value_type), `mapped_type`+`key_type`, etc. See
+// tests/static-reflection/probe_layered_concepts.cpp (zero-drift benchmark).
+// ---------------------------------------------------------------------------
+template<typename T>
+concept has_iterator_type =
+    requires { typename std::remove_cvref_t<T>::iterator; };
+
+template<typename T>
+concept has_iterator_traits =
+    has_iterator_type<T> &&
+    requires {
+        typename std::remove_cvref_t<T>::iterator::value_type;
+        typename std::remove_cvref_t<T>::iterator::difference_type;
+    };
+
+template<typename T>
+concept has_mapped_and_key =
+    requires { typename std::remove_cvref_t<T>::mapped_type;
+               typename std::remove_cvref_t<T>::key_type; };
+
+// the element type reachable through the container's iterator
+template<typename T>
+using iter_value_t = typename std::remove_cvref_t<T>::iterator::value_type;
+
+// ---------------------------------------------------------------------------
+// Layer 2: reusable semantic concepts. Each carries BasicJsonType because
+// array/object/string compatibility is "element/key/value can construct B".
+// These intentionally EXCLUDE the range-view dimension (see note at bottom).
+// `nlohmann::detail::is_constructible` must be declared (via type_traits.hpp).
+// ---------------------------------------------------------------------------
+
+// string_like<B, T> == is_compatible_string_type<B, T>
+template<typename B, typename T>
+concept string_like =
+    nlohmann::detail::is_constructible<typename B::string_t, T>::value;
+
+// object_like<B, T> — mirrors is_compatible_object_type<B, T>
+template<typename B, typename T>
+concept object_like =
+    has_mapped_and_key<T> &&
+    nlohmann::detail::is_constructible<typename B::object_t::key_type,
+                                       typename T::key_type>::value &&
+    nlohmann::detail::is_constructible<typename B::object_t::mapped_type,
+                                       typename T::mapped_type>::value;
+
+// array_like<B, T> — mirrors is_compatible_array_type<B, T> (iterator/construct)
+// The filesystem::path special case (T != its own range_value) is preserved.
+template<typename B, typename T>
+concept array_like =
+    has_iterator_traits<T> &&
+    !std::is_same_v<std::remove_cvref_t<T>, iter_value_t<T>> &&
+    nlohmann::detail::is_constructible<B, iter_value_t<T>>::value;
+
+// NOTE on the range-view dimension: is_compatible_range_view<T> deliberately
+// stays a trait (referenced in layer-3 requires, not folded into array_like).
+// It wraps SafeToCheck guards (is_iteration_proxy_type / is_basic_json /
+// is_range_view_optional_type) to avoid std::ranges circular-constraint
+// crashes on GCC; restating that logic inside a concept is high-risk.
+
+} // namespace concepts
+} // namespace detail
+} // namespace nlohmann
+
+#endif // JSON_HAS_CPP_20
+
+#endif
 
 // include after macro_scope.hpp
 #ifdef JSON_HAS_CPP_17
@@ -5393,6 +5524,15 @@ inline void from_json(const BasicJsonType& j, typename BasicJsonType::number_int
 }
 
 #if !JSON_DISABLE_ENUM_SERIALIZATION
+#ifdef JSON_HAS_CPP_20
+template<typename BasicJsonType, concepts::enum_type EnumType>
+inline void from_json(const BasicJsonType& j, EnumType& e)
+{
+    typename std::underlying_type<EnumType>::type val;
+    get_arithmetic_value(j, val);
+    e = static_cast<EnumType>(val);
+}
+#else
 template<typename BasicJsonType, typename EnumType,
          enable_if_t<std::is_enum<EnumType>::value, int> = 0>
 inline void from_json(const BasicJsonType& j, EnumType& e)
@@ -5401,6 +5541,7 @@ inline void from_json(const BasicJsonType& j, EnumType& e)
     get_arithmetic_value(j, val);
     e = static_cast<EnumType>(val);
 }
+#endif
 #endif  // JSON_DISABLE_ENUM_SERIALIZATION
 
 // forward_list doesn't have an insert method
@@ -5873,7 +6014,7 @@ NLOHMANN_JSON_NAMESPACE_END
 
 
 // #include <nlohmann/detail/macro_scope.hpp>
-// JSON_HAS_CPP_17
+ // JSON_HAS_CPP_17
 #ifdef JSON_HAS_CPP_17
     #include <optional> // optional
 #endif
@@ -6175,6 +6316,10 @@ class tuple_element<N, ::nlohmann::detail::iteration_proxy_value<IteratorType >>
 
 // #include <nlohmann/detail/value_t.hpp>
 
+#ifdef JSON_HAS_CPP_20
+    // #include <nlohmann/detail/concepts/concepts.hpp>
+
+#endif
 
 NLOHMANN_JSON_NAMESPACE_BEGIN
 namespace detail
@@ -6467,12 +6612,20 @@ inline void to_json(BasicJsonType& j, const BoolRef& b) noexcept
     external_constructor<value_t::boolean>::construct(j, static_cast<typename BasicJsonType::boolean_t>(b));
 }
 
+#ifdef JSON_HAS_CPP_20
+template<typename BasicJsonType, concepts::string_like<BasicJsonType> CompatibleString>
+inline void to_json(BasicJsonType& j, const CompatibleString& s)
+{
+    external_constructor<value_t::string>::construct(j, s);
+}
+#else
 template<typename BasicJsonType, typename CompatibleString,
          enable_if_t<std::is_constructible<typename BasicJsonType::string_t, CompatibleString>::value, int> = 0>
 inline void to_json(BasicJsonType& j, const CompatibleString& s)
 {
     external_constructor<value_t::string>::construct(j, s);
 }
+#endif
 
 template<typename BasicJsonType>
 inline void to_json(BasicJsonType& j, typename BasicJsonType::string_t&& s)
@@ -6480,12 +6633,22 @@ inline void to_json(BasicJsonType& j, typename BasicJsonType::string_t&& s)
     external_constructor<value_t::string>::construct(j, std::move(s));
 }
 
+#ifdef JSON_HAS_CPP_20
+// C++20 concepts path (modernization): same overload selection as the
+// enable_if_t below, expressed as a named concept for the value category.
+template<typename BasicJsonType, concepts::floating_point FloatType>
+inline void to_json(BasicJsonType& j, FloatType val) noexcept
+{
+    external_constructor<value_t::number_float>::construct(j, static_cast<typename BasicJsonType::number_float_t>(val));
+}
+#else
 template<typename BasicJsonType, typename FloatType,
          enable_if_t<std::is_floating_point<FloatType>::value, int> = 0>
 inline void to_json(BasicJsonType& j, FloatType val) noexcept
 {
     external_constructor<value_t::number_float>::construct(j, static_cast<typename BasicJsonType::number_float_t>(val));
 }
+#endif
 
 template<typename BasicJsonType, typename CompatibleNumberUnsignedType,
          enable_if_t<is_compatible_integer_type<typename BasicJsonType::number_unsigned_t, CompatibleNumberUnsignedType>::value, int> = 0>
@@ -6502,6 +6665,15 @@ inline void to_json(BasicJsonType& j, CompatibleNumberIntegerType val) noexcept
 }
 
 #if !JSON_DISABLE_ENUM_SERIALIZATION
+#ifdef JSON_HAS_CPP_20
+template<typename BasicJsonType, concepts::enum_type EnumType>
+inline void to_json(BasicJsonType& j, EnumType e) noexcept
+{
+    using underlying_type = typename std::underlying_type<EnumType>::type;
+    static constexpr value_t integral_value_t = std::is_unsigned<underlying_type>::value ? value_t::number_unsigned : value_t::number_integer;
+    external_constructor<integral_value_t>::construct(j, static_cast<underlying_type>(e));
+}
+#else
 template<typename BasicJsonType, typename EnumType,
          enable_if_t<std::is_enum<EnumType>::value, int> = 0>
 inline void to_json(BasicJsonType& j, EnumType e) noexcept
@@ -6510,6 +6682,7 @@ inline void to_json(BasicJsonType& j, EnumType e) noexcept
     static constexpr value_t integral_value_t = std::is_unsigned<underlying_type>::value ? value_t::number_unsigned : value_t::number_integer;
     external_constructor<integral_value_t>::construct(j, static_cast<underlying_type>(e));
 }
+#endif
 #endif  // JSON_DISABLE_ENUM_SERIALIZATION
 
 template<typename BasicJsonType>
@@ -6518,6 +6691,30 @@ inline void to_json(BasicJsonType& j, const std::vector<bool>& e)
     external_constructor<value_t::array>::construct(j, e);
 }
 
+#ifdef JSON_HAS_CPP_20
+// C++20 path: layer-3 inline exclusion combinator over layer-2 concepts.
+// The binary / basic_json exclusions stay as traits (they contain non-obvious
+// special cases); the range-view exclusion is a gated bool variable template so
+// that `#if` never appears inside the requires-clause expression.
+#if JSON_HAS_RANGES && !defined(__MINGW32__)
+template<typename T> constexpr bool not_range_view = !is_compatible_range_view<T>::value;
+#else
+template<typename T> constexpr bool not_range_view = true;
+#endif
+
+template < typename BasicJsonType, typename CompatibleArrayType >
+requires (concepts::array_like<BasicJsonType, CompatibleArrayType>
+      && !concepts::object_like<BasicJsonType, CompatibleArrayType>
+      && !concepts::string_like<BasicJsonType, CompatibleArrayType>
+      && !std::is_same<typename BasicJsonType::binary_t, CompatibleArrayType>::value
+      && !is_compatible_binary_type<BasicJsonType, CompatibleArrayType>::value
+      && !is_basic_json<CompatibleArrayType>::value
+      && not_range_view<CompatibleArrayType>)
+void to_json(BasicJsonType& j, const CompatibleArrayType& arr)
+{
+    external_constructor<value_t::array>::construct(j, arr);
+}
+#else
 template < typename BasicJsonType, typename CompatibleArrayType,
            enable_if_t < is_compatible_array_type<BasicJsonType,
                          CompatibleArrayType>::value&&
@@ -6535,6 +6732,7 @@ inline void to_json(BasicJsonType& j, const CompatibleArrayType& arr)
 {
     external_constructor<value_t::array>::construct(j, arr);
 }
+#endif
 
 #if JSON_HAS_RANGES && !defined(__MINGW32__)
 template < typename BasicJsonType, typename T,
@@ -6575,12 +6773,22 @@ inline void to_json(BasicJsonType& j, typename BasicJsonType::array_t&& arr)
     external_constructor<value_t::array>::construct(j, std::move(arr));
 }
 
+#ifdef JSON_HAS_CPP_20
+template < typename BasicJsonType, typename CompatibleObjectType >
+requires (concepts::object_like<BasicJsonType, CompatibleObjectType>
+      && !is_basic_json<CompatibleObjectType>::value)
+inline void to_json(BasicJsonType& j, const CompatibleObjectType& obj)
+{
+    external_constructor<value_t::object>::construct(j, obj);
+}
+#else
 template < typename BasicJsonType, typename CompatibleObjectType,
            enable_if_t < is_compatible_object_type<BasicJsonType, CompatibleObjectType>::value&& !is_basic_json<CompatibleObjectType>::value, int > = 0 >
 inline void to_json(BasicJsonType& j, const CompatibleObjectType& obj)
 {
     external_constructor<value_t::object>::construct(j, obj);
 }
+#endif
 
 template<typename BasicJsonType>
 inline void to_json(BasicJsonType& j, typename BasicJsonType::object_t&& obj)
@@ -21501,10 +21709,10 @@ class basic_json // NOLINT(cppcoreguidelines-special-member-functions,hicpp-spec
         const bool allow_exceptions = true,
         const bool ignore_comments = false,
         const bool ignore_trailing_commas = false
-                                 )
+    )
     {
         return ::nlohmann::detail::parser<basic_json, InputAdapterType>(std::move(adapter),
-            std::move(cb), allow_exceptions, ignore_comments, ignore_trailing_commas);
+               std::move(cb), allow_exceptions, ignore_comments, ignore_trailing_commas);
     }
 
   private:
@@ -22202,8 +22410,8 @@ class basic_json // NOLINT(cppcoreguidelines-special-member-functions,hicpp-spec
                detail::enable_if_t <
                    !detail::is_basic_json<U>::value && detail::is_compatible_type<basic_json_t, U>::value, int > = 0 >
     basic_json(CompatibleType && val) noexcept(noexcept( // NOLINT(bugprone-forwarding-reference-overload,bugprone-exception-escape)
-            JSONSerializer<U>::to_json(std::declval<basic_json_t&>(),
-                                       std::forward<CompatibleType>(val))))
+                JSONSerializer<U>::to_json(std::declval<basic_json_t&>(),
+                                           std::forward<CompatibleType>(val))))
     {
         JSONSerializer<U>::to_json(*this, std::forward<CompatibleType>(val));
         set_parents();
@@ -23006,7 +23214,7 @@ class basic_json // NOLINT(cppcoreguidelines-special-member-functions,hicpp-spec
                    detail::has_from_json<basic_json_t, ValueType>::value,
                    int > = 0 >
     ValueType get_impl(detail::priority_tag<0> /*unused*/) const noexcept(noexcept(
-            JSONSerializer<ValueType>::from_json(std::declval<const basic_json_t&>(), std::declval<ValueType&>())))
+                JSONSerializer<ValueType>::from_json(std::declval<const basic_json_t&>(), std::declval<ValueType&>())))
     {
         auto ret = ValueType();
         JSONSerializer<ValueType>::from_json(*this, ret);
@@ -23048,7 +23256,7 @@ class basic_json // NOLINT(cppcoreguidelines-special-member-functions,hicpp-spec
                    detail::has_non_default_from_json<basic_json_t, ValueType>::value,
                    int > = 0 >
     ValueType get_impl(detail::priority_tag<1> /*unused*/) const noexcept(noexcept(
-            JSONSerializer<ValueType>::from_json(std::declval<const basic_json_t&>())))
+                JSONSerializer<ValueType>::from_json(std::declval<const basic_json_t&>())))
     {
         return JSONSerializer<ValueType>::from_json(*this);
     }
@@ -23198,7 +23406,7 @@ class basic_json // NOLINT(cppcoreguidelines-special-member-functions,hicpp-spec
                    detail::has_from_json<basic_json_t, ValueType>::value,
                    int > = 0 >
     ValueType & get_to(ValueType& v) const noexcept(noexcept(
-            JSONSerializer<ValueType>::from_json(std::declval<const basic_json_t&>(), v)))
+                JSONSerializer<ValueType>::from_json(std::declval<const basic_json_t&>(), v)))
     {
         JSONSerializer<ValueType>::from_json(*this, v);
         return v;
