@@ -11261,9 +11261,7 @@ class binary_reader
 
             default: // anything else is not supported (yet)
             {
-                std::array<char, 3> cr{{}};
-                static_cast<void>((std::snprintf)(cr.data(), cr.size(), "%.2hhX", static_cast<unsigned char>(element_type))); // NOLINT(cppcoreguidelines-pro-type-vararg,hicpp-vararg)
-                const std::string cr_str{cr.data()};
+                const std::string cr_str = byte_to_hex_uppercase(static_cast<std::uint8_t>(element_type));
                 return sax->parse_error(element_type_parse_position, cr_str,
                                         parse_error::create(114, element_type_parse_position, concat("Unsupported BSON record type 0x", cr_str), nullptr));
             }
@@ -14031,14 +14029,24 @@ class binary_reader
         return true;
     }
 
+    // Format a byte as two uppercase hex digits (e.g. "FF" for 0xFF), the same
+    // branch-free nibble pattern used by serializer::hex_bytes. Replaces the
+    // snprintf("%.2hhX") vararg calls in error messages.
+    static std::string byte_to_hex_uppercase(std::uint8_t byte)
+    {
+        static constexpr char digits[] = "0123456789ABCDEF";
+        std::string result(2, '0');
+        result[0] = digits[(byte >> 4) & 0x0F];
+        result[1] = digits[byte & 0x0F];
+        return result;
+    }
+
     /*!
     @return a string representation of the last read byte
     */
     std::string get_token_string() const
     {
-        std::array<char, 3> cr{{}};
-        static_cast<void>((std::snprintf)(cr.data(), cr.size(), "%.2hhX", static_cast<unsigned char>(current))); // NOLINT(cppcoreguidelines-pro-type-vararg,hicpp-vararg)
-        return std::string{cr.data()};
+        return byte_to_hex_uppercase(static_cast<std::uint8_t>(current));
     }
 
     /*!
