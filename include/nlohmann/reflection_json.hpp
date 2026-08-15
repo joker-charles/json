@@ -4,13 +4,23 @@
 // a compile-time reflection-generated table instead of hand-written switch
 // dispatch.
 //
-// NOTE on access control (verified on g++-16 16.1.0, see m2_table.cpp):
-//   basic_json::json_value and basic_json::data are PRIVATE nested types, and
-//   even access_context::unchecked() does NOT let external scope-splices
-//   `[: ^^ json::json_value :]` reference them. M2 therefore reflects a MIRROR
-//   union (json_value_mirror below) whose members are declared in the same
-//   order as the real private union. value_t (nlohmann::detail::value_t) is
-//   PUBLIC and is reflected directly.
+// NOTE on access control (verified on g++-16 16.1.0, see probe_real_json_value.cpp):
+//   basic_json::json_value and basic_json::data are PRIVATE nested types, and a
+//   DIRECT scope-splice `[: ^^ json::json_value :]` fails. BUT — corrected by
+//   probe_real_json_value.cpp — they ARE reachable indirectly: unchecked()
+//   reflection enumerates the private data members (data via m_data, json_value
+//   via data::m_value), type_of yields the private nested type, and a CONSTEVAL
+//   helper can enumerate its members (inside `template for` the
+//   indirectly-obtained type spuriously reports "not a complete class type" —
+//   GCC 16 limitation). kStorage/kMemberIds below are therefore generated from
+//   the REAL basic_json::json_value, not from a hand-written mirror. The union
+//   still stores into a local plain union (json_value_mirror) that mirrors the
+//   real one member-for-member — that one is kept because it is a trivial union
+//   (no ctor), so default-construct/destroy never hit the real union's heap
+//   allocation constructor contract; but the *schema* (names + storage
+//   category) now comes from the real type, so layout drift is caught at
+//   compile time instead of silently mismatching. value_t (nlohmann::detail::
+//   value_t) is PUBLIC and is reflected directly.
 //
 // Build/link flags: -std=c++26 -freflection ; include the repo's single_include.
 // This header reuses the library's public type aliases (object_t, array_t, ...)
@@ -18,9 +28,10 @@
 // private internals and leaves the C++11 path untouched.
 //
 // Design (the "single source of truth" claim):
-//   * kStorage   — reflection-generated: which union member is pointer-stored.
-//                  This is the ONE place the pointer/scalar split lives; the
-//                  real library repeats it across ctor/destroy/invariant.
+//   * kStorage   — reflection-generated FROM THE REAL json_value: which union
+//                  member is pointer-stored. This is the ONE place the
+//                  pointer/scalar split lives; the real library repeats it
+//                  across ctor/destroy/invariant.
 //   * slot_index<V> — compile-time map value_t -> union member index; a value_t
 //                  without a slot (null/discarded) has has==false.
 //   * default-construct/destroy are dispatched by a `template for` over ALL
@@ -53,9 +64,13 @@ using json   = nlohmann::json;
 using value_t = nlohmann::detail::value_t;
 
 // ---------------------------------------------------------------------------
-// MIRROR union — storage category & member-name lookup. Members are declared
-// in the same order as basic_json::json_value (object, array, string, binary,
-// boolean, number_integer, number_unsigned, number_float).
+// MIRROR union — the STORAGE CARRIER. A trivial union (no ctor) mirroring
+// basic_json::json_value member-for-member, so default-construct/destroy never
+// hit the real union's heap-allocation constructor contract. The SCHEMA below
+// (names + storage category) is generated from the REAL basic_json::json_value
+// (see real_json_value_info / member_count / storage_category), and a
+// static_assert ties the two together: any drift in the real union's member
+// list fails the compile instead of silently mismatching.
 // ---------------------------------------------------------------------------
 union json_value_mirror
 {
@@ -71,18 +86,37 @@ union json_value_mirror
 
 namespace refl_detail
 {
+// --- reach the REAL basic_json::json_value (private nested union) ---
+// Indirect route verified by probe_real_json_value.cpp: unchecked() reflection
+// finds basic_json's private data members; data is [0] (m_data), and inside it
+// m_value is [1]; type_of yields the private nested union. Enumeration of its
+// members works ONLY from a consteval context (template-for inline reports
+// "not a complete class type" — GCC 16 limitation).
+consteval std::meta::info real_data_info()
+{
+    constexpr auto m_data = std::meta::nonstatic_data_members_of(
+        ^^json, std::meta::access_context::unchecked())[0];
+    return std::meta::type_of(m_data);
+}
+
+consteval std::meta::info real_json_value_info()
+{
+    constexpr auto m_value = std::meta::nonstatic_data_members_of(
+        real_data_info(), std::meta::access_context::unchecked())[1];
+    return std::meta::type_of(m_value);
+}
+
 consteval std::size_t member_count()
 {
-    return std::meta::nonstatic_data_members_of(^^json_value_mirror,
-            std::meta::access_context::unprivileged()).size();
+    return std::meta::nonstatic_data_members_of(
+        real_json_value_info(), std::meta::access_context::unchecked()).size();
 }
 
 template<std::size_t I>
 consteval bool member_is_pointer()
 {
-    constexpr auto m =
-        std::meta::nonstatic_data_members_of(^^json_value_mirror,
-            std::meta::access_context::unprivileged())[I];
+    constexpr auto m = std::meta::nonstatic_data_members_of(
+        real_json_value_info(), std::meta::access_context::unchecked())[I];
     using M = typename [: std::meta::type_of(m) :];
     return std::is_pointer_v<M>;
 }
@@ -103,12 +137,27 @@ consteval auto ids_impl(std::index_sequence<I...>)
     return std::array<std::string_view, sizeof...(I)>
     {
         std::meta::identifier_of(std::meta::nonstatic_data_members_of(
-                                     ^^json_value_mirror, std::meta::access_context::unprivileged())[I])...
+                                     real_json_value_info(), std::meta::access_context::unchecked())[I])...
     };
 }
 consteval auto member_ids()
 {
     return ids_impl(std::make_index_sequence<member_count()> {});
+}
+
+// --- compile-time tie: mirror member list must equal the REAL union ---
+template<std::size_t... I>
+consteval auto mirror_ids_impl(std::index_sequence<I...>)
+{
+    return std::array<std::string_view, sizeof...(I)>
+    {
+        std::meta::identifier_of(std::meta::nonstatic_data_members_of(
+                                     ^^json_value_mirror, std::meta::access_context::unprivileged())[I])...
+    };
+}
+consteval auto mirror_ids()
+{
+    return mirror_ids_impl(std::make_index_sequence<member_count()> {});
 }
 } // namespace refl_detail
 
@@ -116,6 +165,15 @@ consteval auto member_ids()
 constexpr std::size_t kMemberCount = refl_detail::member_count();
 constexpr auto        kStorage     = refl_detail::storage_category(); // index -> is_pointer
 constexpr auto        kMemberIds   = refl_detail::member_ids();      // index -> name
+
+// Compile-time tie between the schema (from the REAL json_value) and the local
+// storage union: same member count, same member names, in the same order. If
+// the real basic_json::json_value changes its member list, this fails to
+// compile — the mirror can no longer drift silently.
+static_assert(refl_detail::mirror_ids().size() == kMemberCount,
+              "json_value_mirror member count differs from the real json_value");
+static_assert(refl_detail::mirror_ids() == kMemberIds,
+              "json_value_mirror member names/order differ from the real json_value");
 
 // ---------------------------------------------------------------------------
 // value_t -> union member index. null and discarded have NO slot. The

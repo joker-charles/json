@@ -57,10 +57,19 @@ Same toolchain ⇒ trust these; re-deriving them is wasted work.
 
 - **Reflection/P2996** (verified by `tests/static-reflection/probe_*.cpp`):
   - `std::meta::` must be fully qualified; bare `meta::` does not compile.
-  - `basic_json::json_value` / `basic_json::data` are **private**, and even
-    `access_context::unchecked()` cannot make a scope-splice
-    `[: ^^ json::json_value :]` reference them ⇒ reflection targets a **mirror
-    union** (`json_value_mirror`).
+  - `basic_json::json_value` / `basic_json::data` are **private nested types**.
+    A direct scope-splice `[: ^^ json::json_value :]` FAILS ("is private within
+    this context"). **BUT** — verified by `probe_real_json_value.cpp` — they are
+    fully reachable indirectly: `unchecked()` reflection enumerates the private
+    data members (`data` via `m_data`, then `json_value` via `data::m_value`),
+    `type_of` yields the private nested type, and it can be spliced for full use
+    (enumerate members, construct via `value_t`, read/write members, allocate/
+    free pointer members). **Key GCC-16 trap**: obtaining the type works both
+    from a `consteval` function and inside `template for`, but *enumerating its
+    members* works ONLY from a `consteval` context — inside `template for` the
+    indirectly-obtained type reports "not a complete class type". So the
+    `json_value_mirror` route is a workaround, not a hard requirement; a
+    consteval-helper design can reflect the real `json_value` directly.
   - `nonstatic_data_members_of` works on a union; `is_pointer_v<type_of(m)>`
     classifies storage category.
   - Reflection queries returning a `std::vector` are **transient**: subscript/

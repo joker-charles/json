@@ -121,7 +121,7 @@ bool is_ptr = std::is_pointer_v<M>;                       // 存储类别
 3. `make amalgamate` 目前针对主库 C++11 路径；反射版不必走 amalgame 生成链（或单独脚本处理反射版）。
 4. 若未来希望合回主库，唯一通道是 `JSON_HAS_CPP_26` 特性宏 + 完整 C++11/23 回退——但那要同时保住 100% 测试覆盖，工作量极大，**不建议在实验阶段追求**。
 
-**本次调研对该结论的补充**（§4 探针实证）：`value_t` 公有可直接反射（无需镜像）；`json_value`/`data` 私有，且 `unchecked()` **不能**让外部 splice 引用私有嵌套类型（m2_table.cpp 实证）——因此反射版不能直接驱动真实私有内部结构，必须用**镜像 union** 承载反射。独立头 `reflection_json.hpp` 正是如此设计：复用主库的公有类型别名但自持存储，运行期行为与主库逐字节等价（m2_diff.cpp 差分通过）。此结论**强化**独立头方案：不只是"C++11 契约"要求独立，就连反射本身也无法干净地作用在私有内部上，镜像必须属于反射版自己的命名空间。
+**本次调研对该结论的补充**（§4 探针实证）：`value_t` 公有可直接反射（无需镜像）；`json_value`/`data` 私有，直接命名 splice 不可引用，但**经私有成员 `type_of` 间接获得完全可行**（§4.5，`probe_real_json_value.cpp` 实证）——用 consteval helper 可直接驱动真实私有内部结构，镜像 union 只是 `template for` 内联路径受限时的务实替代。独立头 `reflection_json.hpp` 当前按镜像路线实现：复用主库的公有类型别名但自持存储，运行期行为与主库逐字节等价（m2_diff.cpp 差分通过）。若升级为 §4.5 的 consteval 直接反射路线，独立头仍是最干净的差分对照载体，但镜像层可删。
 
 这与贡献指南的"双轨特性宏（如 `JSON_USE_IMPLICIT_CONVERSIONS`）"精神一致，只是反射版作为实验分支独立演进。
 
@@ -159,7 +159,7 @@ bool is_ptr = std::is_pointer_v<M>;                       // 存储类别
 | `unprivileged()` | 仅公有可见（skill 原记录） | 默认调研/公开类型 |
 | `unchecked()` | 绕过访问控制，可枚举并 splice 读写在**求值语境**下的私有成员 | 类外查询私有成员 |
 
-**M2 实证发现（修正 §3 早先的乐观结论）**：`unchecked()` **不能**让外部 scope-splice 引用 `basic_json` 的 **private 嵌套类型**。即 `using V = [: ^^ json::json_value :];` 报 `is private within this context`——splice 的类型域查找走普通访问检查，不经 access_context。因此**反射版无法直接用反射 names/splices 驱动真实私有 `basic_json` 内部结构**，必须改用**镜像 union**：声明一个与真实 `basic_json::json_value` 成员同序的 `union json_value_mirror`（object/array/string/binary → 指针，boolean/number_* → 标量），用它反射生成存储类别表；`value_t`（`nlohmann::detail`，公有）可直接 `enumerators_of`。镜像与真实布局通过差分测试保证一致（`m2_diff.cpp`，逐字节等价）。
+**M2 实证发现（§4.5 已进一步修正）**：`unchecked()` **不能**让外部 scope-splice **直接命名** `basic_json` 的 private 嵌套类型（`using V = [: ^^ json::json_value :];` 报 `is private within this context`）——splice 的类型域**直接命名**走普通访问检查，不经 access_context。但见 §4.5：**经由私有数据成员的 `type_of` 间接获得**该类型并完整使用是**可行**的，镜像 union 是当时（`template for` 内联路径受限时）的务实选择，**不是硬性要求**。`value_t`（`nlohmann::detail`，公有）可直接 `enumerators_of`；镜像与真实布局通过差分测试保证一致（`m2_diff.cpp`，逐字节等价）。
 
 ### 4.3 须规避（GCC 16.1.0 硬限制）
 
@@ -188,6 +188,22 @@ bool is_ptr = std::is_pointer_v<M>;                       // 存储类别
 - `[[=expr]]` 值必须是 **structural 类型**。
 - 类型级注解被 GCC 16 忽略（`[[=...]] struct S` 无效）——注解只挂成员/枚举值。
 
+### 4.5 私有嵌套类型：直接命名失败，但**经成员 `type_of` 间接获得完全可行**（修正 §4.2/M2 定案）
+
+`probe_real_json_value.cpp`（修正性探针，**PASSED**）推翻了"反射版无法驱动真实私有 `json_value`"的旧结论。精确边界：
+
+| 操作 | 结果 |
+|---|---|
+| 直接命名 `[: ^^ json::json_value :]` | ❌ `is private within this context`（splice 直接命名走普通访问检查） |
+| `unchecked()` 枚举 `basic_json` 私有数据成员 | ✅ 拿到 `data`（私有嵌套 struct，经 `m_data`） |
+| `type_of(m_data)` → `data`；再枚举其成员 → `m_value` | ✅ 全部可达 |
+| `type_of(m_value)` → 真实 `json_value` | ✅ 类型可 splice 声明（`using V = [: info :]`） |
+| **consteval 函数**里枚举 `json_value` 的成员 | ✅ 8 个成员全列出 |
+| `template for` **内联**里枚举同一类型 | ❌ `not a complete class type`（**GCC 16 关键陷阱**） |
+| splice 构造 / 读写成员 / 分配释放指针成员 | ✅ 全通过（`value_t` 带参构造、`number_integer`/`string`/`boolean` 读写） |
+
+**结论**：`json_value_mirror` 镜像 union 是**当时 `template for` 内联路径受限下的务实选择，不是硬性要求**。若用 **consteval helper 函数**（而非 `template for` 内联）做反射枚举，可直接驱动真实 `basic_json::json_value`——省掉镜像，也消除"镜像与真实布局漂移"风险（m2_diff 的差分负担随之消失）。§5 里程碑 3 的镜像路线可升级为"consteval 直接反射真实 union"。
+
 ---
 
 ## 5. 建议的落地顺序（里程碑）
@@ -197,7 +213,7 @@ bool is_ptr = std::is_pointer_v<M>;                       // 存储类别
    `g++-16 -std=c++26 -freflection -O2 -o /tmp/repro_m1 tests/static-reflection/repro_m1.cpp`
    验证：枚举计数/名称表、标识符键控权重表（对主库 `order[]` 语义）、值 splice、range `template for` + `define_static_array`。产物：编译期"名称/权重"表，可直接替换 `operator<=>` 手写 order 表。
 3. **M2 反射化 tagged union 分发 ✓**：前提已实证，产物已完成——
-   - `tests/static-reflection/m2_table.cpp`：实证 `json_value` 私有、splice 不可引用（→ 镜像路线），并生成 `value_t ⇄ 镜像成员 ⇄ 存储类别` 单源表。
+   - `tests/static-reflection/m2_table.cpp`：实证 `json_value` 私有、**直接命名** splice 不可引用（当时据此选镜像路线），生成 `value_t ⇄ 镜像成员 ⇄ 存储类别` 单源表；后续 `probe_real_json_value.cpp`（§4.5）证明经成员 `type_of` 间接获得 + consteval 枚举可行，镜像路线可升级为直接反射真实 union。
    - `include/nlohmann/reflection_json.hpp`：独立 C++26 头，`basic_json_reflection` 用 `kStorage`（反射表）+ `slot_index<V>` + `template for` 遍历全部 `value_t` 枚举驱动默认构造/destroy/invariant，**新增 value_t 未接线即编译错误**（完整性保证）。
    - `tests/static-reflection/m2_diff.cpp`：差分测试 vs 主库逐字节等价（含 `is_number_unsigned` 也计为 integer 的语义），ASan 下 `destroy` 无泄漏。**PASSED**。
 4. **M3 序列化表驱动 ✓**：`reflection_json.hpp` 新增两个反射驱动序列化器——
@@ -231,8 +247,10 @@ bool is_ptr = std::is_pointer_v<M>;                       // 存储类别
   - `probe_access.cpp` —— `unchecked()` 访问控制探针（私有成员枚举），跑通。
   - `probe_union.cpp` —— union 成员反射与指针/标量分类，跑通。
   - `probe_splice.cpp` —— `unchecked()` 私有成员 splice 读写，跑通。
-  - `m2_table.cpp` —— M2 建表探针：实证 `json_value` 私有 splice 不可引用 → 镜像路线，生成 value_t⇄成员⇄存储类别表，跑通。
-  - `include/nlohmann/reflection_json.hpp` —— M2/M3 独立 C++26 头（`basic_json_reflection` + `reflection_serializer` + `reflection_cbor_serializer`）。
+  - `m2_table.cpp` —— M2 建表探针：实证 `json_value` 私有**直接命名** splice 不可引用 → 当时选择镜像路线，生成 value_t⇄成员⇄存储类别表，跑通。
+  - `probe_real_json_value.cpp` —— **修正性探针**：经 `unchecked()` 枚举私有数据成员 → `type_of(m_value)` **间接获得**真实 `basic_json::json_value`，consteval 上下文里枚举 8 成员 + splice 构造/读写全通过（镜像 union 非硬性要求，见 §4.5）。
+  - `include/nlohmann/reflection_json.hpp` —— M2/M3 独立 C++26 头（`basic_json_reflection` + `reflection_serializer` + `reflection_cbor_serializer`）。**已升级**：`kStorage`/`kMemberIds` 从**真实 `basic_json::json_value`**（consteval 间接路径）生成，`static_assert` 把本地存储 union 与真实成员表绑定——镜像漂移现在是编译错误而非静默失配（见 §4.5）。
+  - `EVALUATION.md` —— **面向社区的评估记录**：concepts-vs-enable_if 与 reflection-vs-macros 的完整测量方法（编译时间/二进制/诊断/代码量）、可复现命令、GCC 16 陷阱、私有成员反射的修正路径。重点分享"评估操作"而非结论。
   - `include/nlohmann/detail/concepts/concepts.hpp` —— C++20 concepts 现代化层（`JSON_HAS_CPP_20` 门控），定义 `floating_point`/`enum_type` 等纯类别概念。
   - `conversions/to_json.hpp`、`from_json.hpp` —— 浮点/枚举重载的 `#ifdef JSON_HAS_CPP_20` 双轨（concepts 约束 vs enable_if），C++11–26 五标准验证一致。
   - `m2_diff.cpp` —— M2 差分测试 vs 主库逐字节等价 + ASan 无泄漏，**PASSED**。
