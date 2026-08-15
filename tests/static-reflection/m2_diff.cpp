@@ -28,19 +28,21 @@ constexpr auto kVTCount = rjson::kValueTInfos.size();
 template<std::size_t... I>
 consteval auto all_value_ts_impl(std::index_sequence<I...>)
 {
-    return std::array<value_t, sizeof...(I)>{ 
+    return std::array<value_t, sizeof...(I)>
+    {
         static_cast<value_t>([: rjson::kValueTInfos[I] :])...
     };
 }
-constexpr auto kAllValueTs = all_value_ts_impl(std::make_index_sequence<kVTCount>{});
+constexpr auto kAllValueTs = all_value_ts_impl(std::make_index_sequence<kVTCount> {});
 template<std::size_t... I>
 consteval auto all_names_impl(std::index_sequence<I...>)
 {
-    return std::array<std::string_view, sizeof...(I)>{
+    return std::array<std::string_view, sizeof...(I)>
+    {
         std::meta::identifier_of(rjson::kValueTInfos[I])...
     };
 }
-constexpr auto kAllNames = all_names_impl(std::make_index_sequence<kVTCount>{});
+constexpr auto kAllNames = all_names_impl(std::make_index_sequence<kVTCount> {});
 
 int main()
 {
@@ -69,7 +71,10 @@ int main()
 
         const bool ok_real_object = real.is_object();
         const bool ok_refl_object = refl.is_object();
-        struct Cls { bool b, n, ui, f, nul, disc; };
+        struct Cls
+        {
+            bool b, n, ui, f, nul, disc;
+        };
         const auto r = Cls{ real.is_boolean(), real.is_number_integer(),
                             real.is_number_unsigned(), real.is_number_float(),
                             real.is_null(), real.is_discarded() };
@@ -100,7 +105,9 @@ int main()
     // no leaks on destruction of every type (ASan verifies)
     for (std::size_t round = 0; round < 100; ++round)
         for (std::size_t i = 0; i < kVTCount; ++i)
+        {
             rjson::basic_json_reflection(kAllValueTs[i]);
+        }
 
     std::printf(ok ? "\nM2 DIFF TEST PASSED\n" : "\nM2 DIFF TEST FAILED\n");
     return ok ? 0 : 1;

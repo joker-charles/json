@@ -49,14 +49,14 @@ TEST_CASE("concepts dual-path serialization is behavior-preserving")
 {
     // Build a value exercising every container/UDT category the dual path routes.
     json j;
-    j["vec_int"] = std::vector<int>{1, 2, 3};
-    j["vec_str"] = std::vector<std::string>{"a", "b"};
-    j["deque"]   = std::deque<double>{1.5, 2.5};
-    j["list"]    = std::list<long>{10, 20};
-    j["set"]     = std::set<int>{1, 5};
-    j["obj"]     = std::map<std::string, int>{{"k", 7}};
+    j["vec_int"] = std::vector<int> {1, 2, 3};
+    j["vec_str"] = std::vector<std::string> {"a", "b"};
+    j["deque"]   = std::deque<double> {1.5, 2.5};
+    j["list"]    = std::list<long> {10, 20};
+    j["set"]     = std::set<int> {1, 5};
+    j["obj"]     = std::map<std::string, int> {{"k", 7}};
     j["str"]     = std::string("hi");
-    j["bytes"]   = std::vector<std::uint8_t>{1, 2, 250}; // NOT binary -> array
+    j["bytes"]   = std::vector<std::uint8_t> {1, 2, 250}; // NOT binary -> array
     j["pt"]      = json_point{3, 4};
 
     const std::string dumped = j.dump();
@@ -75,9 +75,9 @@ TEST_CASE("concepts dual-path serialization is behavior-preserving")
     SECTION("round-trip is lossless")
     {
         const json j2 = json::parse(dumped);
-        CHECK((j2["vec_int"].get<std::vector<int>>() == std::vector<int>{1, 2, 3}));
+        CHECK((j2["vec_int"].get<std::vector<int>>() == std::vector<int> {1, 2, 3}));
         CHECK(j2["str"].get<std::string>() == "hi");
-        CHECK(j2["bytes"].get<std::vector<std::uint8_t>>() == std::vector<std::uint8_t>{1, 2, 250});
+        CHECK(j2["bytes"].get<std::vector<std::uint8_t>>() == std::vector<std::uint8_t> {1, 2, 250});
         const auto p = j2["pt"].get<json_point>();
         CHECK(p.x == 3);
         CHECK(p.y == 4);

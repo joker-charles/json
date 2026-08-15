@@ -408,19 +408,19 @@ inline void to_json(BasicJsonType& j, const std::vector<bool>& e)
 // special cases); the range-view exclusion is a gated bool variable template so
 // that `#if` never appears inside the requires-clause expression.
 #if JSON_HAS_RANGES && !defined(__MINGW32__)
-template<typename T> constexpr bool not_range_view = !is_compatible_range_view<T>::value;
+    template<typename T> constexpr bool not_range_view = !is_compatible_range_view<T>::value;
 #else
-template<typename T> constexpr bool not_range_view = true;
+    template<typename T> constexpr bool not_range_view = true;
 #endif
 
 template < typename BasicJsonType, typename CompatibleArrayType >
 requires (concepts::array_like<BasicJsonType, CompatibleArrayType>
-      && !concepts::object_like<BasicJsonType, CompatibleArrayType>
-      && !concepts::string_like<BasicJsonType, CompatibleArrayType>
-      && !std::is_same<typename BasicJsonType::binary_t, CompatibleArrayType>::value
-      && !is_compatible_binary_type<BasicJsonType, CompatibleArrayType>::value
-      && !is_basic_json<CompatibleArrayType>::value
-      && not_range_view<CompatibleArrayType>)
+          && !concepts::object_like<BasicJsonType, CompatibleArrayType>
+          && !concepts::string_like<BasicJsonType, CompatibleArrayType>
+          && !std::is_same<typename BasicJsonType::binary_t, CompatibleArrayType>::value
+          && !is_compatible_binary_type<BasicJsonType, CompatibleArrayType>::value
+          && !is_basic_json<CompatibleArrayType>::value
+          && not_range_view<CompatibleArrayType>)
 void to_json(BasicJsonType& j, const CompatibleArrayType& arr)
 {
     external_constructor<value_t::array>::construct(j, arr);
@@ -487,7 +487,7 @@ inline void to_json(BasicJsonType& j, typename BasicJsonType::array_t&& arr)
 #ifdef JSON_HAS_CPP_20
 template < typename BasicJsonType, typename CompatibleObjectType >
 requires (concepts::object_like<BasicJsonType, CompatibleObjectType>
-      && !is_basic_json<CompatibleObjectType>::value)
+          && !is_basic_json<CompatibleObjectType>::value)
 inline void to_json(BasicJsonType& j, const CompatibleObjectType& obj)
 {
     external_constructor<value_t::object>::construct(j, obj);

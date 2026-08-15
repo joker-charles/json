@@ -55,9 +55,9 @@ int main()
     // here — this is precisely the C-class friction the assessment predicts.
 
     bool ok = std::meta::is_same_type(^^json, ^^json)
-           && !std::meta::is_same_type(^^json, ^^int)
-           && !std::meta::is_same_type(^^json, ^^probe_pair<int, long>)
-           && nm;
+              && !std::meta::is_same_type(^^json, ^^int)
+              && !std::meta::is_same_type(^^json, ^^probe_pair<int, long>)
+              && nm;
     std::printf(ok ? "TRAITS REFLECTION REPRO PASSED\n" : "TRAITS REFLECTION REPRO MISMATCH\n");
     return ok ? 0 : 1;
 }

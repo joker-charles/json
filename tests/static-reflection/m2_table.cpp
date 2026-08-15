@@ -49,51 +49,87 @@ template<std::size_t I>
 consteval bool member_is_pointer()
 {
     constexpr auto m = std::meta::nonstatic_data_members_of(^^json_value_mirror,
-                         std::meta::access_context::unprivileged())[I];
+                       std::meta::access_context::unprivileged())[I];
     using M = typename [: std::meta::type_of(m) :];
     return std::is_pointer_v<M>;
 }
 consteval std::size_t union_member_count()
 {
     return std::meta::nonstatic_data_members_of(^^json_value_mirror,
-               std::meta::access_context::unprivileged()).size();
+            std::meta::access_context::unprivileged()).size();
 }
 
 // ---- storage category table (index -> is_pointer) ----
 template<std::size_t... I>
 consteval auto storage_impl(std::index_sequence<I...>)
 {
-    return std::array<bool, sizeof...(I)>{ member_is_pointer<I>()... };
+    return std::array<bool, sizeof...(I)> { member_is_pointer<I>()... };
 }
 consteval auto storage_category()
 {
-    return storage_impl(std::make_index_sequence<union_member_count()>{});
+    return storage_impl(std::make_index_sequence<union_member_count()> {});
 }
 
 // ---- member identifier table ----
 template<std::size_t... I>
 consteval auto member_ids_impl(std::index_sequence<I...>)
 {
-    return std::array<std::string_view, sizeof...(I)>{
+    return std::array<std::string_view, sizeof...(I)>
+    {
         std::meta::identifier_of(std::meta::nonstatic_data_members_of(^^json_value_mirror,
-            std::meta::access_context::unprivileged())[I])...
+                                 std::meta::access_context::unprivileged())[I])...
     };
 }
 consteval auto member_ids()
 {
-    return member_ids_impl(std::make_index_sequence<union_member_count()>{});
+    return member_ids_impl(std::make_index_sequence<union_member_count()> {});
 }
 
 // ---- value_t -> union member index (only storage value_t) ----
-template<value_t V> struct slot_index { static constexpr bool has = false; };
-template<> struct slot_index<value_t::object>          { static constexpr bool has = true;  static constexpr std::size_t value = 0; };
-template<> struct slot_index<value_t::array>           { static constexpr bool has = true;  static constexpr std::size_t value = 1; };
-template<> struct slot_index<value_t::string>          { static constexpr bool has = true;  static constexpr std::size_t value = 2; };
-template<> struct slot_index<value_t::binary>          { static constexpr bool has = true;  static constexpr std::size_t value = 3; };
-template<> struct slot_index<value_t::boolean>         { static constexpr bool has = true;  static constexpr std::size_t value = 4; };
-template<> struct slot_index<value_t::number_integer>  { static constexpr bool has = true;  static constexpr std::size_t value = 5; };
-template<> struct slot_index<value_t::number_unsigned> { static constexpr bool has = true;  static constexpr std::size_t value = 6; };
-template<> struct slot_index<value_t::number_float>    { static constexpr bool has = true;  static constexpr std::size_t value = 7; };
+template<value_t V> struct slot_index
+{
+    static constexpr bool has = false;
+};
+template<> struct slot_index<value_t::object>
+{
+    static constexpr bool has = true;
+    static constexpr std::size_t value = 0;
+};
+template<> struct slot_index<value_t::array>
+{
+    static constexpr bool has = true;
+    static constexpr std::size_t value = 1;
+};
+template<> struct slot_index<value_t::string>
+{
+    static constexpr bool has = true;
+    static constexpr std::size_t value = 2;
+};
+template<> struct slot_index<value_t::binary>
+{
+    static constexpr bool has = true;
+    static constexpr std::size_t value = 3;
+};
+template<> struct slot_index<value_t::boolean>
+{
+    static constexpr bool has = true;
+    static constexpr std::size_t value = 4;
+};
+template<> struct slot_index<value_t::number_integer>
+{
+    static constexpr bool has = true;
+    static constexpr std::size_t value = 5;
+};
+template<> struct slot_index<value_t::number_unsigned>
+{
+    static constexpr bool has = true;
+    static constexpr std::size_t value = 6;
+};
+template<> struct slot_index<value_t::number_float>
+{
+    static constexpr bool has = true;
+    static constexpr std::size_t value = 7;
+};
 // null, discarded: has == false (no storage slot)
 
 consteval std::size_t value_t_count()
@@ -116,7 +152,9 @@ int main()
     std::printf("value_t count         = %zu (expect 10)\n", value_t_count());
     std::printf("mirror union members  = %zu (expect 8)\n", N_MEMBERS);
     for (std::size_t i = 0; i < N_MEMBERS; ++i)
+    {
         std::printf("  [%zu] %-15s pointer=%d\n", i, std::string(IDS[i]).c_str(), STORAGE[i]);
+    }
 
     constexpr bool ok =
         (N_MEMBERS == 8) &&

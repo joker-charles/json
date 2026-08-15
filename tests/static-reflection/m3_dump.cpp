@@ -82,7 +82,7 @@ int main()
         obj["float"] = 1.5;
         obj["str"] = "a\"b";
         obj["arr"] = json::array({1, 2.5, "x", nullptr, false});
-        obj["nested"] = json::object({ {"a", 1}, {"b", json::array({2,3})} });
+        obj["nested"] = json::object({ {"a", 1}, {"b", json::array({2, 3})} });
         check(obj, "nested object");
     }
     {

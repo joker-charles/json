@@ -28,8 +28,16 @@ static int failures = 0;
 static std::string hex(const std::vector<std::uint8_t>& v)
 {
     std::string s = "[";
-    for (auto c : v) { char b[4]; std::snprintf(b, sizeof b, "%02x ", c); s += b; }
-    if (!v.empty()) s.pop_back();
+    for (auto c : v)
+    {
+        char b[4];
+        std::snprintf(b, sizeof b, "%02x ", c);
+        s += b;
+    }
+    if (!v.empty())
+    {
+        s.pop_back();
+    }
     s += "]";
     return s;
 }
@@ -101,7 +109,7 @@ int main()
     check(json::binary({1, 2, 3, 250, 255}), "binary bytes");
     check(json::binary({}), "binary empty");
     check(json::binary({5}, 7), "binary with subtype");
-    check(json::binary({1,2,3,4}, 300), "binary subtype u16");
+    check(json::binary({1, 2, 3, 4}, 300), "binary subtype u16");
 
     std::printf(failures ? "\nM3 CBOR DIFF: %d FAILURES\n" : "\nM3 CBOR DIFF PASSED\n", failures);
     return failures ? 1 : 0;

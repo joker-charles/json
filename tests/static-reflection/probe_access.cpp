@@ -57,8 +57,8 @@ int main()
     std::printf("external unchecked union members    = %zu\n", unchecked_union_member_count());
 
     bool ok = (Outer::probe_members() == 0)      // private hidden under unprivileged
-           && (unchecked_member_count() == 2)    // m_value + m_type
-           && (unchecked_union_member_count() == 3); // object / number_integer / number_float
+              && (unchecked_member_count() == 2)    // m_value + m_type
+              && (unchecked_union_member_count() == 3); // object / number_integer / number_float
     std::printf(ok ? "ACCESS PROBE PASSED\n" : "ACCESS PROBE MISMATCH\n");
     return ok ? 0 : 1;
 }

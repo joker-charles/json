@@ -63,29 +63,62 @@ concept binary_like =
     !std::same_as<typename B::binary_t::container_type, std::vector<std::uint8_t>>;
 
 // ===== truth source: real library traits =====
-template<typename B, typename T> static constexpr bool t_array  = nlohmann::detail::is_compatible_array_type<B,T>::value;
-template<typename B, typename T> static constexpr bool t_object = nlohmann::detail::is_compatible_object_type<B,T>::value;
-template<typename B, typename T> static constexpr bool t_string = nlohmann::detail::is_compatible_string_type<B,T>::value;
-template<typename B, typename T> static constexpr bool t_binary = nlohmann::detail::is_compatible_binary_type<B,T>::value;
+template<typename B, typename T> static constexpr bool t_array  = nlohmann::detail::is_compatible_array_type<B, T>::value;
+template<typename B, typename T> static constexpr bool t_object = nlohmann::detail::is_compatible_object_type<B, T>::value;
+template<typename B, typename T> static constexpr bool t_string = nlohmann::detail::is_compatible_string_type<B, T>::value;
+template<typename B, typename T> static constexpr bool t_binary = nlohmann::detail::is_compatible_binary_type<B, T>::value;
 
 // per-trait consensus check: concept must equal the library trait
 template<typename T>
-bool check_array(){ bool ok = array_like<B,T> == t_array<B,T>; if(!ok) std::printf("  [DRIFT] array<%-14s> trait=%d concept=%d\n", typeid(T).name(),(int)t_array<B,T>,(int)array_like<B,T>); return ok; }
+bool check_array()
+{
+    bool ok = array_like<B, T> == t_array<B, T>;
+    if (!ok)
+    {
+        std::printf("  [DRIFT] array<%-14s> trait=%d concept=%d\n", typeid(T).name(), (int)t_array<B, T>, (int)array_like<B, T>);
+    }
+    return ok;
+}
 template<typename T>
-bool check_object(){ bool ok = object_like<B,T> == t_object<B,T>; if(!ok) std::printf("  [DRIFT] object<%-13s> trait=%d concept=%d\n", typeid(T).name(),(int)t_object<B,T>,(int)object_like<B,T>); return ok; }
+bool check_object()
+{
+    bool ok = object_like<B, T> == t_object<B, T>;
+    if (!ok)
+    {
+        std::printf("  [DRIFT] object<%-13s> trait=%d concept=%d\n", typeid(T).name(), (int)t_object<B, T>, (int)object_like<B, T>);
+    }
+    return ok;
+}
 template<typename T>
-bool check_string(){ bool ok = string_like<B,T> == t_string<B,T>; if(!ok) std::printf("  [DRIFT] string<%-13s> trait=%d concept=%d\n", typeid(T).name(),(int)t_string<B,T>,(int)string_like<B,T>); return ok; }
+bool check_string()
+{
+    bool ok = string_like<B, T> == t_string<B, T>;
+    if (!ok)
+    {
+        std::printf("  [DRIFT] string<%-13s> trait=%d concept=%d\n", typeid(T).name(), (int)t_string<B, T>, (int)string_like<B, T>);
+    }
+    return ok;
+}
 template<typename T>
-bool check_binary(){ bool ok = binary_like<B,T> == t_binary<B,T>; if(!ok) std::printf("  [DRIFT] binary<%-13s> trait=%d concept=%d\n", typeid(T).name(),(int)t_binary<B,T>,(int)binary_like<B,T>); return ok; }
+bool check_binary()
+{
+    bool ok = binary_like<B, T> == t_binary<B, T>;
+    if (!ok)
+    {
+        std::printf("  [DRIFT] binary<%-13s> trait=%d concept=%d\n", typeid(T).name(), (int)t_binary<B, T>, (int)binary_like<B, T>);
+    }
+    return ok;
+}
 
-int main(){
+int main()
+{
     int bad = 0;
     // type matrix
     using Vint = std::vector<int>;
     using Vstr = std::vector<std::string>;
     using Vjson = std::vector<json>;
     using Str = std::string;
-    using Map = std::map<std::string,int>;
+    using Map = std::map<std::string, int>;
     using Set = std::set<int>;
     using Vbyte = std::vector<std::uint8_t>;
 

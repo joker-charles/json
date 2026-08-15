@@ -71,44 +71,45 @@ union json_value_mirror
 
 namespace refl_detail
 {
-    consteval std::size_t member_count()
-    {
-        return std::meta::nonstatic_data_members_of(^^json_value_mirror,
-                   std::meta::access_context::unprivileged()).size();
-    }
+consteval std::size_t member_count()
+{
+    return std::meta::nonstatic_data_members_of(^^json_value_mirror,
+            std::meta::access_context::unprivileged()).size();
+}
 
-    template<std::size_t I>
-    consteval bool member_is_pointer()
-    {
-        constexpr auto m =
-            std::meta::nonstatic_data_members_of(^^json_value_mirror,
-                std::meta::access_context::unprivileged())[I];
-        using M = typename [: std::meta::type_of(m) :];
-        return std::is_pointer_v<M>;
-    }
+template<std::size_t I>
+consteval bool member_is_pointer()
+{
+    constexpr auto m =
+        std::meta::nonstatic_data_members_of(^^json_value_mirror,
+            std::meta::access_context::unprivileged())[I];
+    using M = typename [: std::meta::type_of(m) :];
+    return std::is_pointer_v<M>;
+}
 
-    template<std::size_t... I>
-    consteval auto storage_impl(std::index_sequence<I...>)
-    {
-        return std::array<bool, sizeof...(I)>{ member_is_pointer<I>()... };
-    }
-    consteval auto storage_category()
-    {
-        return storage_impl(std::make_index_sequence<member_count()>{});
-    }
+template<std::size_t... I>
+consteval auto storage_impl(std::index_sequence<I...>)
+{
+    return std::array<bool, sizeof...(I)> { member_is_pointer<I>()... };
+}
+consteval auto storage_category()
+{
+    return storage_impl(std::make_index_sequence<member_count()> {});
+}
 
-    template<std::size_t... I>
-    consteval auto ids_impl(std::index_sequence<I...>)
+template<std::size_t... I>
+consteval auto ids_impl(std::index_sequence<I...>)
+{
+    return std::array<std::string_view, sizeof...(I)>
     {
-        return std::array<std::string_view, sizeof...(I)>{
-            std::meta::identifier_of(std::meta::nonstatic_data_members_of(
-                ^^json_value_mirror, std::meta::access_context::unprivileged())[I])...
-        };
-    }
-    consteval auto member_ids()
-    {
-        return ids_impl(std::make_index_sequence<member_count()>{});
-    }
+        std::meta::identifier_of(std::meta::nonstatic_data_members_of(
+                                     ^^json_value_mirror, std::meta::access_context::unprivileged())[I])...
+    };
+}
+consteval auto member_ids()
+{
+    return ids_impl(std::make_index_sequence<member_count()> {});
+}
 } // namespace refl_detail
 
 // Reflection-generated tables (single source of truth for the union mapping).
@@ -122,15 +123,50 @@ constexpr auto        kMemberIds   = refl_detail::member_ids();      // index ->
 // only handles enumerators; any value_t without a slot_index<> specialization
 // fails to compile — the completeness guarantee.
 // ---------------------------------------------------------------------------
-template<value_t V> struct slot_index { static constexpr bool has = false; };
-template<> struct slot_index<value_t::object>          { static constexpr bool has = true;  static constexpr std::size_t value = 0; };
-template<> struct slot_index<value_t::array>           { static constexpr bool has = true;  static constexpr std::size_t value = 1; };
-template<> struct slot_index<value_t::string>          { static constexpr bool has = true;  static constexpr std::size_t value = 2; };
-template<> struct slot_index<value_t::binary>          { static constexpr bool has = true;  static constexpr std::size_t value = 3; };
-template<> struct slot_index<value_t::boolean>         { static constexpr bool has = true;  static constexpr std::size_t value = 4; };
-template<> struct slot_index<value_t::number_integer>  { static constexpr bool has = true;  static constexpr std::size_t value = 5; };
-template<> struct slot_index<value_t::number_unsigned> { static constexpr bool has = true;  static constexpr std::size_t value = 6; };
-template<> struct slot_index<value_t::number_float>    { static constexpr bool has = true;  static constexpr std::size_t value = 7; };
+template<value_t V> struct slot_index
+{
+    static constexpr bool has = false;
+};
+template<> struct slot_index<value_t::object>
+{
+    static constexpr bool has = true;
+    static constexpr std::size_t value = 0;
+};
+template<> struct slot_index<value_t::array>
+{
+    static constexpr bool has = true;
+    static constexpr std::size_t value = 1;
+};
+template<> struct slot_index<value_t::string>
+{
+    static constexpr bool has = true;
+    static constexpr std::size_t value = 2;
+};
+template<> struct slot_index<value_t::binary>
+{
+    static constexpr bool has = true;
+    static constexpr std::size_t value = 3;
+};
+template<> struct slot_index<value_t::boolean>
+{
+    static constexpr bool has = true;
+    static constexpr std::size_t value = 4;
+};
+template<> struct slot_index<value_t::number_integer>
+{
+    static constexpr bool has = true;
+    static constexpr std::size_t value = 5;
+};
+template<> struct slot_index<value_t::number_unsigned>
+{
+    static constexpr bool has = true;
+    static constexpr std::size_t value = 6;
+};
+template<> struct slot_index<value_t::number_float>
+{
+    static constexpr bool has = true;
+    static constexpr std::size_t value = 7;
+};
 
 // ---------------------------------------------------------------------------
 // Compile-time dispatch over ALL value_t enumerators.
@@ -150,22 +186,52 @@ constexpr auto kValueTInfos =
 template<value_t V>
 consteval std::size_t slot_of()            // 0..7 for storage, else SIZE_MAX
 {
-    if constexpr (slot_index<V>::has) return slot_index<V>::value;
-    else return static_cast<std::size_t>(-1);
+    if constexpr (slot_index<V>::has)
+    {
+        return slot_index<V>::value;
+    }
+    else
+    {
+        return static_cast<std::size_t>(-1);
+    }
 }
 
 // --- construction action for one enumerator (compile-time V) ---
 template<value_t V>
 void construct_one(json_value_mirror& u)
 {
-    if constexpr (V == value_t::object)          { u.object  = new json::object_t(); }
-    else if constexpr (V == value_t::array)      { u.array   = new json::array_t(); }
-    else if constexpr (V == value_t::string)     { u.string  = new json::string_t(); }
-    else if constexpr (V == value_t::binary)     { u.binary  = new json::binary_t(); }
-    else if constexpr (V == value_t::boolean)    { u.boolean = false; }
-    else if constexpr (V == value_t::number_integer)  { u.number_integer = 0; }
-    else if constexpr (V == value_t::number_unsigned) { u.number_unsigned = 0; }
-    else if constexpr (V == value_t::number_float)    { u.number_float = 0.0; }
+    if constexpr (V == value_t::object)
+    {
+        u.object  = new json::object_t();
+    }
+    else if constexpr (V == value_t::array)
+    {
+        u.array   = new json::array_t();
+    }
+    else if constexpr (V == value_t::string)
+    {
+        u.string  = new json::string_t();
+    }
+    else if constexpr (V == value_t::binary)
+    {
+        u.binary  = new json::binary_t();
+    }
+    else if constexpr (V == value_t::boolean)
+    {
+        u.boolean = false;
+    }
+    else if constexpr (V == value_t::number_integer)
+    {
+        u.number_integer = 0;
+    }
+    else if constexpr (V == value_t::number_unsigned)
+    {
+        u.number_unsigned = 0;
+    }
+    else if constexpr (V == value_t::number_float)
+    {
+        u.number_float = 0.0;
+    }
     // null / discarded: no slot -> do nothing (keep union zeroed)
 }
 
@@ -173,10 +239,26 @@ void construct_one(json_value_mirror& u)
 template<value_t V>
 void destroy_one(json_value_mirror& u)
 {
-    if constexpr (V == value_t::object) { delete u.object;  u.object  = nullptr; }
-    else if constexpr (V == value_t::array) { delete u.array;   u.array   = nullptr; }
-    else if constexpr (V == value_t::string){ delete u.string;  u.string  = nullptr; }
-    else if constexpr (V == value_t::binary){ delete u.binary;  u.binary  = nullptr; }
+    if constexpr (V == value_t::object)
+    {
+        delete u.object;
+        u.object  = nullptr;
+    }
+    else if constexpr (V == value_t::array)
+    {
+        delete u.array;
+        u.array   = nullptr;
+    }
+    else if constexpr (V == value_t::string)
+    {
+        delete u.string;
+        u.string  = nullptr;
+    }
+    else if constexpr (V == value_t::binary)
+    {
+        delete u.binary;
+        u.binary  = nullptr;
+    }
     // scalars and null/discarded: nothing to release
 }
 
@@ -196,21 +278,57 @@ struct basic_json_reflection
         construct_for(m_type);
     }
 
-    ~basic_json_reflection() { destroy(); }
+    ~basic_json_reflection()
+    {
+        destroy();
+    }
     basic_json_reflection(const basic_json_reflection&) = delete;
     basic_json_reflection& operator=(const basic_json_reflection&) = delete;
 
-    [[nodiscard]] bool is_object()  const { return m_type == value_t::object; }
-    [[nodiscard]] bool is_array()   const { return m_type == value_t::array; }
-    [[nodiscard]] bool is_string()  const { return m_type == value_t::string; }
-    [[nodiscard]] bool is_binary()  const { return m_type == value_t::binary; }
-    [[nodiscard]] bool is_boolean() const { return m_type == value_t::boolean; }
-    [[nodiscard]] bool is_number_integer()  const { return m_type == value_t::number_integer || m_type == value_t::number_unsigned; }
-    [[nodiscard]] bool is_number_unsigned() const { return m_type == value_t::number_unsigned; }
-    [[nodiscard]] bool is_number_float()    const { return m_type == value_t::number_float; }
-    [[nodiscard]] bool is_number() const { return is_number_integer() || is_number_float(); }
-    [[nodiscard]] bool is_null()      const { return m_type == value_t::null; }
-    [[nodiscard]] bool is_discarded() const { return m_type == value_t::discarded; }
+    [[nodiscard]] bool is_object()  const
+    {
+        return m_type == value_t::object;
+    }
+    [[nodiscard]] bool is_array()   const
+    {
+        return m_type == value_t::array;
+    }
+    [[nodiscard]] bool is_string()  const
+    {
+        return m_type == value_t::string;
+    }
+    [[nodiscard]] bool is_binary()  const
+    {
+        return m_type == value_t::binary;
+    }
+    [[nodiscard]] bool is_boolean() const
+    {
+        return m_type == value_t::boolean;
+    }
+    [[nodiscard]] bool is_number_integer()  const
+    {
+        return m_type == value_t::number_integer || m_type == value_t::number_unsigned;
+    }
+    [[nodiscard]] bool is_number_unsigned() const
+    {
+        return m_type == value_t::number_unsigned;
+    }
+    [[nodiscard]] bool is_number_float()    const
+    {
+        return m_type == value_t::number_float;
+    }
+    [[nodiscard]] bool is_number() const
+    {
+        return is_number_integer() || is_number_float();
+    }
+    [[nodiscard]] bool is_null()      const
+    {
+        return m_type == value_t::null;
+    }
+    [[nodiscard]] bool is_discarded() const
+    {
+        return m_type == value_t::discarded;
+    }
 
     // Is the storage for the current type a heap pointer? Table-driven (no
     // hand-written pointer list — answered from kStorage + slot_index).
@@ -240,24 +358,40 @@ struct basic_json_reflection
     }
 
     // --- accessors for the serializer (friend) ---
-    [[nodiscard]] value_t type() const noexcept { return m_type; }
-    [[nodiscard]] const json_value_mirror& value() const noexcept { return m_value; }
+    [[nodiscard]] value_t type() const noexcept
+    {
+        return m_type;
+    }
+    [[nodiscard]] const json_value_mirror& value() const noexcept
+    {
+        return m_value;
+    }
 
   private:
     static bool src_has_type(const json& src, const value_t v)
     {
         switch (v) // NOLINT — public predicate dispatch (not the drift source)
         {
-            case value_t::object:          return src.is_object();
-            case value_t::array:           return src.is_array();
-            case value_t::string:          return src.is_string();
-            case value_t::binary:          return src.is_binary();
-            case value_t::boolean:         return src.is_boolean();
-            case value_t::number_integer:  return src.is_number_integer() && !src.is_number_unsigned();
-            case value_t::number_unsigned: return src.is_number_unsigned();
-            case value_t::number_float:    return src.is_number_float();
-            case value_t::null:            return src.is_null();
-            case value_t::discarded:       return src.is_discarded();
+            case value_t::object:
+                return src.is_object();
+            case value_t::array:
+                return src.is_array();
+            case value_t::string:
+                return src.is_string();
+            case value_t::binary:
+                return src.is_binary();
+            case value_t::boolean:
+                return src.is_boolean();
+            case value_t::number_integer:
+                return src.is_number_integer() && !src.is_number_unsigned();
+            case value_t::number_unsigned:
+                return src.is_number_unsigned();
+            case value_t::number_float:
+                return src.is_number_float();
+            case value_t::null:
+                return src.is_null();
+            case value_t::discarded:
+                return src.is_discarded();
         }
         return false;
     }
@@ -332,8 +466,14 @@ struct basic_json_reflection
             constexpr value_t V = static_cast<value_t>([: r :]);
             if (t == V)
             {
-                if constexpr (!slot_index<V>::has) return false;
-                else return kStorage[slot_index<V>::value];
+                if constexpr (!slot_index<V>::has)
+                {
+                    return false;
+                }
+                else
+                {
+                    return kStorage[slot_index<V>::value];
+                }
             }
         }
         return false;
@@ -361,7 +501,10 @@ struct reflection_serializer
         dump(j);
     }
 
-    std::string str() const { return out; }
+    std::string str() const
+    {
+        return out;
+    }
 
   private:
     bool ensure_ascii;
@@ -435,7 +578,10 @@ struct reflection_serializer
         std::size_t idx = 0;
         for (auto it = obj.cbegin(); it != obj.cend(); ++it, ++idx)
         {
-            if (idx) out.push_back(',');
+            if (idx)
+            {
+                out.push_back(',');
+            }
             out.push_back('"');
             dump_escaped(it->first, ensure_ascii);
             out.push_back('"');
@@ -453,7 +599,10 @@ struct reflection_serializer
         std::size_t idx = 0;
         for (const auto& el : arr)
         {
-            if (idx++) out.push_back(',');
+            if (idx++)
+            {
+                out.push_back(',');
+            }
             basic_json_reflection val;
             val.assign_from(el);
             dump(val);
@@ -466,12 +615,22 @@ struct reflection_serializer
         out += "{\"bytes\":[";
         for (std::size_t i = 0; i < bin.size(); ++i)
         {
-            if (i) out.push_back(',');
+            if (i)
+            {
+                out.push_back(',');
+            }
             dump_number(bin[i]);
         }
         out += "],\"subtype\":";
-        if (bin.has_subtype()) { dump_number(bin.subtype()); out.push_back('}'); }
-        else { out += "null}"; }
+        if (bin.has_subtype())
+        {
+            dump_number(bin.subtype());
+            out.push_back('}');
+        }
+        else
+        {
+            out += "null}";
+        }
     }
 
     template<typename T>
@@ -486,8 +645,16 @@ struct reflection_serializer
     {
         // match the library's default dump for integral floats / general
         char tmp[48];
-        if (std::isnan(f))      { out += "null"; return; }
-        if (std::isinf(f))      { out += f > 0 ? "1e+999" : "-1e+999"; return; }
+        if (std::isnan(f))
+        {
+            out += "null";
+            return;
+        }
+        if (std::isinf(f))
+        {
+            out += f > 0 ? "1e+999" : "-1e+999";
+            return;
+        }
         if (f == static_cast<long long>(f) && std::abs(f) < 1e17)
         {
             // integral value -> "N.N0" like the library (e.g. 3.0 -> "3.0")
@@ -510,24 +677,40 @@ struct reflection_serializer
         {
             switch (c)
             {
-                case 0x22: buffer += "\\\""; break;
-                case 0x5C: buffer += "\\\\"; break;
-                case 0x08: buffer += "\\b"; break;
-                case 0x09: buffer += "\\t"; break;
-                case 0x0A: buffer += "\\n"; break;
-                case 0x0C: buffer += "\\f"; break;
-                case 0x0D: buffer += "\\r"; break;
+                case 0x22:
+                    buffer += "\\\"";
+                    break;
+                case 0x5C:
+                    buffer += "\\\\";
+                    break;
+                case 0x08:
+                    buffer += "\\b";
+                    break;
+                case 0x09:
+                    buffer += "\\t";
+                    break;
+                case 0x0A:
+                    buffer += "\\n";
+                    break;
+                case 0x0C:
+                    buffer += "\\f";
+                    break;
+                case 0x0D:
+                    buffer += "\\r";
+                    break;
                 default:
                     if (c < 0x20)
                     {
-                        char hex[7]; std::snprintf(hex, sizeof hex, "\\u%04x", c);
+                        char hex[7];
+                        std::snprintf(hex, sizeof hex, "\\u%04x", c);
                         buffer += hex;
                     }
                     else if (ascii && c >= 0x7F)
                     {
                         // escape the leading byte of a UTF-8 seq as \u00XX
                         // (adequate for the ASCII range differential cases)
-                        char hex[7]; std::snprintf(hex, sizeof hex, "\\u00%02x", c);
+                        char hex[7];
+                        std::snprintf(hex, sizeof hex, "\\u00%02x", c);
                         buffer += hex;
                     }
                     else
@@ -558,8 +741,14 @@ struct reflection_cbor_serializer
         dump(j);
     }
 
-    std::string str() const      { return std::string(out.begin(), out.end()); }
-    const std::vector<std::uint8_t>& bytes() const { return out; }
+    std::string str() const
+    {
+        return std::string(out.begin(), out.end());
+    }
+    const std::vector<std::uint8_t>& bytes() const
+    {
+        return out;
+    }
 
   private:
     static bool little_endian()
@@ -575,7 +764,10 @@ struct reflection_cbor_serializer
         const auto n = static_cast<std::size_t>(sizeof(T));
         std::array<uint8_t, sizeof(T)> tmp{};
         std::memcpy(tmp.data(), &v, n);
-        if (little_endian()) std::reverse(tmp.begin(), tmp.end());
+        if (little_endian())
+        {
+            std::reverse(tmp.begin(), tmp.end());
+        }
         out.insert(out.end(), tmp.begin(), tmp.end());
     }
 
@@ -583,11 +775,30 @@ struct reflection_cbor_serializer
     void prefix(std::uint8_t major, std::uint64_t len)
     {
         const auto mt = static_cast<std::uint8_t>(major << 5);
-        if (len <= 23)                { out.push_back(mt + static_cast<std::uint8_t>(len)); }
-        else if (len <= 0xFF)         { out.push_back(mt + 24); out.push_back(static_cast<std::uint8_t>(len)); }
-        else if (len <= 0xFFFF)       { out.push_back(mt + 25); append_big(static_cast<std::uint16_t>(len)); }
-        else if (len <= 0xFFFFFFFFu)  { out.push_back(mt + 26); append_big(static_cast<std::uint32_t>(len)); }
-        else                          { out.push_back(mt + 27); append_big(static_cast<std::uint64_t>(len)); }
+        if (len <= 23)
+        {
+            out.push_back(mt + static_cast<std::uint8_t>(len));
+        }
+        else if (len <= 0xFF)
+        {
+            out.push_back(mt + 24);
+            out.push_back(static_cast<std::uint8_t>(len));
+        }
+        else if (len <= 0xFFFF)
+        {
+            out.push_back(mt + 25);
+            append_big(static_cast<std::uint16_t>(len));
+        }
+        else if (len <= 0xFFFFFFFFu)
+        {
+            out.push_back(mt + 26);
+            append_big(static_cast<std::uint32_t>(len));
+        }
+        else
+        {
+            out.push_back(mt + 27);
+            append_big(static_cast<std::uint64_t>(len));
+        }
     }
 
     // CBOR negative integer: encode -(len+1) with major 1
@@ -643,8 +854,14 @@ struct reflection_cbor_serializer
         else if constexpr (V == value_t::number_integer)
         {
             const auto n = u.number_integer;
-            if (n >= 0) prefix(0, static_cast<std::uint64_t>(n));
-            else        prefix_negative(n);
+            if (n >= 0)
+            {
+                prefix(0, static_cast<std::uint64_t>(n));
+            }
+            else
+            {
+                prefix_negative(n);
+            }
         }
         else if constexpr (V == value_t::number_unsigned)
         {
@@ -665,8 +882,11 @@ struct reflection_cbor_serializer
         prefix(5, obj.size());
         for (const auto& [k, v] : obj)
         {
-            prefix(3, k.size()); out.insert(out.end(), k.begin(), k.end());
-            basic_json_reflection val; val.assign_from(v); dump(val);
+            prefix(3, k.size());
+            out.insert(out.end(), k.begin(), k.end());
+            basic_json_reflection val;
+            val.assign_from(v);
+            dump(val);
         }
     }
 
@@ -675,7 +895,9 @@ struct reflection_cbor_serializer
         prefix(4, arr.size());
         for (const auto& el : arr)
         {
-            basic_json_reflection val; val.assign_from(el); dump(val);
+            basic_json_reflection val;
+            val.assign_from(el);
+            dump(val);
         }
     }
 
@@ -685,10 +907,26 @@ struct reflection_cbor_serializer
         if (bin.has_subtype())
         {
             const auto st = bin.subtype();
-            if (st <= 0xFF)         { out.push_back(0xD8); out.push_back(static_cast<std::uint8_t>(st)); }
-            else if (st <= 0xFFFF)  { out.push_back(0xD9); append_big(static_cast<std::uint16_t>(st)); }
-            else if (st <= 0xFFFFFFFFu) { out.push_back(0xDA); append_big(static_cast<std::uint32_t>(st)); }
-            else                    { out.push_back(0xDB); append_big(static_cast<std::uint64_t>(st)); }
+            if (st <= 0xFF)
+            {
+                out.push_back(0xD8);
+                out.push_back(static_cast<std::uint8_t>(st));
+            }
+            else if (st <= 0xFFFF)
+            {
+                out.push_back(0xD9);
+                append_big(static_cast<std::uint16_t>(st));
+            }
+            else if (st <= 0xFFFFFFFFu)
+            {
+                out.push_back(0xDA);
+                append_big(static_cast<std::uint32_t>(st));
+            }
+            else
+            {
+                out.push_back(0xDB);
+                append_big(static_cast<std::uint64_t>(st));
+            }
         }
         // byte string body: major type 2
         prefix(2, bin.size());

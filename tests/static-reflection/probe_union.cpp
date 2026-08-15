@@ -14,7 +14,10 @@
 
 #include <meta>
 
-struct obj_t { int x; };
+struct obj_t
+{
+    int x;
+};
 
 union json_value
 {
@@ -57,9 +60,9 @@ int main()
     std::printf("  [4] %-15s pointer=%d\n", std::string(std::meta::identifier_of(m4)).c_str(), static_cast<int>(member_is_pointer<4>()));
 
     bool ok = (N == 5)
-           && member_is_pointer<0>() && member_is_pointer<1>()   // object / array
-           && !member_is_pointer<2>() && !member_is_pointer<3>() // numbers
-           && !member_is_pointer<4>();                           // boolean
+              && member_is_pointer<0>() && member_is_pointer<1>()   // object / array
+              && !member_is_pointer<2>() && !member_is_pointer<3>() // numbers
+              && !member_is_pointer<4>();                           // boolean
     std::printf(ok ? "UNION REFLECTION PROBE PASSED\n" : "UNION REFLECTION PROBE MISMATCH\n");
     return ok ? 0 : 1;
 }

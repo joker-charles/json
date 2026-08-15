@@ -18,9 +18,20 @@ using json = nlohmann::json;
 enum class Color : int { Red = 1, Green = 2, Blue = 3 };
 
 // custom struct: exercises object_like/array_like interplay and adl_serializer
-struct Point { int x; int y; };
-inline void to_json(json& j, const Point& p) { j = json{{"x", p.x}, {"y", p.y}}; }
-inline void from_json(const json& j, Point& p) { j.at("x").get_to(p.x); j.at("y").get_to(p.y); }
+struct Point
+{
+    int x;
+    int y;
+};
+inline void to_json(json& j, const Point& p)
+{
+    j = json{{"x", p.x}, {"y", p.y}};
+}
+inline void from_json(const json& j, Point& p)
+{
+    j.at("x").get_to(p.x);
+    j.at("y").get_to(p.y);
+}
 
 static int failures = 0;
 #define CHECK(cond, label) do { if (!(cond)) { ++failures; std::printf("  [FAIL] %s\n", label); } } while (0)
@@ -60,7 +71,7 @@ int main()
 
     // array to_json (concepts::array_like path in C++20)
     {
-        std::vector<int> v{1,2,3};
+        std::vector<int> v{1, 2, 3};
         json j(v);
         CHECK(j.is_array() && j.size() == 3, "array-like to_json");
     }

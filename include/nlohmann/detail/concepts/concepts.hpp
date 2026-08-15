@@ -74,15 +74,17 @@ concept has_iterator_type =
 // from array_like (drift fix, see M4_ASSESSMENT §7).
 template<typename T>
 concept has_begin_end =
-    requires(std::remove_cvref_t<T>& t) {
-        std::begin(t);
-        std::end(t);
-    };
+    requires(std::remove_cvref_t<T>& t)
+{
+    std::begin(t);
+    std::end(t);
+};
 
 template<typename T>
 concept has_mapped_and_key =
     requires { typename std::remove_cvref_t<T>::mapped_type;
-               typename std::remove_cvref_t<T>::key_type; };
+               typename std::remove_cvref_t<T>::key_type;
+             };
 
 // ---------------------------------------------------------------------------
 // Layer 2: reusable semantic concepts. Each carries BasicJsonType because
@@ -107,9 +109,9 @@ template<typename B, typename T>
 concept object_like =
     has_mapped_and_key<T> &&
     nlohmann::detail::is_constructible<typename B::object_t::key_type,
-                                       typename T::key_type>::value &&
+    typename T::key_type>::value &&
     nlohmann::detail::is_constructible<typename B::object_t::mapped_type,
-                                       typename T::mapped_type>::value;
+    typename T::mapped_type>::value;
 
 // array_like<B, T> — mirrors is_compatible_array_type<B, T>.
 // Uses the library's is_range (begin/end + iterator-traits) and range_value_t
@@ -120,9 +122,9 @@ concept array_like =
     has_begin_end<T> &&
     nlohmann::detail::is_range<T>::value &&
     !std::is_same_v<std::remove_cvref_t<T>,
-                    nlohmann::detail::range_value_t<T>> &&
+    nlohmann::detail::range_value_t<T>> &&
     nlohmann::detail::is_constructible<B,
-                                       nlohmann::detail::range_value_t<T>>::value;
+    nlohmann::detail::range_value_t<T>>::value;
 
 // NOTE on the range-view dimension: is_compatible_range_view<T> deliberately
 // stays a trait (referenced in layer-3 requires, not folded into array_like).

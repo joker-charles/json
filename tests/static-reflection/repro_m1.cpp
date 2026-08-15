@@ -53,38 +53,59 @@ consteval std::string_view name_at(std::size_t i)
 //   discarded is not in the table (weight -1, i.e. unordered).
 consteval int sort_weight(std::string_view id)
 {
-    if (id == "null") return 0;
-    if (id == "boolean") return 1;
-    if (id == "number_integer" || id == "number_unsigned" || id == "number_float") return 2;
-    if (id == "object") return 3;
-    if (id == "array") return 4;
-    if (id == "string") return 5;
-    if (id == "binary") return 6;
+    if (id == "null")
+    {
+        return 0;
+    }
+    if (id == "boolean")
+    {
+        return 1;
+    }
+    if (id == "number_integer" || id == "number_unsigned" || id == "number_float")
+    {
+        return 2;
+    }
+    if (id == "object")
+    {
+        return 3;
+    }
+    if (id == "array")
+    {
+        return 4;
+    }
+    if (id == "string")
+    {
+        return 5;
+    }
+    if (id == "binary")
+    {
+        return 6;
+    }
     return -1; // discarded
 }
 
 template<std::size_t... I>
 consteval auto names_impl(std::index_sequence<I...>)
 {
-    return std::array<std::string_view, sizeof...(I)>{ name_at(I)... };
+    return std::array<std::string_view, sizeof...(I)> { name_at(I)... };
 }
 
 template<std::size_t... I>
 consteval auto weights_impl(std::index_sequence<I...>)
 {
-    return std::array<int, sizeof...(I)>{ sort_weight(name_at(I))... };
+    return std::array<int, sizeof...(I)> { sort_weight(name_at(I))... };
 }
 
 template<std::size_t N>
 consteval auto names_of()
 {
-    return names_impl(std::make_index_sequence<N>{});
+    return names_impl(std::make_index_sequence<N> {});
 }
 
 template<std::size_t N>
 consteval auto weights_of()
 {
-    return weights_impl(std::make_index_sequence<N>{});
+    return weights_impl(std::make_index_sequence<N> {});
 }
 
 } // namespace refl

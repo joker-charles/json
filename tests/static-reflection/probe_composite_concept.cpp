@@ -13,7 +13,7 @@
 #include <nlohmann/detail/meta/type_traits.hpp>  // single_include NOT used to avoid redefinition
 using namespace nlohmann::detail;
 using Real = long;                       // library number_integer_t on this platform
-using int_pair_t = std::pair<int,int>;
+using int_pair_t = std::pair<int, int>;
 using tuple1_t   = std::tuple<int>;
 
 // (A) wrap
@@ -35,20 +35,23 @@ constexpr bool trait_v = is_compatible_integer_type<R, C>::value;
 
 // consensus helper: trait/wrap/expand must agree and equal `want`
 template<typename C, bool want>
-bool consensus(const char* name){
-    constexpr bool tv = trait_v<Real,C>;
-    constexpr bool wr = compatible_integer_wrap<Real,C>;
-    constexpr bool ex = compatible_integer_expand<Real,C>;
+bool consensus(const char* name)
+{
+    constexpr bool tv = trait_v<Real, C>;
+    constexpr bool wr = compatible_integer_wrap<Real, C>;
+    constexpr bool ex = compatible_integer_expand<Real, C>;
     static_assert(tv == want, "trait disagrees with expected");
-    if (!(tv==wr && tv==ex)){
+    if (!(tv == wr && tv == ex))
+    {
         std::printf("  [DISAGREE] %-18s trait=%d wrap=%d expand=%d (want %d)\n",
-                    name,(int)tv,(int)wr,(int)ex,(int)want);
+                    name, (int)tv, (int)wr, (int)ex, (int)want);
         return true;
     }
     return false;
 }
 
-int main(){
+int main()
+{
     int bad = 0;
     bad += consensus<int,                true >("int");
     bad += consensus<short,              true >("short");

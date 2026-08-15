@@ -17,7 +17,10 @@ class Outer
     int secret = 42;
 
   public:
-    int get() const { return secret; }
+    int get() const
+    {
+        return secret;
+    }
 };
 
 consteval auto private_member()
