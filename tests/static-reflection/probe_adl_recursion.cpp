@@ -160,6 +160,12 @@ struct DerivedPriv : Base2, private PrivBase2
 struct Collide1 { int x{}; };
 struct Collide2 { int x{}; };
 struct Dia2 : Collide1, Collide2 { int y{}; };
+struct VBase { int vb{}; };
+struct V1 : virtual VBase { int x1{}; };
+struct V2 : virtual VBase { int x2{}; };
+struct DiaV : V1, V2 { int y{}; };
+struct IncompleteT; // forward-declared, never defined
+struct BF { int a : 3; int : 2; int b : 5; int c{}; };
 
 // member-count facts used by the [0] classification checks
 template<typename T>
@@ -379,9 +385,13 @@ int main()
         codec_public::to_json(jd3, d3);
         check("derived round-trip preserves base members", jd3 == jd2);
     }
-    check("private base detected under unprivileged (compile-time guard)",
-          refl2::has_inaccessible_bases_p<false, DerivedPriv>() &&
-          !refl2::has_inaccessible_bases_p<false, Derived2>());
+    check("private vs protected base classification (is_private/is_protected)",
+          refl2::has_private_bases_p<false, DerivedPriv>() &&
+          !refl2::has_protected_bases_p<false, DerivedPriv>() &&
+          !refl2::has_private_bases_p<false, Derived2>());
+    check("virtual base detected (shared virtual subobject guard)",
+          refl2::has_virtual_bases_p<false, DiaV>() &&
+          !refl2::has_virtual_bases_p<false, Derived2>());
     check("duplicate member names across hierarchy detected (compile-time guard)",
           refl2::has_duplicate_member_keys<false, Dia2>() &&
           !refl2::has_duplicate_member_keys<false, Derived2>());
@@ -391,6 +401,27 @@ int main()
         codec_all::to_json(jdp, dp);
         check("codec<true>: private base included (unchecked)",
               jdp.dump() == R"({"base_id":1,"base_name":"b","hidden":42,"own":0})");
+    }
+
+    // ---- (G) toolchain facts: guards, virtual bases, bit-fields -----------
+    std::printf("\n[G] toolchain facts (is_enumerable_type, is_bit_field)\n");
+    check("is_enumerable_type pre-checks the bases_of enumeration trap",
+          std::meta::is_enumerable_type(^^Derived2) &&
+          !std::meta::is_enumerable_type(^^IncompleteT));
+    check("bit-field classification: reflectable, not array-like",
+          refl2::is_reflectable_struct<false, BF>::value &&
+          !refl2::is_array_like<BF>::value &&
+          refl2::member_count<false, BF> == 3);
+    {
+        BF bf{}; bf.a = 3; bf.b = 5; bf.c = 9;
+        json jbf;
+        codec_public::to_json(jbf, bf);
+        check("named bit-fields serialize; unnamed bit-field skipped",
+              jbf.dump() == R"({"a":3,"b":5,"c":9})");
+        BF bf2{};
+        codec_public::from_json(jbf, bf2);
+        check("bit-field from_json round-trip",
+              bf2.a == 3 && bf2.b == 5 && bf2.c == 9);
     }
 
     // ---- (E) v1 compatibility on flat structs ------------------------------

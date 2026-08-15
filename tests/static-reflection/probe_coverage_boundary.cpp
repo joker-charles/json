@@ -9,9 +9,12 @@
 // static_assert; map<exotic-key,int> errors in refl2's key_string;
 // vector<non-default-constructible> from_json errors via the element's
 // priority-0 static_assert; value_type-less incompatible ranges die deep in
-// nlohmann's range path (adl branch); private/protected bases and duplicate
-// member names across the hierarchy are clean static_asserts (inheritance
-// guards).
+// nlohmann's range path (adl branch); the inheritance guards are clean
+// static_asserts: private and protected bases (distinct messages via
+// is_private / is_protected), virtual bases (is_virtual — a shared virtual
+// subobject would duplicate its members), and duplicate member names across
+// the hierarchy. Bit-fields serialize normally; unnamed bit-fields are
+// skipped (not subobjects); bit-field from_json assigns via get<M>().
 //
 // Compile: g++-16 -std=c++26 -freflection -O0 -Itests/static-reflection -Iinclude \
 //            -o /tmp/pcb tests/static-reflection/probe_coverage_boundary.cpp && /tmp/pcb

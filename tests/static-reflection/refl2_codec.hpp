@@ -52,11 +52,17 @@
 // access-filtered, bases first) with a consteval recursion into each base
 // via type_of(base_info) — multi-level, depth-first, layout order. Verified
 // on this toolchain: the member-access splice v.[:m:] works for members of
-// base classes. Two inheritance shapes are compile errors instead of silent
-// loss: private/protected bases under codec<false> (has_inaccessible_bases;
-// use codec<true> or a to_json) and duplicate member names across the
-// hierarchy (e.g. same name in base and derived, or diamond inheritance) —
-// they would silently overwrite JSON keys.
+// base classes. Three shapes are compile errors instead of silent loss:
+// (1) private bases and (2) protected bases under codec<false> — detected
+// with is_private / is_protected on the unchecked base list (use codec<true>
+// or a to_json); (3) virtual bases — a shared virtual base would flatten its
+// members multiple times while C++ has one virtual subobject, so members
+// would wrongly duplicate (is_virtual; deduplication not implemented).
+// Duplicate member names across the hierarchy (same name in base and derived,
+// or diamond inheritance) are also compile errors — they would silently
+// overwrite JSON keys. Bit-fields: named bit-fields serialize normally
+// (verified; the splice copies the value), unnamed bit-fields are not
+// subobjects and are skipped by subobjects_of.
 //
 // Coverage boundary (what is NOT handled — falls to the priority-0
 // static_assert with an actionable message):
@@ -235,11 +241,68 @@ consteval bool has_duplicate_member_keys()
 }
 
 // private/protected bases: subobjects_of(unprivileged) filters them out, so
-// their members would be silently dropped — a compile error under codec<false>
+// their members would be silently dropped — a compile error under codec<false>.
+// is_private / is_protected (on the unchecked base list) give the precise
+// access kind for the diagnostic. (codec<true> serializes them via unchecked.)
 template<bool U, typename T>
-consteval bool has_inaccessible_bases_p()
+consteval bool has_private_bases_p()
 {
-    return std::meta::has_inaccessible_bases(^^T, reflect_context(U));
+    const std::size_t n = std::meta::bases_of(^^T, std::meta::access_context::unchecked()).size();
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (std::meta::is_private(std::meta::bases_of(^^T, std::meta::access_context::unchecked())[i]))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+template<bool U, typename T>
+consteval bool has_protected_bases_p()
+{
+    const std::size_t n = std::meta::bases_of(^^T, std::meta::access_context::unchecked()).size();
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (std::meta::is_protected(std::meta::bases_of(^^T, std::meta::access_context::unchecked())[i]))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+// virtual bases: subobjects_of reports each virtual-base relationship, so a
+// shared virtual base (e.g. diamond with virtual inheritance) would be
+// flattened multiple times — but C++ has ONE virtual subobject, so its
+// members would wrongly duplicate in the JSON object. Deduplication is not
+// implemented; a clean compile error instead (is_virtual verified on this
+// toolchain). Checks recursively (the virtual base may be nested).
+consteval bool has_virtual_bases_info(std::meta::info cls, std::meta::access_context ctx)
+{
+    const std::size_t nsub = std::meta::subobjects_of(cls, ctx).size();
+    for (std::size_t i = 0; i < nsub; ++i)
+    {
+        const auto s = std::meta::subobjects_of(cls, ctx)[i];
+        if (std::meta::is_base(s))
+        {
+            if (std::meta::is_virtual(s))
+            {
+                return true;
+            }
+            if (has_virtual_bases_info(std::meta::type_of(s), ctx))
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+template<bool U, typename T>
+consteval bool has_virtual_bases_p()
+{
+    return has_virtual_bases_info(^^T, reflect_context(U));
 }
 
 template<bool U, typename T, typename = void>
@@ -280,6 +343,12 @@ inline constexpr std::meta::info member_v = flat_member(^^T, reflect_context(U),
 template<bool U, typename T, std::size_t I>
 inline constexpr std::string_view member_key_v =
     std::meta::identifier_of(member_v<U, T, I>);
+
+// bit-field members cannot bind to a T& (no address), so from_json must
+// assign via get<M>() instead of recursing into a T&
+template<bool U, typename T, std::size_t I>
+inline constexpr bool member_is_bit_field_v =
+    std::meta::is_bit_field(member_v<U, T, I>);
 
 // ---------------------------------------------------------------------------
 // The codec. All member functions are static; Unchecked is the access policy.
@@ -344,10 +413,18 @@ struct codec
     requires is_reflectable_struct<Unchecked, T>::value
     static void serialize_one_impl(B& j, const T& v, priority_tag<1>)
     {
-        static_assert(Unchecked || !has_inaccessible_bases_p<Unchecked, T>(),
-                      "refl2: private/protected base class under the unprivileged "
-                      "policy would silently drop its members — use codec<true> or "
-                      "add a to_json for the type");
+        static_assert(Unchecked || !has_private_bases_p<Unchecked, T>(),
+                      "refl2: private base class under the unprivileged policy "
+                      "would silently drop its members — use codec<true> or add "
+                      "a to_json for the type");
+        static_assert(Unchecked || !has_protected_bases_p<Unchecked, T>(),
+                      "refl2: protected base class under the unprivileged policy "
+                      "would silently drop its members — use codec<true> or add "
+                      "a to_json for the type");
+        static_assert(!has_virtual_bases_p<Unchecked, T>(),
+                      "refl2: virtual base class not supported — a shared virtual "
+                      "base would flatten its members multiple times (C++ has one "
+                      "virtual subobject); deduplication is not implemented");
         static_assert(!has_duplicate_member_keys<Unchecked, T>(),
                       "refl2: duplicate member names across the class hierarchy "
                       "(e.g. same name in a base and a derived class, or diamond "
@@ -449,10 +526,18 @@ struct codec
     requires is_reflectable_struct<Unchecked, T>::value
     static void deserialize_one_impl(const B& j, T& v, priority_tag<1>)
     {
-        static_assert(Unchecked || !has_inaccessible_bases_p<Unchecked, T>(),
-                      "refl2: private/protected base class under the unprivileged "
-                      "policy would silently drop its members — use codec<true> or "
-                      "add a from_json for the type");
+        static_assert(Unchecked || !has_private_bases_p<Unchecked, T>(),
+                      "refl2: private base class under the unprivileged policy "
+                      "would silently drop its members — use codec<true> or add "
+                      "a from_json for the type");
+        static_assert(Unchecked || !has_protected_bases_p<Unchecked, T>(),
+                      "refl2: protected base class under the unprivileged policy "
+                      "would silently drop its members — use codec<true> or add "
+                      "a from_json for the type");
+        static_assert(!has_virtual_bases_p<Unchecked, T>(),
+                      "refl2: virtual base class not supported — a shared virtual "
+                      "base would flatten its members multiple times (C++ has one "
+                      "virtual subobject); deduplication is not implemented");
         static_assert(!has_duplicate_member_keys<Unchecked, T>(),
                       "refl2: duplicate member names across the class hierarchy "
                       "(e.g. same name in a base and a derived class, or diamond "
@@ -501,10 +586,27 @@ struct codec
     }
 
     template<typename B, typename T, std::size_t I>
-    static void deserialize_member(const B& j, T& v)
+    static void deserialize_member(const B& j, T& v, std::true_type /* bit-field */)
+    {
+        static const std::string key = std::string(member_key_v<Unchecked, T, I>);
+        using M = typename [: std::meta::type_of(member_v<Unchecked, T, I>) :];
+        v.[:member_v<Unchecked, T, I>:] = j.at(key).template get<M>();
+    }
+
+    template<typename B, typename T, std::size_t I>
+    static void deserialize_member(const B& j, T& v, std::false_type /* ordinary */)
     {
         static const std::string key = std::string(member_key_v<Unchecked, T, I>);
         deserialize_one(j.at(key), v.[:member_v<Unchecked, T, I>:]);
+    }
+
+    // bit-fields cannot bind to a T& (no address): tag-dispatch instead of
+    // if-constexpr-with-splices (GCC 16 does not discard the false branch);
+    // explicit <B,T,I> needed — I is not deducible from the tag argument
+    template<typename B, typename T, std::size_t I>
+    static void deserialize_member(const B& j, T& v)
+    {
+        deserialize_member<B, T, I>(j, v, std::bool_constant<member_is_bit_field_v<Unchecked, T, I>>{});
     }
 
     template<typename B, typename T, std::size_t... I>
