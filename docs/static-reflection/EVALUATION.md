@@ -17,8 +17,10 @@
 > Absolute values — and some ratios — may differ substantially on other
 > compilers (Clang/MSVC), other library versions, or other type shapes;
 > the durable findings are the **methodology** and the **same-toolchain
-> relative relationships** (e.g. refl2 never slower than the macro
-> baseline, size identity at -O2).
+> relative relationships** (e.g. on flat/shallow-nested types refl2 is
+> never slower than the macro baseline at runtime and size-identical at
+> -O2; the extended inheritance/optional/bit-field paths are measured in
+> §2.2 and do not collapse quite as far).
 
 This document records *how* we evaluated two modernization directions for a
 header-only template library (nlohmann/json) — (A) replacing hand-written
@@ -414,7 +416,10 @@ point answers different questions depending on who pays the one-time cost:
   of this evaluation: the codec is a header the user copies into their
   project). Per-type user lines: macro = struct + macro call = 2/type;
   reflection = struct only = 1/type; one-time cost: v1 = 25 lines
-  (flat structs only), v2 = 667 lines (refl2_codec.hpp, whole file).
+  (flat structs only), v2 = 667 lines (refl2_codec.hpp, whole file; the
+  code body alone is 463 lines — 148 comment / 56 blank lines are the
+  design/pitfall/coverage documentation, see §2.1; counting only code moves
+  the v2 break-even to ≈ 463 types).
 
   | types | macro | refl v1 | refl2 v2 |
   |---|---|---|---|
@@ -554,7 +559,8 @@ nested — the old-codec flat median 2.438 vs v1 2.221 is the largest) are a
 small fraction of the conversion-layer component — no end-to-end regression.
 
 Reading the numbers:
-- refl2 v2 is **never slower than the macro baseline**, and on the nested
+- refl2 v2 is **never slower than the macro baseline on the flat and
+  shallow-nested bench types**, and on the nested
   directions it is **~13–19% faster** (medians: nested serialize 1.215 vs
   1.398; nested deserialize 0.201 vs 0.248). Plausible cause: v2's pre-built
   static keys vs the macro's per-call literal→`std::string` construction —
@@ -575,6 +581,63 @@ Reading the numbers:
 
 Absolute values are machine-specific; ratios within the same binary run are
 the point.
+
+**Extended paths (inheritance / std::optional / bit-fields)** — the new
+dispatch branches (§2.1) measured with
+`tests/static-reflection/bench_extended.cpp`: a multi-level `DerivedPerson`
+(4 members across 3 levels), an `OptionalPerson` (`std::optional<Address>`
+member, toggled empty/has-value by the loop index), and a `BitFieldStruct`
+(two named bit-fields + one int), each in macro vs refl2 mode with identical
+flags (-O2). Macro baselines: inheritance lists the base-class public members
+in the macro (legal — the expansion is `j["base_name"] = v.base_name`);
+optional uses nlohmann's native optional support; bit-fields have NO macro
+`from_json` (`get_to` needs a `T&`, a bit-field has no address) so the
+baseline is a hand-written `get<M>()`-assignment serializer — the "ideal
+macro" shape. Both modes print identical totals (parity).
+
+**Binary (-O2)**:
+
+| TU | macro exe / text | refl2 exe / text | delta |
+|---|---|---|---|
+| all three types | 230,728 / 175,900 | 243,432 / 178,260 | exe +12,704 (+5.5%) / text +2,360 (+1.3%) |
+| inherited only | — / 65,834 | — / 73,468 | text +7,634 (+11.6%) |
+| optional only | — / 66,336 | — / 74,035 | text +7,699 (+11.6%) |
+| bitfield only | — / 71,232 | — / 69,687 | text −1,545 (−2.2%) |
+
+Unlike the flat path (exe exactly equal, text within 32 B), the extended
+paths do NOT collapse to byte-identity with their macro baselines: the
+inheritance and optional dispatch adds ~7.6 KB text each in a single-type TU
+(+11.6%), and ~2.4 KB text / ~12.7 KB exe for the full three-type TU
+(+1.9% / +5.5% — the shared framework amortizes the per-type overhead). The
+bit-field path is *smaller* than the hand-written baseline (−1.5 KB, −2.2%):
+refl2's `get<M>()` assignment compiles tighter than the initializer-list
+baseline. Section attribution: `.text` +2.4 KB (the dispatch framework),
+`.data` +0.8 KB (12 static key objects vs the macro's string literals).
+
+**Runtime** (min/median of 5 binary runs, -O2, seed 12345, us/op):
+
+| direction | macro | refl2 |
+|---|---|---|
+| inherited serialize | 0.276 / 0.279 | 0.295 / 0.297 |
+| inherited deserialize | 0.076 / 0.078 | 0.060 / 0.061 |
+| inherited round-trip | 1.473 / 1.473 | 1.391 / 1.394 |
+| optional serialize | 0.276 / 0.278 | 0.289 / 0.291 |
+| optional deserialize | 0.066 / 0.066 | 0.051 / 0.053 |
+| optional round-trip | 1.296 / 1.307 | 1.249 / 1.251 |
+| bitfield serialize | 0.540 / 0.548 | 0.212 / 0.213 |
+| bitfield deserialize | 0.054 / 0.054 | 0.034 / 0.034 |
+| bitfield round-trip | 1.242 / 1.249 | 0.886 / 0.890 |
+
+Reading: deserialize is consistently faster (inherited −22%, optional −20%,
+bit-field −37% on the medians) and round-trip is faster or equal — but
+**serialize is 5–6% slower for inherited/optional** (0.297 vs 0.279; 0.291
+vs 0.278): the extended dispatch does not collapse quite as well as the flat
+path on the to_json side, while from_json's member loop wins. Bit-fields
+serialize 61% faster — but the hand-written initializer-list baseline is the
+slow shape, not the typical macro one. **The flat-path headline "never
+slower than macro" does NOT transfer unchanged**: the extended paths are
+faster on deserialize/round-trip and ~5–6% slower on serialize for
+inherited/optional types.
 
 **Q4 diagnostics** — verified with a deliberate bad type (`std::mutex`
 member, which is neither adl-able nor reflectable):
@@ -923,6 +986,24 @@ Claims that **did not reproduce** and were corrected:
   unaffected (bench types are flat, no optional/inheritance/bit-fields) —
   N=50 -O2 macro vs refl2 re-verified size-identical (182,608 B each) with
   the new codec.
+- **Extended-path measurements (inheritance / optional / bit-fields)** (this
+  revision): `bench_extended.cpp` closes the coverage gap — the Q3 table only
+  covered flat persons and the runtime bench only flat/nested. Findings that
+  bound the flat-path headlines:
+  - Binary at -O2: the extended paths do NOT collapse to byte-identity with
+    their macro baselines — text +1.9% / exe +5.5% for the full three-type
+    TU, +11.6% per inherited/optional single-type TU (dispatch framework),
+    while bit-fields are −2.2% smaller than the hand-written baseline.
+    The flat-path "size-identical at -O2" claim is now scoped to flat types.
+  - Runtime: deserialize consistently faster (inherited −22%, optional −20%,
+    bit-field −37%), round-trip faster or equal, but **serialize is 5–6%
+    slower for inherited/optional** — the flat-path "never slower than the
+    macro baseline" claim is scoped to flat/shallow-nested types (header
+    note + §2.2 updated). Bit-field serialize is 61% faster than the
+    hand-written initializer-list baseline (the baseline shape, not the
+    typical macro one).
+  - The Q1 Scenario-A break-even is reported with both figures: 667 lines
+    (whole file, conservative) and 463 lines (code body only; ≈ 463 types).
 - §2.2 "nm counts 288 symbols at N=50": misattributed — the new sweep shows
   238 at N=50 (288 is the N=100 value; macro/v2 identical at every N). The
   claim itself (v2 `nm` == macro at -O2) holds and is now stated for all N.
