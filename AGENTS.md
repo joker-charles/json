@@ -79,6 +79,44 @@ Same toolchain ⇒ trust these; re-deriving them is wasted work.
     `define_static_array(...)` expression or a namespace-scope/static constexpr.
   - `if constexpr` does NOT discard the false branch; dispatch by tag overload /
     partial specialization.
+  - Every member/base query takes TWO arguments — `(info, access_context)` —
+    with no default: `members_of`, `bases_of`, `nonstatic_data_members_of`,
+    `subobjects_of`, `static_data_members_of` (GCC rejects the one-arg form).
+  - `subobjects_of(^^T, ctx)` is the **unified list** for inheritance: direct
+    base subobjects first, then direct non-static data members, access-
+    filtered (`unprivileged()` = public only; `unchecked()` = everything).
+    `is_base(info)` distinguishes base entries from member entries. A derived
+    type's members are NOT in `nonstatic_data_members_of` (base members
+    silently dropped) — recurse `subobjects_of(type_of(base_info), ctx)`
+    depth-first, base-before-member, for full inheritance; the member-access
+    splice `v.[:m:]` works for members of base classes too.
+  - **`bases_of` enumeration trap** (verified; real issue, cf. LLVM #172136):
+    an info from `bases_of(...)[i]` is not enumerable directly —
+    `nonstatic_data_members_of(b0, ctx)` throws `not a complete class type`
+    even in a consteval function. Recover the type first
+    (`using B = typename [: type_of(b0) :];`), or pre-check with
+    `is_enumerable_type` (false for incomplete types). `is_complete_type`
+    also available.
+  - **Access-classification predicates need no context**: `is_public` /
+    `is_protected` / `is_private` (and `is_virtual`) on base/member infos.
+    `has_inaccessible_bases` / `has_inaccessible_nonstatic_data_members` /
+    `has_inaccessible_subobjects` are the dedicated "private/protected
+    present" detectors. Protected entities need a naming-class context
+    (`access_context::via(^^Derived)`) — `unprivileged()` cannot see them.
+  - **Virtual bases duplicate on flatten**: `subobjects_of` reports each
+    virtual-base relationship, so a shared virtual base (diamond + virtual
+    inheritance) flattens its members multiple times while C++ has ONE such
+    subobject — deduplicate or compile-error; don't let it surface as a
+    duplicate-key error.
+  - **Bit-fields** (`is_bit_field`): serialize fine (const-ref copy), but
+    `from_json` cannot bind them to a `T&` (no address — macro paths have the
+    same limit); assign via `j.at(k).get<M>()`. Unnamed bit-fields are NOT
+    subobjects and are skipped by `subobjects_of`. A class with a
+    private/protected base is NOT an aggregate (C++17) — needs a ctor.
+  - **Tag-dispatch pitfall**: a dispatcher forwarding to tagged overloads
+    (`m(j, v, std::bool_constant<flag>{})`) fails to deduce the non-type
+    template parameter `I` even though `bool_constant<false>` IS
+    `std::false_type` — pass the explicit list: `m<B, T, I>(j, v, tag)`.
 - **Concepts dual-path** (verified by `concepts_smoke.cpp` + layered probes):
   - `concepts::array_like/object_like/string_like` are **byte-identical** to the
     traits only when they use the *exact* probe targets: for `array_like` the
