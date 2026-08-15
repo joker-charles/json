@@ -266,8 +266,11 @@ from the previous revision)**:
   class-vs-scalar recursion
 
 Reflection serializer **v2 ("refl2")** — the ADL-aware recursive codec added
-in this revision (mode `-DBENCH_ADL_REFLECTION`; reference implementation
-exercised by `tests/static-reflection/probe_adl_recursion.cpp`, see §2.5).
+in an earlier revision and optimized in this one (mode
+`-DBENCH_ADL_REFLECTION`). The codec is a standalone
+header, `tests/static-reflection/refl2_codec.hpp` (the single source of truth
+shared by the probe `probe_adl_recursion.cpp`, the compile bench
+`bench_macro_vs_reflection.cpp` and the runtime bench `bench_runtime.cpp`).
 It implements the recursive dispatch inside the serializer itself:
 
 ```
@@ -294,8 +297,48 @@ serialize_one(j, v), highest priority first:
   (`codec<false>`) — private members are neither serialized nor parsed;
   `codec<true>` switches to `unchecked()` for library-internal use (the
   two-layer policy from §2.3, demonstrated in §2.5).
-- The whole `namespace refl2` block is **311 lines** plus the (shared)
-  `#include <meta>` = 312 lines one-time cost.
+- One-time cost: the header is **404 lines** total — 275 lines of code
+  (including the 9 `#include`/`#pragma once` lines), 86 comment lines (57 of
+  them the design/pitfall/coverage documentation block), 43 blank lines. This
+  replaces the earlier inline `namespace refl2` block (311 lines + 1
+  `#include <meta>` = 312); the increase buys the optimization machinery
+  below and the documented coverage boundary.
+
+**Optimizations in this revision** (measured, see §2.2 runtime):
+- **Member keys are one-time-initialized `static const std::string`**
+  (function-local magic statics, thread-safe init, arbitrary length) instead
+  of a per-call `std::string(identifier_of(m))` — removes the per-member
+  runtime key construction and its call-site codegen. A constexpr
+  `std::array<std::string, N>` key table was tried first and **rejected**: on
+  this toolchain (g++-16, libstdc++ 16) it constant-initializes only for SSO
+  keys (≤15 chars); longer keys fail with `refers to a result of 'operator new'`.
+- The member loop switched from `template for` to an `std::index_sequence`
+  pack expansion over consteval variable templates (`member_v<U,T,I>`,
+  `member_key_v<U,T,I>`, `member_count<U,T>`) — the pattern this branch
+  verified on GCC 16; still no `if constexpr`-with-splices anywhere.
+- The array branch serializes directly into `j.emplace_back()` (which returns
+  a reference to the new element) instead of a temp `json` + `push_back`.
+- **Diagnostic hardening**: `adl_branch_eligible` now excludes C arrays unless
+  string-like (`!(std::is_array<T>::value && !is_string_like<B,T>)`) — a plain
+  C array no longer falls into nlohmann's C-array `to_json` path and dies with
+  a deep library error; it hits the clean priority-0 `static_assert` instead
+  (`char[N]` still serializes as a string).
+
+**Coverage boundary** (what v2 deliberately does NOT handle — such types fall
+to the priority-0 `static_assert` with an actionable message; each extension
+below raises the one-time cost beyond the current 404 lines):
+- **Inheritance**: `nonstatic_data_members_of` reports only directly-declared
+  members, so base-class members are silently ignored (would need `bases_of`
+  recursion, ~15 lines).
+- **Private/protected base classes; unions; `std::variant`** (would need
+  `variant_size`/`variant_alternative` integration, ~20 lines).
+- **`std::optional<T>` only when T is adl-able** — `optional<PlainStruct>` falls
+  through; **pointers / self-referential types**.
+- **Ranges with `begin`/`end` but no `value_type` member; non-default-
+  constructible container elements** (`from_json` needs `value_type{}`);
+  **map keys other than string-like / arithmetic**.
+- C arrays: not supported, but now a clean compile error (string-like
+  `char[N]` still works).
 
 Two new pitfalls were hit and fixed while building v2 (reproduced by the
 probe):
@@ -321,63 +364,97 @@ Re-measured in one session (three modes, same TU, same `-std=c++26
 counter — the JSON output is identical — so the numbers are pure serializer
 cost, not behavior drift.
 
-**Q1 code saved** (per-type user lines: macro = struct + macro call = 2/type;
-reflection = struct only = 1/type; one-time cost: v1 = 25 lines, v2 = 312):
+**Q1 code saved** — reported in **two scenarios**, because the break-even
+point answers different questions depending on who pays the one-time cost:
 
-| types | macro | refl v1 | refl2 v2 |
-|---|---|---|---|
-| 1 | 2 | 26 | 313 |
-| 20 | 40 | 45 | 332 |
-| **25** | 50 | 50 | 337 |
-| 50 | 100 | 75 | 362 |
-| 100 | 200 | 125 | 412 |
-| **312** | 624 | 337 | 624 |
+- **Scenario A — the user writes the serializer themselves** (the status quo
+  of this evaluation: the codec is a header the user copies into their
+  project). Per-type user lines: macro = struct + macro call = 2/type;
+  reflection = struct only = 1/type; one-time cost: v1 = 25 lines
+  (flat structs only), v2 = 404 lines (refl2_codec.hpp, whole file).
 
-Both reflection versions save **1 line per type**; the naive v1 needs a
-**25-line** one-time serializer (break-even ≈ 25 types) but only works for
-flat structs, while the complete v2 (recursion + ADL + private-member policy)
-needs a **312-line** one-time serializer (break-even ≈ 312 types) and handles
-nested structs, containers of plain structs, user customization and
-`unprivileged()` access control — which v1 cannot do at all.
+  | types | macro | refl v1 | refl2 v2 |
+  |---|---|---|---|
+  | 1 | 2 | 26 | 405 |
+  | 20 | 40 | 45 | 424 |
+  | **25** | 50 | 50 | 429 |
+  | 50 | 100 | 75 | 454 |
+  | 100 | 200 | 125 | 504 |
+  | **404** | 808 | 429 | 808 |
+
+  Both reflection versions save **1 line per type**; the naive v1 needs a
+  **25-line** one-time serializer (break-even ≈ 25 types) but only works for
+  flat structs, while the complete v2 (recursion + ADL + private-member
+  policy + the documented coverage boundary) needs a **404-line** one-time
+  serializer (break-even ≈ 404 types) and handles nested structs, containers
+  of plain structs, user customization and `unprivileged()` access control —
+  which v1 cannot do at all.
+
+- **Scenario B — the library ships v2 as a default facility** (like the
+  macros today): the user's one-time cost is **0**, so every type saves 1
+  line **from the very first type** (break-even = 1 type):
+
+  | types | macro | refl2 v2 | saved |
+  |---|---|---|---|
+  | 1 | 2 | 1 | 1 |
+  | 20 | 40 | 20 | 20 |
+  | 100 | 200 | 100 | 100 |
+
+  The 404-line codec then becomes a **maintainer cost** — paid once by the
+  library, amortized over all users — not a per-user cost. Scenario A's
+  "312 types to break even" framing was misleading: it only describes users
+  who re-implement the serializer by hand; for the library as a provider the
+  user-side cost is zero from the first type, and what the library actually
+  ships is the 404-line implementation (plus the extension burden documented
+  in §2.1's coverage boundary).
 
 **Q2 compile time** (same TU, same flags, min of 3):
 
 | N | macro -O0 | v1 -O0 | v2 -O0 | macro -O2 | v1 -O2 | v2 -O2 |
 |---|---|---|---|---|---|---|
-| 1 | 2.23 s | 2.34 s | 2.27 s | 3.12 s | 3.31 s | 3.12 s |
-| 20 | 2.31 s | 2.52 s | 2.45 s | 3.23 s | 3.81 s | 3.31 s |
-| 28 | 2.40 s | 2.63 s | 2.52 s | 3.41 s | 4.11 s | 3.45 s |
-| 50 | 2.63 s | 2.87 s | 2.78 s | 3.88 s | 4.99 s | 4.00 s |
-| 100 | 3.06 s | 3.51 s | 3.35 s | 4.99 s | 6.46 s | 4.92 s |
+| 1 | 2.21 s | 2.35 s | 2.29 s | 3.15 s | 3.32 s | 3.12 s |
+| 20 | 2.41 s | 2.59 s | 2.49 s | 3.39 s | 3.62 s | 3.03 s |
+| 28 | 2.50 s | 2.66 s | 2.57 s | 3.44 s | 4.25 s | 3.57 s |
+| 50 | 2.69 s | 2.98 s | 2.93 s | 3.96 s | 4.61 s | 3.63 s |
+| 100 | 2.77 s | 3.19 s | 3.13 s | 4.80 s | 7.26 s | 5.52 s |
 
-v2 is **cheaper to compile than v1** at every measured point (−2.8…−4.6% at
--O0, −6…−24% at -O2) and close to the macro baseline (+1.8…+9.5% at -O0;
-−1.4…+3.1% at -O2). The dispatch machinery is resolved at compile time and
-adds less per-type instantiation work than v1's per-member `j[...] = v.[:m:]`
-+ `std::string(identifier_of(m))` codegen.
+v2 is **cheaper to compile than v1** at every measured point (−1.7…−3.9% at
+-O0, −6.0…−24.0% at -O2) and close to the macro baseline (+2.8…+13.0% at
+-O0; −10.6…+15.0% at -O2 — the -O2 spread is dominated by min-of-3 wall-time
+noise: v2 beats macro at N=1/20/50 and trails at N=28/100). The dispatch
+machinery is resolved at compile time and adds less per-type instantiation
+work than v1's per-member `j[...] = v.[:m:]` +
+`std::string(identifier_of(m))` codegen.
 
 **Q3 binary** (executable bytes / `size` text, per N):
 
 | N | macro -O0 | v1 -O0 | v2 -O0 | macro -O2 | v1 -O2 | v2 -O2 |
 |---|---|---|---|---|---|---|
-| 1 | 393,656 / 169,117 | 484,512 / 198,990 | 395,632 / 169,901 | 113,384 / 80,047 | 119,888 / 85,148 | 113,384 / 80,047 |
-| 20 | 445,936 / 202,452 | 555,608 / 260,004 | 501,944 / 217,336 | 131,088 / 94,096 | 174,456 / 129,198 | 131,088 / 94,128 |
-| 28 | 470,560 / 216,484 | 584,264 / 285,692 | 546,544 / 237,304 | 145,120 / 106,145 | 194,248 / 149,898 | 145,120 / 106,177 |
-| 50 | 530,088 / 255,090 | 669,208 / 356,342 | 666,120 / 292,223 | 182,608 / 138,230 | 265,248 / 207,818 | 182,608 / 138,262 |
-| 100 | 667,600 / 342,916 | 850,360 / 517,028 | 939,752 / 417,157 | 266,640 / 208,829 | 421,720 / 342,878 | 266,640 / 208,861 |
+| 1 | 393,656 / 169,213 | 484,512 / 199,086 | 395,632 / 169,997 | 113,384 / 80,111 | 119,888 / 85,244 | 113,384 / 80,143 |
+| 20 | 445,936 / 202,548 | 555,608 / 260,100 | 501,944 / 217,432 | 131,088 / 94,192 | 174,456 / 129,294 | 131,088 / 94,224 |
+| 28 | 470,560 / 216,580 | 584,264 / 285,788 | 546,544 / 237,400 | 145,120 / 106,241 | 194,248 / 149,994 | 145,120 / 106,273 |
+| 50 | 530,088 / 255,186 | 669,208 / 356,438 | 666,120 / 292,319 | 182,608 / 138,326 | 265,248 / 207,914 | 182,608 / 138,358 |
+| 100 | 667,600 / 343,012 | 850,360 / 517,124 | 939,752 / 417,253 | 266,640 / 208,925 | 421,720 / 342,974 | 266,640 / 208,957 |
 
 **The headline**: at **-O2, v2 is size-identical to the macro version** — the
 executable size is exactly equal at every N (113,384 / 131,088 / 145,120 /
 182,608 / 266,640 B), `size text` is within 32 B (a read-only alignment gap;
-macro 94,096 vs v2 94,128 at N=20), and `nm` counts 288 symbols at N=50,
-identical to macro (v1: 300). True byte-identity is not expected: the linker
-build-id note hashes the TU content, and the two sources necessarily differ.
-The v2 dispatch (priority_tag ranking, adl_serializer indirection, reflection
-recursion) fully collapses under optimization: both paths converge on the
-same `adl_serializer`/`external_constructor` code the macro generates
-directly. v1 does NOT converge (its per-member string-key conversion +
-assignment survives optimization: +6…+58% exe at -O2) — so v2 is **smaller
-than v1 at -O2 by −5…−37%**.
+macro 94,192 vs v2 94,224 at N=20), and `nm` is identical to macro at every
+N (179 / 206 / 215 / 238 / 288 symbols; v1: 191 / 239 / 255 / 300 / 400).
+True byte-identity is not expected: the linker build-id note hashes the TU
+content, and the two sources necessarily differ. The v2 dispatch
+(priority_tag ranking, adl_serializer indirection, reflection recursion)
+fully collapses under optimization: both paths converge on the same
+`adl_serializer`/`external_constructor` code the macro generates directly.
+v1 does NOT converge (its per-member string-key conversion + assignment
+survives optimization: +6…+58% exe at -O2) — so v2 is **smaller than v1 at
+-O2 by −5…−37%**.
+
+The static-key optimization (§2.1) does **not** break size identity: the
+`static const std::string` keys are constant-folded into `.rodata` and
+identical keys merge (the binary holds exactly one copy of each member name,
+same as the macro's literals), so `.rodata` grows by only the same 32-B
+alignment gap and the executable size is unchanged at every N.
 
 At **-O0**, v2 sits between macro and v1: near-macro at N=1 (+0.5%), growing
 to +40.8% exe at N=100 (v1: +27.4%). The -O0 overhead is the un-collapsed
@@ -386,6 +463,54 @@ dispatch: `nm` at N=50 counts 1,871 symbols for v2 vs 1,621 (v1) / 1,471
 level and keep the generated code observable — but the new finding is that
 the -O0 bloat of v2 is *mostly optimization artifacts*: it evaporates at -O2
 to exactly zero.
+
+**Runtime (conversion layer)** — new in this revision:
+`tests/static-reflection/bench_runtime.cpp`, three modes selected by the same
+`-DBENCH_*` flags. Flat person (5 members) in all three modes; nested person
+(struct-in-struct with `vector<Address>`) in macro vs v2 (v1 cannot serialize
+nested types — skipped). Directions: `to_json` / `from_json` / round-trip.
+Method: warmup + 7 timed runs × 200k iterations (`BENCH_RUNS`/`BENCH_ITER`
+overridable), median us/op reported; the input varies with the loop index
+(`age += i%7`, `name += char`) and deserialize polls 8 pre-built json sources
+(`i%8`), so no work can be hoisted or eliminated at -O2; every iteration
+feeds a printed sink counter. `-O2`, seed 12345, min/median of 7 binary runs:
+
+| direction | macro | refl v1 | refl2 v2 (old codec) | refl2 v2 (optimized) |
+|---|---|---|---|---|
+| flat serialize | 0.688 / 0.693 | 0.588 / 0.590 | 0.659 / 0.696 | 0.658 / 0.665 |
+| flat deserialize | 0.110 / 0.112 | 0.101 / 0.103 | 0.111 / 0.115 | 0.103 / 0.105 |
+| nested serialize | 1.396 / 1.398 | — (v1 n/a) | 1.199 / 1.258 | 1.206 / 1.215 |
+| nested deserialize | 0.243 / 0.248 | — (v1 n/a) | 0.212 / 0.225 | 0.197 / 0.201 |
+
+Scope: `dump`/`parse` are library code, byte-identical across modes — the
+table measures only the **conversion layer** (DOM build / DOM read).
+Round-trip (`to_json` + `dump` + `parse` + `from_json`) is an end-to-end
+no-regression check: it is dominated by `dump`/`parse`, and all modes land in
+the same band (flat ≈ 2.2–2.5 us/op, nested ≈ 5.05–5.23 us/op), so the
+conversion-layer differences above are real but small.
+
+Reading the numbers:
+- refl2 v2 is **never slower than the macro baseline**, and on the nested
+  directions it is **~13–19% faster** (medians: nested serialize 1.215 vs
+  1.398; nested deserialize 0.201 vs 0.248). Plausible cause: v2's pre-built
+  static keys vs the macro's per-call literal→`std::string` construction —
+  each nested op touches 13 member keys (4 + 3×3), so the saving compounds.
+- v1's flat serialize is **~15% faster than macro** (0.590 vs 0.693): the
+  naive direct-assignment path (`j[...] = v.[:m:]`) is cheaper than the
+  library's object-construction path for the same output. Recorded as an
+  observation, not forced into an explanation.
+- Optimized vs old codec (the static-key / index_sequence rework): the
+  medians improve by ~4–10% (flat serialize 0.665 vs 0.696, flat deserialize
+  0.105 vs 0.115, nested serialize 1.215 vs 1.258, nested deserialize 0.201
+  vs 0.225) — the biggest relative gain is on deserialize, where `at(key)` is
+  called per member.
+- The earlier "exact-equal minima" across v1/old/new (0.553/0.095) were an
+  artifact of a measurement-script bug (an associative array not reset
+  between binaries — minima accumulated across modes); with the fixed script
+  each mode reports its own min/median (see §5).
+
+Absolute values are machine-specific; ratios within the same binary run are
+the point.
 
 **Q4 diagnostics** — verified with a deliberate bad type (`std::mutex`
 member, which is neither adl-able nor reflectable):
@@ -478,8 +603,9 @@ type is reachable.
 
 ### 2.5 The ADL-aware recursive codec: probe results
 
-`tests/static-reflection/probe_adl_recursion.cpp` verifies the three paths the
-v2 design depends on (18 checks, all PASS, ASan clean at -O1):
+`tests/static-reflection/probe_adl_recursion.cpp` verifies the paths the
+v2 design depends on — it includes the shared `refl2_codec.hpp` (no inline
+copy) and runs **21 checks, all PASS, ASan clean at -O0 and -O1**:
 
 - **[A] Nested plain structs** — struct-in-struct, `vector<PlainStruct>` and
   `map<string, PlainStruct>` members serialize and round-trip through the
@@ -501,7 +627,13 @@ v2 design depends on (18 checks, all PASS, ASan clean at -O1):
 
 Plus the two traps that shaped the design (see §2.1): the nested-json
 string_like trap and the from_json container over-acceptance, both
-reproduced and worked around by the priority ordering.
+reproduced and worked around by the priority ordering. New in this revision,
+the dispatch-classification checks also cover **C arrays**: `char[5]` stays
+on the string path while a plain C array (`Address[2]`) is classified as
+neither adl-eligible nor reflectable — it hits the clean priority-0
+`static_assert` instead of nlohmann's C-array `to_json` path (which breaks on
+non-constructible elements), plus the scalar/string/container trait facts
+and the private-only/unchecked() classification from §2.3.
 
 Two negative facts worth recording: a `json` VALUE is adl-viable to nlohmann's
 own traits (via the string_like trap) but must be copied natively — the
@@ -566,6 +698,21 @@ g++-16 -std=c++26 -freflection -O0 -DBENCH_N=50 -DBENCH_ADL_REFLECTION -Iinclude
   -o /tmp/br2 tests/static-reflection/bench_macro_vs_reflection.cpp     # refl2 v2
 size /tmp/bm /tmp/br /tmp/br2 && nm /tmp/bm /tmp/br /tmp/br2 | wc -l
 
+# runtime throughput — conversion layer (§2.2); three modes, -O2
+g++-16 -std=c++26 -freflection -O2 -Iinclude \
+  -o /tmp/brt tests/static-reflection/bench_runtime.cpp                    # macro
+g++-16 -std=c++26 -freflection -O2 -Iinclude -DBENCH_REFLECTION \
+  -o /tmp/brt1 tests/static-reflection/bench_runtime.cpp                   # refl v1
+g++-16 -std=c++26 -freflection -O2 -Iinclude -DBENCH_ADL_REFLECTION \
+  -o /tmp/brt2 tests/static-reflection/bench_runtime.cpp                   # refl2 v2
+# "old codec" baseline for the old-vs-optimized column: the pre-optimization
+# codec (commit 62290f3b) — rebuild bench_runtime_old.cpp from that commit
+# (or keep the scratch copy; see §5), then:
+#   g++-16 -std=c++26 -freflection -O2 -Iinclude -DBENCH_ADL_REFLECTION \
+#     -o /tmp/brt_old bench_runtime_old.cpp
+# driver (min/median of RUNS=7 binary runs per mode; uncommitted artifact):
+bash build/scratch/runtime_measure.sh
+
 # the ADL-aware recursive codec probe (§2.5): nested / ADL / private / parity
 g++-16 -std=c++26 -freflection -O0 -Iinclude \
   -o /tmp/par tests/static-reflection/probe_adl_recursion.cpp && /tmp/par
@@ -598,9 +745,25 @@ macro and v1 executable sizes reproduce the previous report exactly at every
 N (e.g. N=50 -O0: 530,088 / 669,208; N=100 -O2: 266,640 / 421,720); the new
 v2 mode is **size-identical to macro at -O2** at every N (113,384 / 131,088 /
 145,120 / 182,608 / 266,640; text within 32 B) and cheaper to compile than
-v1 (−6…−24% at -O2). §2.2's tables now carry the three-mode numbers; the
+v1 (−6.0…−24.0% at -O2). §2.2's tables now carry the three-mode numbers; the
 previous two-mode table rows for macro/v1 are superseded by the same-session
-values.
+values. The `-O2` wall times shifted relative to the earlier session numbers
+(v2 vs macro now −10.6…+15.0% instead of −1.4…+3.1%): min-of-3 wall times are
+noisy under machine load — v2 beats macro at N=1/20/50 and trails at
+N=28/100 — while the exe/text/nm facts are stable.
+
+Runtime measurements (this revision, §2.2): `bench_runtime.cpp` in the three
+modes, flat + nested, `to_json`/`from_json`/round-trip; warmup + 7 runs ×
+200k iterations, median reported; driver `build/scratch/runtime_measure.sh`
+(uncommitted). The "old codec" baseline is the pre-optimization codec
+(commit 62290f3b) extracted to `build/scratch/refl2_codec_old.hpp` +
+`bench_runtime_old.cpp` (uncommitted). The driver's first run was invalidated
+by a script bug: `declare -A samples` does **not** reset an existing global
+associative array in bash, so samples accumulated across the four binaries
+and every later mode's min/median was cross-contaminated (v1's "nested" rows
+showed macro's exact values, and all modes shared one flat-serialize minimum
+0.553/0.582). Fixed with an explicit `samples=()` reset and re-run; the
+earlier "exact-equal minima" seen in the draft numbers were this artifact.
 
 Claims that **reproduce exactly** (stable facts):
 - Diagnostics counts: 238 vs 376 lines, 27,987 vs 42,478 bytes, identical first
@@ -614,8 +777,16 @@ Claims that **reproduce exactly** (stable facts):
 - §1.4: alt-string parameter-order trap and the `<T, B>` fix (minimal repro).
 - All 16 probes build and pass per their documented build lines;
   `concepts_smoke` output identical under c++11/20/26.
+- §2.5 probe: **21 checks, all PASS, ASan clean at -O0 and -O1** — including
+  the new C-array classification check.
+- §2.2 runtime: refl2-vs-macro ordering and the old-vs-optimized deltas
+  reproduced across the driver runs (nested faster than macro; optimized
+  faster than old codec on every direction).
 
 Claims that **did not reproduce** and were corrected:
+- §2.2 "nm counts 288 symbols at N=50": misattributed — the new sweep shows
+  238 at N=50 (288 is the N=100 value; macro/v2 identical at every N). The
+  claim itself (v2 `nm` == macro at -O2) holds and is now stated for all N.
 - §1.2 decomposition: concepts slice was −5% → now ≈0%; `-freflection` flag
   +7–8% → +3.2%; standard upgrade +3% → +9.6%. Wall absolutes also shifted
   (3.77/3.74 s → 3.55/3.59 s) — machine conditions; ratios within the same
