@@ -30,6 +30,9 @@
 #include <nlohmann/detail/meta/logic.hpp>
 #include <nlohmann/detail/string_concat.hpp>
 #include <nlohmann/detail/value_t.hpp>
+#ifdef JSON_HAS_CPP_20
+    #include <nlohmann/detail/concepts/concepts.hpp>
+#endif
 
 // include after macro_scope.hpp
 #ifdef JSON_HAS_CPP_17
@@ -163,6 +166,15 @@ inline void from_json(const BasicJsonType& j, typename BasicJsonType::number_int
 }
 
 #if !JSON_DISABLE_ENUM_SERIALIZATION
+#ifdef JSON_HAS_CPP_20
+template<typename BasicJsonType, concepts::enum_type EnumType>
+inline void from_json(const BasicJsonType& j, EnumType& e)
+{
+    typename std::underlying_type<EnumType>::type val;
+    get_arithmetic_value(j, val);
+    e = static_cast<EnumType>(val);
+}
+#else
 template<typename BasicJsonType, typename EnumType,
          enable_if_t<std::is_enum<EnumType>::value, int> = 0>
 inline void from_json(const BasicJsonType& j, EnumType& e)
@@ -171,6 +183,7 @@ inline void from_json(const BasicJsonType& j, EnumType& e)
     get_arithmetic_value(j, val);
     e = static_cast<EnumType>(val);
 }
+#endif
 #endif  // JSON_DISABLE_ENUM_SERIALIZATION
 
 // forward_list doesn't have an insert method
