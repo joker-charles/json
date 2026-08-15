@@ -332,13 +332,15 @@ v2 在每个测量点上**都比 v1 编译更快**（-O0 下 −2.8…−4.6%，
 | 50 | 530,088 / 255,090 | 669,208 / 356,342 | 666,120 / 292,223 | 182,608 / 138,230 | 265,248 / 207,818 | 182,608 / 138,262 |
 | 100 | 667,600 / 342,916 | 850,360 / 517,028 | 939,752 / 417,157 | 266,640 / 208,829 | 421,720 / 342,878 | 266,640 / 208,861 |
 
-**头条发现**：在 **-O2 下，v2 与宏版本逐字节相同**——每个 N 的可执行文件都
-完全相等（`text` 相差不超过 32 字节；N=50 时 `nm` 符号数与宏一致，都是 288，
-而 v1 是 300）。v2 的分发（priority_tag 排序、adl_serializer 间接、反射递归）
-在优化下完全塌缩：两条路径最终收敛到宏直接生成的同一套
-`adl_serializer`/`external_constructor` 代码。v1 不会收敛（其逐成员的字符串键
-转换加赋值在优化后存活：-O2 下 exe +6…+58%）——所以 v2 在 -O2 下比 v1
-**小 −5…−37%**。
+**头条发现**：在 **-O2 下，v2 与宏版本大小完全相同**——每个 N 的可执行文件
+字节数完全相等（113,384 / 131,088 / 145,120 / 182,608 / 266,640 B），`size text`
+相差不超过 32 字节（只读布局的对齐间隙；N=20 时宏 94,096 vs v2 94,128），N=50 时
+`nm` 符号数与宏一致，都是 288（v1 为 300）。真正的逐字节相同并不预期：链接器的
+build-id note 对编译单元内容取哈希，而两个模式的源码必然不同。v2 的分发
+（priority_tag 排序、adl_serializer 间接、反射递归）在优化下完全塌缩：两条路径
+最终收敛到宏直接生成的同一套 `adl_serializer`/`external_constructor` 代码。v1
+不会收敛（其逐成员的字符串键转换加赋值在优化后存活：-O2 下 exe +6…+58%）——
+所以 v2 在 -O2 下比 v1 **小 −5…−37%**。
 
 在 **-O0** 下，v2 介于宏与 v1 之间：N=1 时接近宏（+0.5%），到 N=100 时增长到
 +40.8% exe（v1 为 +27.4%）。-O0 的开销是未塌缩的分发：N=50 时 `nm` 计数 v2 为
@@ -487,6 +489,12 @@ git worktree add /tmp/json-baseline develop          # cdf52ae9
   -Iinclude -c tests/src/unit-serialization.cpp -o /tmp/a.o
 
 # 反射 vs 宏 —— 三种模式（已入库的基准编译单元，见 §2.2）
+# 完整的 §2.2 扫描（N x 优化级别 x 模式，取 3 次最小值，约 10 分钟）：
+bash tests/static-reflection/bench_macro_vs_reflection.sh
+# 快速冒烟（单个 N、单次运行）+ 可直接粘贴的 §2.2 markdown 表格：
+BENCH_N_SET="50" BENCH_RUNS=1 BENCH_MARKDOWN=1 \
+  bash tests/static-reflection/bench_macro_vs_reflection.sh
+# 或者最简的逐模式构建：
 g++-16 -std=c++26 -freflection -O0 -DBENCH_N=50 -Iinclude \
   -o /tmp/bm tests/static-reflection/bench_macro_vs_reflection.cpp      # macro
 g++-16 -std=c++26 -freflection -O0 -DBENCH_N=50 -DBENCH_REFLECTION -Iinclude \
@@ -518,12 +526,13 @@ g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Isingle_include -Iincl
 （未入库的工作产物）。
 
 三模式重测（本会话、同一台机器、同一工具链；宏/v1 与新的 v2 模式在同一次扫描中
-重跑，取 3 次最小值；原始数据在 `build/scratch/measure_results.txt`，未入库）：
+重跑，取 3 次最小值；原始数据在 `build/scratch/measure_results.txt`，由
+`tests/static-reflection/bench_macro_vs_reflection.sh` 生成，未入库）：
 宏与 v1 的可执行文件大小在每个 N 上都与上一版报告完全一致（如 N=50 -O0：
 530,088 / 669,208；N=100 -O2：266,640 / 421,720）；新的 v2 模式在 **-O2 下与宏
-逐字节相同**（113,384 / 131,088 / 145,120 / 182,608 / 266,640），且比 v1 编译
-更快（-O2 下 −6…−24%）。§2.2 的表现在承载三模式数字；之前宏/v1 两模式表的行
-被同一会话的值取代。
+大小完全相同**（113,384 / 131,088 / 145,120 / 182,608 / 266,640；text 相差不超过
+32 字节），且比 v1 编译更快（-O2 下 −6…−24%）。§2.2 的表现在承载三模式数字；
+之前宏/v1 两模式表的行被同一会话的值取代。
 
 **精确复现的论断**（稳定事实）：
 - 诊断计数：238 vs 376 行，27,987 vs 42,478 字节，首条错误相同；概念输出里的"为什么"
