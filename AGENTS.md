@@ -75,6 +75,18 @@ Same toolchain ⇒ trust these; re-deriving them is wasted work.
     exclusion through a `bool` variable template (`not_range_view`).
   - A multi-condition `requires` chain must be wrapped in parentheses:
     `requires (A && B && ...)`.
+  - **Partial-application concepts carry `BasicJsonType` LAST.** `string_like` /
+    `object_like` / `array_like` are declared `template<T /*candidate*/, B
+    /*BasicJsonType*/>`. GCC resolves a constrained placeholder
+    `concepts::string_like<BasicJsonType> S` by binding `S` to the FIRST param
+    and the explicit `<BasicJsonType>` to the SECOND — declaring them `<B, T>`
+    puts the wrong type in `B` and `typename B::string_t` fails on a user type
+    like a custom `alt_string` string_t (real regression: `test-alt-string_cpp26`
+    failed; verified minimal repro + `concepts::X<T, B>` order fixed both the
+    placeholder form and the explicit `requires(X<T, B> ...)` form). Never
+    reorder these back to `<B, T>`. Do NOT leave this class of bug to be caught
+    only by a non-default-string_t TU: `concepts_smoke`/dual tests use
+    `std::string` where the wrong binding happens to agree, so they miss it.
 
 ## 4. Build & reproduce
 

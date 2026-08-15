@@ -244,6 +244,14 @@ requires array_like<BasicJsonType, T>
 void to_json(BasicJsonType& j, const T& arr);
 ```
 
+> **落地修正（实测，勿照抄上面的形参顺序）**：上面是早期设计的示意图，真正的
+> `concepts.hpp` 声明把**候选类型 `T` 放在 `BasicJsonType` `B` 之前**
+> （`template<T, B>`），且这里所有显式调用写成 `array_like<T, B>`。原因是 GCC
+> 对受限占位符 `string_like<BasicJsonType> Cast` 会把 `Cast` 绑到第一个形参、
+> 显式 `<BasicJsonType>` 绑到第二个——若声明为 `<B, T>`，`B` 会被用户类型（如
+> 自定义 string_t `alt_string`）占据，`typename B::string_t` 硬失败
+> （`test-alt-string_cpp26` 真实回归）。详见 AGENTS.md §3 与 concepts.hpp 源码注释。
+
 与原 `enable_if_t<...>` 结构同构（都是就地布尔表达式）。**注意**：`!string_like` 等否定是"约束不满足 → 该重载不可选"，不会自动互斥——若某类型同时满足两个语义概念且两个重载都允许，会二义性。原库通过"每个 `enable_if` 组合里排除其它类别"保证互斥，分层后这一责任由**层 3 内联组合**承担，语义不变。
 
 ### 收益与代价（修订 §6 第 1、3 条）
