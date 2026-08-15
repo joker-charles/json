@@ -18,6 +18,11 @@
 # build directories (vscode-cmake-tools, user-defined, ...)
 /build*/
 
+# session scratch files (agent working notes, experiment TUs, negative
+# compile cases, measurement artifacts — NOT reproducible repo content;
+# the committed measurement snapshots live under docs/static-reflection/data/)
+/.tmp/
+
 # fuzzers
 /tests/corpus_*
 /tests/parse_*_fuzzer
