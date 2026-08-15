@@ -99,13 +99,29 @@ concept has_mapped_and_key =
 // is_compatible_array_type accepts them. See M4_ASSESSMENT §7 drift case.
 // ---------------------------------------------------------------------------
 
-// string_like<B, T> == is_compatible_string_type<B, T>
-template<typename B, typename T>
+// ---------------------------------------------------------------------------
+// PARAMETER ORDER — a hard GCC rule, do not reorder these back to <B, T>.
+//
+// These are *partial-application* concepts: they take the candidate type `T`
+// in-front of the `BasicJsonType` `B`. The reason is that GCC resolves a
+// constrained placeholder `concepts::X<BasicJsonType> Name` (to_json string
+// overload) by binding `Name` to the FIRST template parameter and the explicit
+// `<BasicJsonType>` argument to the SECOND. If the concept were declared
+// `<B, T>` (BasicJsonType in front) that would yield
+// `X<Name = B, BasicJsonType = T>` — i.e. the wrong type winds up in `B`, and
+// `typename B::string_t` then fails on a user type like a custom `alt_string`
+// string_t. Declaring the candidate first (`<T, B>`) aligns both the
+// constrained-placeholder form and the explicit `requires(X<T, B> ...)` form
+// in to_json.hpp. Verified minimal repro (g++-16, -std=c++20).
+// ---------------------------------------------------------------------------
+
+// string_like<T, B> == is_compatible_string_type<B, T>
+template<typename T, typename B>
 concept string_like =
     nlohmann::detail::is_constructible<typename B::string_t, T>::value;
 
-// object_like<B, T> — mirrors is_compatible_object_type<B, T>
-template<typename B, typename T>
+// object_like<T, B> — mirrors is_compatible_object_type<B, T>
+template<typename T, typename B>
 concept object_like =
     has_mapped_and_key<T> &&
     nlohmann::detail::is_constructible<typename B::object_t::key_type,
@@ -113,11 +129,11 @@ concept object_like =
     nlohmann::detail::is_constructible<typename B::object_t::mapped_type,
     typename T::mapped_type>::value;
 
-// array_like<B, T> — mirrors is_compatible_array_type<B, T>.
+// array_like<T, B> — mirrors is_compatible_array_type<B, T>.
 // Uses the library's is_range (begin/end + iterator-traits) and range_value_t
 // so that range views are accepted exactly as the baseline trait does, keeping
 // byte-identical overload selection.
-template<typename B, typename T>
+template<typename T, typename B>
 concept array_like =
     has_begin_end<T> &&
     nlohmann::detail::is_range<T>::value &&

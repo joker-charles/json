@@ -414,9 +414,9 @@ inline void to_json(BasicJsonType& j, const std::vector<bool>& e)
 #endif
 
 template < typename BasicJsonType, typename CompatibleArrayType >
-requires (concepts::array_like<BasicJsonType, CompatibleArrayType>
-          && !concepts::object_like<BasicJsonType, CompatibleArrayType>
-          && !concepts::string_like<BasicJsonType, CompatibleArrayType>
+requires (concepts::array_like<CompatibleArrayType, BasicJsonType>
+          && !concepts::object_like<CompatibleArrayType, BasicJsonType>
+          && !concepts::string_like<CompatibleArrayType, BasicJsonType>
           && !std::is_same<typename BasicJsonType::binary_t, CompatibleArrayType>::value
           && !is_compatible_binary_type<BasicJsonType, CompatibleArrayType>::value
           && !is_basic_json<CompatibleArrayType>::value
@@ -486,7 +486,7 @@ inline void to_json(BasicJsonType& j, typename BasicJsonType::array_t&& arr)
 
 #ifdef JSON_HAS_CPP_20
 template < typename BasicJsonType, typename CompatibleObjectType >
-requires (concepts::object_like<BasicJsonType, CompatibleObjectType>
+requires (concepts::object_like<CompatibleObjectType, BasicJsonType>
           && !is_basic_json<CompatibleObjectType>::value)
 inline void to_json(BasicJsonType& j, const CompatibleObjectType& obj)
 {

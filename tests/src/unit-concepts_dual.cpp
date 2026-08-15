@@ -88,10 +88,10 @@ TEST_CASE("concepts dual-path serialization is behavior-preserving")
     {
         // A two-parameter concept cannot be called with () as a function; extract
         // its truth via a requires-expression and compare to the library traits.
-        constexpr bool s_str = requires { requires nlohmann::detail::concepts::string_like<json, std::string>; };
-        constexpr bool s_map = requires { requires nlohmann::detail::concepts::string_like<json, std::map<std::string, int>>; };
-        constexpr bool o_map = requires { requires nlohmann::detail::concepts::object_like<json, std::map<std::string, int>>; };
-        constexpr bool a_vec = requires { requires nlohmann::detail::concepts::array_like<json, std::vector<int>>; };
+        constexpr bool s_str = requires { requires nlohmann::detail::concepts::string_like<std::string, json>; };
+        constexpr bool s_map = requires { requires nlohmann::detail::concepts::string_like<std::map<std::string, int>, json>; };
+        constexpr bool o_map = requires { requires nlohmann::detail::concepts::object_like<std::map<std::string, int>, json>; };
+        constexpr bool a_vec = requires { requires nlohmann::detail::concepts::array_like<std::vector<int>, json>; };
         CHECK(s_str);
         CHECK(!s_map);
         CHECK(o_map);
