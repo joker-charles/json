@@ -86,7 +86,8 @@ g++-16 -std=c++20 -O0 -Iinclude -o /tmp/s tests/static-reflection/concepts_smoke
 ```
 
 The full fixture list lives in `tests/static-reflection/`; each file documents
-its own build line in its header comment.
+its own build line in its header comment. The main-library changes are also
+covered by the repository's doctest unit suite — see §5 "Repository test suite".
 
 ## 5. Safety boundaries (non-negotiable)
 
@@ -96,8 +97,26 @@ its own build line in its header comment.
   full C++11 fallback. The dual-track pattern in those files is the template to
   follow.
 - **`single_include/nlohmann/json.hpp` is an amalgamated build artifact**, a
-  snapshot of the split headers. Do not edit it directly for feature work; only
-  regenerate it via the amalgamate tool if you intentionally ship to that layout.
+  snapshot of the split headers. Do not edit it directly for feature work; if you
+  touch a split header read into the single header, **re-amalgamate** so the
+  single header stays in sync:
+  ```sh
+  python3 tools/amalgamate/amalgamate.py -c tools/amalgamate/config_json.json -s .
+  ```
+  `make amalgamate` additionally runs `make pretty` (astyle), which needs
+  `python3-venv`; in this container that apt package is unavailable, so use the
+  `amalgamate.py` invocation above (verified idempotent).
+- **Repository test suite.** The main-library changes are exercised by the
+  repository's doctest suite. Configure and build a subset, e.g.:
+  ```sh
+  cmake -S . -B build-test -DCMAKE_CXX_COMPILER=g++-16 \
+    -DJSON_BuildTests=ON -DJSON_MultipleHeaders=ON -DBUILD_TESTING=ON
+  cmake --build build-test --target test-udt_cpp11 test-serialization_cpp11 \
+    test-conversions_cpp17 test-concepts_dual_cpp20 -j2
+  ./build-test/tests/test-concepts_dual_cpp20
+  ```
+  `tests/src/unit-concepts_dual.cpp` (mentions `JSON_HAS_CPP_20`) registers
+  both `_cpp11` and `_cpp20` targets and proves the dual path is behavior-preserving.
 - **Free-experiment region** (safe to change freely): `concepts.hpp`,
   `reflection_json.hpp`, everything under `tests/static-reflection/`, and the
   docs under `docs/static-reflection/`.
@@ -120,4 +139,7 @@ its own build line in its header comment.
 - Keep the main-library change, the experimental-library change, and the docs in
   separate commits so history stays reviewable (see the existing 3-commit series
   on this branch).
+- **Every commit on this branch carries a DCO sign-off** (`Signed-off-by:`
+  line) so the history remains DCO-clean per `.github/CONTRIBUTING.md`.
+  Verify with `git log --format='%h %s%n%b' -1 <sha> | grep Signed-off-by`.
 - The branch is a work-in-progress experiment; commits are local until you push.
