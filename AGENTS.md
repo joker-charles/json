@@ -106,11 +106,18 @@ covered by the repository's doctest unit suite — see §5 "Repository test suit
   touch a split header read into the single header, **re-amalgamate** so the
   single header stays in sync:
   ```sh
+  make amalgamate   # amalganmate.py + `make pretty` (astyle 3.4.13 via tools/astyle/venv)
+  ```
+  astyle 3.4.13 (the CI-pinned version) and the venv are set up in this
+  workspace (`tools/astyle/venv`, gitignored), so `make amalgamate` and `make
+  pretty` are fully reproducible locally. If you only need the single header
+  regenerated without the astyle pass, run:
+  ```sh
   python3 tools/amalgamate/amalgamate.py -c tools/amalgamate/config_json.json -s .
   ```
-  `make amalgamate` additionally runs `make pretty` (astyle), which needs
-  `python3-venv`; in this container that apt package is unavailable, so use the
-  `amalgamate.py` invocation above (verified idempotent).
+  Note: `make pretty` formats **all** `include/`, `tests/`, and `docs/examples/`
+  sources; review the diff and keep unrelated pre-existing files out of the
+  commit (see da68ff71 for the cleanup of docs/examples/parser_callback_t.cpp).
 - **Repository test suite.** The main-library changes are exercised by the
   repository's doctest suite. Configure and build a subset, e.g.:
   ```sh
