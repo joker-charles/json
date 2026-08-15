@@ -5283,6 +5283,7 @@ NLOHMANN_JSON_NAMESPACE_END
 
 
 #include <type_traits> // is_integral, is_floating_point, is_enum, is_same, underlying_type
+#include <iterator>    // std::begin, std::end (for has_begin_end range probe)
 #include <utility>     // declval
 
 // #include <nlohmann/detail/macro_scope.hpp>
@@ -5332,12 +5333,15 @@ template<typename T>
 concept has_iterator_type =
     requires { typename std::remove_cvref_t<T>::iterator; };
 
+// A type usable as an array source must be a RANGE: begin(t)/end(t) must be
+// callable (mirrors the library's is_range -> result_of_begin/result_of_end).
+// This is what excludes json::reverse_iterator and other non-range iterators
+// from array_like (drift fix, see M4_ASSESSMENT §7).
 template<typename T>
-concept has_iterator_traits =
-    has_iterator_type<T> &&
-    requires {
-        typename std::remove_cvref_t<T>::iterator::value_type;
-        typename std::remove_cvref_t<T>::iterator::difference_type;
+concept has_begin_end =
+    requires(std::remove_cvref_t<T>& t) {
+        std::begin(t);
+        std::end(t);
     };
 
 template<typename T>
@@ -5345,15 +5349,17 @@ concept has_mapped_and_key =
     requires { typename std::remove_cvref_t<T>::mapped_type;
                typename std::remove_cvref_t<T>::key_type; };
 
-// the element type reachable through the container's iterator
-template<typename T>
-using iter_value_t = typename std::remove_cvref_t<T>::iterator::value_type;
-
 // ---------------------------------------------------------------------------
 // Layer 2: reusable semantic concepts. Each carries BasicJsonType because
 // array/object/string compatibility is "element/key/value can construct B".
 // These intentionally EXCLUDE the range-view dimension (see note at bottom).
 // `nlohmann::detail::is_constructible` must be declared (via type_traits.hpp).
+//
+// array_like MUST route its iterator through the library's begin-based
+// iterator_t/range_value_t (not T::iterator): views (e.g.
+// std::ranges::reverse_view<ref_view<json>>) have begin() but no `iterator`
+// alias, so a `T::iterator` probe rejects them while the library's
+// is_compatible_array_type accepts them. See M4_ASSESSMENT §7 drift case.
 // ---------------------------------------------------------------------------
 
 // string_like<B, T> == is_compatible_string_type<B, T>
@@ -5370,13 +5376,18 @@ concept object_like =
     nlohmann::detail::is_constructible<typename B::object_t::mapped_type,
                                        typename T::mapped_type>::value;
 
-// array_like<B, T> — mirrors is_compatible_array_type<B, T> (iterator/construct)
-// The filesystem::path special case (T != its own range_value) is preserved.
+// array_like<B, T> — mirrors is_compatible_array_type<B, T>.
+// Uses the library's is_range (begin/end + iterator-traits) and range_value_t
+// so that range views are accepted exactly as the baseline trait does, keeping
+// byte-identical overload selection.
 template<typename B, typename T>
 concept array_like =
-    has_iterator_traits<T> &&
-    !std::is_same_v<std::remove_cvref_t<T>, iter_value_t<T>> &&
-    nlohmann::detail::is_constructible<B, iter_value_t<T>>::value;
+    has_begin_end<T> &&
+    nlohmann::detail::is_range<T>::value &&
+    !std::is_same_v<std::remove_cvref_t<T>,
+                    nlohmann::detail::range_value_t<T>> &&
+    nlohmann::detail::is_constructible<B,
+                                       nlohmann::detail::range_value_t<T>>::value;
 
 // NOTE on the range-view dimension: is_compatible_range_view<T> deliberately
 // stays a trait (referenced in layer-3 requires, not folded into array_like).
