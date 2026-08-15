@@ -62,10 +62,15 @@ Same toolchain ⇒ trust these; re-deriving them is wasted work.
     partial specialization.
 - **Concepts dual-path** (verified by `concepts_smoke.cpp` + layered probes):
   - `concepts::array_like/object_like/string_like` are **byte-identical** to the
-    traits only when they use the *exact* probe targets: `T::iterator` (not
-    `value_type`), `is_constructible` (not `convertible_to`), and preserve the
-    `vector<uint8_t>`-is-not-binary special case. A "semantic restatement" drifts
-    (see `probe_draft_drift.cpp`: 1 real drift on `vector<uint8_t>` binary).
+    traits only when they use the *exact* probe targets: for `array_like` the
+    iterator must come from **`begin-range` (`is_range`/`range_value_t`)**, NOT
+    `T::iterator` — range views like `std::ranges::reverse_view<ref_view<json>>`
+    have `begin()` but no `iterator` alias; the baseline trait accepts them while
+    a `T::iterator` probe wrongly rejects them (a real drift that broke
+    `test-iterators2_cpp20`, fixed in commit 4fe8a702). Use `is_constructible`
+    (not `convertible_to`), and preserve the `vector<uint8_t>`-is-not-binary
+    special case. A "semantic restatement" drifts (see `probe_draft_drift.cpp`:
+    1 real drift on `vector<uint8_t>` binary).
   - `#if` cannot appear inside a `requires` clause ⇒ gate the range-view
     exclusion through a `bool` variable template (`not_range_view`).
   - A multi-condition `requires` chain must be wrapped in parentheses:
