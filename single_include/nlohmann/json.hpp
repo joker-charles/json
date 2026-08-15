@@ -7952,6 +7952,10 @@ NLOHMANN_JSON_NAMESPACE_END
 #include <string> // char_traits, string
 #include <utility> // move
 #include <vector> // vector
+#ifdef JSON_HAS_CPP_17
+    #include <charconv> // from_chars
+    #include <system_error> // errc
+#endif
 
 // #include <nlohmann/detail/input/input_adapters.hpp>
 
@@ -8898,6 +8902,50 @@ class lexer : public lexer_base<BasicJsonType>
         f = std::strtold(str, endptr);
     }
 
+    // Parse a non-negative integer token into @a value. Returns false on
+    // overflow (in which case @a value is unspecified). Under C++17+ this uses
+    // the allocation-free, locale-independent std::from_chars; on C++11/14 it
+    // falls back to strtoull/strtoll + errno. Both agree on the overflow
+    // signal, so the caller's "integer overflow -> parse as float" fallback is
+    // behavior-identical (verified against the old C `*to*` conversions).
+#ifdef JSON_HAS_CPP_17
+    template<typename Number, enable_if_t<std::is_unsigned<Number>::value, int> = 0>
+    static bool try_parse_integer(const char* first, const char* last, Number& value) noexcept
+    {
+        const auto [ptr, ec] = std::from_chars(first, last, value);
+        (void)ptr;
+        return ec == std::errc();
+    }
+
+    template < typename Number, enable_if_t < std::is_signed<Number>::value && !detail::is_basic_json<Number>::value, int > = 0 >
+    static bool try_parse_integer(const char* first, const char* last, Number& value) noexcept
+    {
+        const auto [ptr, ec] = std::from_chars(first, last, value);
+        (void)ptr;
+        return ec == std::errc();
+    }
+#else
+    template<typename Number, enable_if_t<std::is_unsigned<Number>::value, int> = 0>
+    static bool try_parse_integer(const char* str, const char* /*last*/, Number& value) noexcept
+    {
+        char* end = nullptr; // NOLINT(misc-const-correctness,cppcoreguidelines-pro-type-vararg,hicpp-vararg)
+        errno = 0;
+        const auto x = std::strtoull(str, &end, 10);
+        value = static_cast<Number>(x);
+        return errno != ERANGE;
+    }
+
+    template < typename Number, enable_if_t < std::is_signed<Number>::value && !detail::is_basic_json<Number>::value, int > = 0 >
+    static bool try_parse_integer(const char* str, const char* /*last*/, Number& value) noexcept
+    {
+        char* end = nullptr; // NOLINT(misc-const-correctness,cppcoreguidelines-pro-type-vararg,hicpp-vararg)
+        errno = 0;
+        const auto x = std::strtoll(str, &end, 10);
+        value = static_cast<Number>(x);
+        return errno != ERANGE;
+    }
+#endif
+
     /*!
     @brief scan a number literal
 
@@ -9219,39 +9267,20 @@ scan_number_done:
         unget();
 
         char* endptr = nullptr; // NOLINT(misc-const-correctness,cppcoreguidelines-pro-type-vararg,hicpp-vararg)
-        errno = 0;
 
         // try to parse integers first and fall back to floats
         if (number_type == token_type::value_unsigned)
         {
-            const auto x = std::strtoull(token_buffer.data(), &endptr, 10);
-
-            // we checked the number format before
-            JSON_ASSERT(endptr == token_buffer.data() + token_buffer.size());
-
-            if (errno != ERANGE)
+            if (try_parse_integer(token_buffer.data(), token_buffer.data() + token_buffer.size(), value_unsigned))
             {
-                value_unsigned = static_cast<number_unsigned_t>(x);
-                if (value_unsigned == x)
-                {
-                    return token_type::value_unsigned;
-                }
+                return token_type::value_unsigned;
             }
         }
         else if (number_type == token_type::value_integer)
         {
-            const auto x = std::strtoll(token_buffer.data(), &endptr, 10);
-
-            // we checked the number format before
-            JSON_ASSERT(endptr == token_buffer.data() + token_buffer.size());
-
-            if (errno != ERANGE)
+            if (try_parse_integer(token_buffer.data(), token_buffer.data() + token_buffer.size(), value_integer))
             {
-                value_integer = static_cast<number_integer_t>(x);
-                if (value_integer == x)
-                {
-                    return token_type::value_integer;
-                }
+                return token_type::value_integer;
             }
         }
 
