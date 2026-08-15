@@ -36,6 +36,16 @@ to_json concepts dual-path landed and committed. See the doc map (§6).
   ```sh
   printf 'int main(){}' | g++-16 -std=c++26 -freflection -x c++ - -o /tmp/t && echo "g++-16 OK"
   ```
+- CMake presets (`CMakeUserPresets.json`, gitignored): `cxx26-reflect` /
+  `cxx26-reflect-tests` pin `g++-16` + `CMAKE_CXX_STANDARD=26` (+
+  `JSON_TestStandards=26` for the suite). **Do NOT put `-freflection` into
+  `CMAKE_CXX_FLAGS`** — it leaks into the nested-project cmake tests
+  (`tests/cmake_add_subdirectory` etc.), whose `TryCompile` probes compile with
+  the *default* standard and die with `'-freflection' only supported with
+  '-std=c++26'` (this exact failure broke 13 ctest cases until the preset was
+  fixed). Reflection is consumer-side: add `-freflection` only to the TUs that
+  actually use P2996 (the reflection fixtures do this via their own build
+  lines).
 - Two include layouts: split headers under `-Iinclude`, or the amalgamated
   single header under `-Isingle_include`. Reflection/concepts work targets the
   split `-Iinclude` layout (the `#ifdef JSON_HAS_CPP_20` branches only compile
