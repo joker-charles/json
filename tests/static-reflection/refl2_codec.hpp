@@ -20,7 +20,7 @@
 //      compile errors, see "Inheritance" below)
 //   0  anything else                    -> static_assert diagnostic
 //
-// Containers are deliberately excluded from the adl branch (adl_branch_eligible):
+// Containers are deliberately excluded from the adl branch (adl_branch_eligible_v):
 // element recursion produces identical output for the types nlohmann's own
 // container paths handle, and additionally covers containers whose elements
 // are plain reflected structs. C arrays are excluded too (they would fall
@@ -104,6 +104,9 @@
 namespace refl2
 {
 
+namespace detail
+{
+
 // ---------------------------------------------------------------------------
 // priority tag — overload-ranking dispatch (same idiom nlohmann uses
 // internally); no if-constexpr-with-splices (see AGENTS.md §3).
@@ -156,7 +159,7 @@ struct is_array_like<T, std::void_t<
 
 // The access-context policy: codec<false> = unprivileged (public members
 // only), codec<true> = unchecked (everything, for library internals).
-consteval std::meta::access_context reflect_context(bool unchecked)
+consteval std::meta::access_context access_context_for(bool unchecked)
 {
     if (unchecked)
     {
@@ -225,13 +228,13 @@ consteval std::meta::info flat_member(std::meta::info cls, std::meta::access_con
 template<bool U, typename T>
 consteval bool has_duplicate_member_keys()
 {
-    const std::size_t n = flat_member_count(^^T, reflect_context(U));
+    const std::size_t n = flat_member_count(^^T, access_context_for(U));
     for (std::size_t i = 0; i < n; ++i)
     {
         for (std::size_t j = i + 1; j < n; ++j)
         {
-            if (std::meta::identifier_of(flat_member(^^T, reflect_context(U), i)) ==
-                std::meta::identifier_of(flat_member(^^T, reflect_context(U), j)))
+            if (std::meta::identifier_of(flat_member(^^T, access_context_for(U), i)) ==
+                std::meta::identifier_of(flat_member(^^T, access_context_for(U), j)))
             {
                 return true;
             }
@@ -245,7 +248,7 @@ consteval bool has_duplicate_member_keys()
 // is_private / is_protected (on the unchecked base list) give the precise
 // access kind for the diagnostic. (codec<true> serializes them via unchecked.)
 template<bool U, typename T>
-consteval bool has_private_bases_p()
+consteval bool has_private_bases()
 {
     const std::size_t n = std::meta::bases_of(^^T, std::meta::access_context::unchecked()).size();
     for (std::size_t i = 0; i < n; ++i)
@@ -259,7 +262,7 @@ consteval bool has_private_bases_p()
 }
 
 template<bool U, typename T>
-consteval bool has_protected_bases_p()
+consteval bool has_protected_bases()
 {
     const std::size_t n = std::meta::bases_of(^^T, std::meta::access_context::unchecked()).size();
     for (std::size_t i = 0; i < n; ++i)
@@ -300,9 +303,9 @@ consteval bool has_virtual_bases_info(std::meta::info cls, std::meta::access_con
 }
 
 template<bool U, typename T>
-consteval bool has_virtual_bases_p()
+consteval bool has_virtual_bases()
 {
-    return has_virtual_bases_info(^^T, reflect_context(U));
+    return has_virtual_bases_info(^^T, access_context_for(U));
 }
 
 template<bool U, typename T, typename = void>
@@ -315,8 +318,8 @@ struct is_reflectable_struct<U, T, std::enable_if_t<
     // also reflectable when there is an inaccessible base, so the reflect
     // branch's dedicated static_assert (not the generic fallback) fires
     static constexpr bool value =
-        (flat_member_count(^^T, reflect_context(U)) > 0)
-        || std::meta::has_inaccessible_bases(^^T, reflect_context(U));
+        (flat_member_count(^^T, access_context_for(U)) > 0)
+        || std::meta::has_inaccessible_bases(^^T, access_context_for(U));
 };
 
 // Eligibility for the adl branch. Containers (array-like, except strings;
@@ -328,17 +331,17 @@ struct is_reflectable_struct<U, T, std::enable_if_t<
 // non-constructible elements. Element recursion is behavior-identical for
 // everything nlohmann handles and additionally covers plain reflected structs.
 template<typename B, typename T>
-inline constexpr bool adl_branch_eligible =
+inline constexpr bool adl_branch_eligible_v =
     is_adl_serializable<B, T>::value
     && !is_object_like<T>::value
     && !(is_array_like<T>::value && !is_string_like<B, T>::value)
     && !(std::is_array<T>::value && !is_string_like<B, T>::value);
 
 template<bool U, typename T>
-inline constexpr std::size_t member_count = flat_member_count(^^T, reflect_context(U));
+inline constexpr std::size_t member_count_v = flat_member_count(^^T, access_context_for(U));
 
 template<bool U, typename T, std::size_t I>
-inline constexpr std::meta::info member_v = flat_member(^^T, reflect_context(U), I);
+inline constexpr std::meta::info member_v = flat_member(^^T, access_context_for(U), I);
 
 template<bool U, typename T, std::size_t I>
 inline constexpr std::string_view member_key_v =
@@ -351,24 +354,26 @@ inline constexpr bool member_is_bit_field_v =
     std::meta::is_bit_field(member_v<U, T, I>);
 
 // ---------------------------------------------------------------------------
+} // namespace detail
+
 // The codec. All member functions are static; Unchecked is the access policy.
 // ---------------------------------------------------------------------------
 template<bool Unchecked>
 struct codec
 {
-    template<typename T> struct unsupported : std::false_type {};
+    template<typename T> struct always_false : std::false_type {};
 
     // ---- to_json side -----------------------------------------------------
     template<typename B, typename T>
-    requires is_nested_json<B, T>::value
-    static void serialize_one_impl(B& j, const T& v, priority_tag<6>)
+    requires detail::is_nested_json<B, T>::value
+    static void serialize_one_impl(B& j, const T& v, detail::priority_tag<6>)
     {
         j = v; // native value nesting; MUST precede adl (string_like trap)
     }
 
     template<typename B, typename T>
-    requires is_optional<T>::value
-    static void serialize_one_impl(B& j, const T& v, priority_tag<5>)
+    requires detail::is_optional<T>::value
+    static void serialize_one_impl(B& j, const T& v, detail::priority_tag<5>)
     {
         if (v)
         {
@@ -381,15 +386,15 @@ struct codec
     }
 
     template<typename B, typename T>
-    requires adl_branch_eligible<B, T>
-    static void serialize_one_impl(B& j, const T& v, priority_tag<4>)
+    requires detail::adl_branch_eligible_v<B, T>
+    static void serialize_one_impl(B& j, const T& v, detail::priority_tag<4>)
     {
         nlohmann::adl_serializer<T, B>::to_json(j, v);
     }
 
     template<typename B, typename T>
-    requires is_array_like<T>::value
-    static void serialize_one_impl(B& j, const T& v, priority_tag<3>)
+    requires detail::is_array_like<T>::value
+    static void serialize_one_impl(B& j, const T& v, detail::priority_tag<3>)
     {
         j = B::array();
         for (auto&& e : v)
@@ -399,8 +404,8 @@ struct codec
     }
 
     template<typename B, typename T>
-    requires is_object_like<T>::value
-    static void serialize_one_impl(B& j, const T& v, priority_tag<2>)
+    requires detail::is_object_like<T>::value
+    static void serialize_one_impl(B& j, const T& v, detail::priority_tag<2>)
     {
         j = B::object();
         for (auto&& [k, val] : v)
@@ -410,22 +415,22 @@ struct codec
     }
 
     template<typename B, typename T>
-    requires is_reflectable_struct<Unchecked, T>::value
-    static void serialize_one_impl(B& j, const T& v, priority_tag<1>)
+    requires detail::is_reflectable_struct<Unchecked, T>::value
+    static void serialize_one_impl(B& j, const T& v, detail::priority_tag<1>)
     {
-        static_assert(Unchecked || !has_private_bases_p<Unchecked, T>(),
+        static_assert(Unchecked || !detail::has_private_bases<Unchecked, T>(),
                       "refl2: private base class under the unprivileged policy "
                       "would silently drop its members — use codec<true> or add "
                       "a to_json for the type");
-        static_assert(Unchecked || !has_protected_bases_p<Unchecked, T>(),
+        static_assert(Unchecked || !detail::has_protected_bases<Unchecked, T>(),
                       "refl2: protected base class under the unprivileged policy "
                       "would silently drop its members — use codec<true> or add "
                       "a to_json for the type");
-        static_assert(!has_virtual_bases_p<Unchecked, T>(),
+        static_assert(!detail::has_virtual_bases<Unchecked, T>(),
                       "refl2: virtual base class not supported — a shared virtual "
                       "base would flatten its members multiple times (C++ has one "
                       "virtual subobject); deduplication is not implemented");
-        static_assert(!has_duplicate_member_keys<Unchecked, T>(),
+        static_assert(!detail::has_duplicate_member_keys<Unchecked, T>(),
                       "refl2: duplicate member names across the class hierarchy "
                       "(e.g. same name in a base and a derived class, or diamond "
                       "inheritance) would collide in the JSON object");
@@ -433,9 +438,9 @@ struct codec
     }
 
     template<typename B, typename T>
-    static void serialize_one_impl(B&, const T&, priority_tag<0>)
+    static void serialize_one_impl(B&, const T&, detail::priority_tag<0>)
     {
-        static_assert(unsupported<T>::value,
+        static_assert(always_false<T>::value,
                       "refl2: not serializable — no adl_serializer/to_json "
                       "customization, not a reflectable struct, and not an "
                       "array/object-like container. Define a to_json for the "
@@ -445,20 +450,20 @@ struct codec
     template<typename B, typename T>
     static void serialize_one(B& j, const T& v)
     {
-        serialize_one_impl(j, v, priority_tag<6>{});
+        serialize_one_impl(j, v, detail::priority_tag<6>{});
     }
 
     // ---- from_json side (symmetric) --------------------------------------
     template<typename B, typename T>
-    requires is_nested_json<B, T>::value
-    static void deserialize_one_impl(const B& j, T& v, priority_tag<6>)
+    requires detail::is_nested_json<B, T>::value
+    static void deserialize_one_impl(const B& j, T& v, detail::priority_tag<6>)
     {
         v = j;
     }
 
     template<typename B, typename T>
-    requires is_optional<T>::value
-    static void deserialize_one_impl(const B& j, T& v, priority_tag<5>)
+    requires detail::is_optional<T>::value
+    static void deserialize_one_impl(const B& j, T& v, detail::priority_tag<5>)
     {
         if (j.is_null())
         {
@@ -472,15 +477,15 @@ struct codec
     }
 
     template<typename B, typename T>
-    requires adl_branch_eligible<B, T>
-    static void deserialize_one_impl(const B& j, T& v, priority_tag<4>)
+    requires detail::adl_branch_eligible_v<B, T>
+    static void deserialize_one_impl(const B& j, T& v, detail::priority_tag<4>)
     {
         nlohmann::adl_serializer<T, B>::from_json(j, v);
     }
 
     template<typename B, typename T>
-    requires is_array_like<T>::value
-    static void deserialize_one_impl(const B& j, T& v, priority_tag<3>)
+    requires detail::is_array_like<T>::value
+    static void deserialize_one_impl(const B& j, T& v, detail::priority_tag<3>)
     {
         if constexpr (requires { v.push_back(typename T::value_type{}); })
         {
@@ -510,8 +515,8 @@ struct codec
     }
 
     template<typename B, typename T>
-    requires is_object_like<T>::value
-    static void deserialize_one_impl(const B& j, T& v, priority_tag<2>)
+    requires detail::is_object_like<T>::value
+    static void deserialize_one_impl(const B& j, T& v, detail::priority_tag<2>)
     {
         v.clear();
         for (const auto& item : j.items())
@@ -523,22 +528,22 @@ struct codec
     }
 
     template<typename B, typename T>
-    requires is_reflectable_struct<Unchecked, T>::value
-    static void deserialize_one_impl(const B& j, T& v, priority_tag<1>)
+    requires detail::is_reflectable_struct<Unchecked, T>::value
+    static void deserialize_one_impl(const B& j, T& v, detail::priority_tag<1>)
     {
-        static_assert(Unchecked || !has_private_bases_p<Unchecked, T>(),
+        static_assert(Unchecked || !detail::has_private_bases<Unchecked, T>(),
                       "refl2: private base class under the unprivileged policy "
                       "would silently drop its members — use codec<true> or add "
                       "a from_json for the type");
-        static_assert(Unchecked || !has_protected_bases_p<Unchecked, T>(),
+        static_assert(Unchecked || !detail::has_protected_bases<Unchecked, T>(),
                       "refl2: protected base class under the unprivileged policy "
                       "would silently drop its members — use codec<true> or add "
                       "a from_json for the type");
-        static_assert(!has_virtual_bases_p<Unchecked, T>(),
+        static_assert(!detail::has_virtual_bases<Unchecked, T>(),
                       "refl2: virtual base class not supported — a shared virtual "
                       "base would flatten its members multiple times (C++ has one "
                       "virtual subobject); deduplication is not implemented");
-        static_assert(!has_duplicate_member_keys<Unchecked, T>(),
+        static_assert(!detail::has_duplicate_member_keys<Unchecked, T>(),
                       "refl2: duplicate member names across the class hierarchy "
                       "(e.g. same name in a base and a derived class, or diamond "
                       "inheritance) would collide in the JSON object");
@@ -546,9 +551,9 @@ struct codec
     }
 
     template<typename B, typename T>
-    static void deserialize_one_impl(const B&, T&, priority_tag<0>)
+    static void deserialize_one_impl(const B&, T&, detail::priority_tag<0>)
     {
-        static_assert(unsupported<T>::value,
+        static_assert(always_false<T>::value,
                       "refl2: not deserializable — no adl_serializer/from_json "
                       "customization, not a reflectable struct, and not an "
                       "array/object-like container. Define a from_json for the "
@@ -558,7 +563,7 @@ struct codec
     template<typename B, typename T>
     static void deserialize_one(const B& j, T& v)
     {
-        deserialize_one_impl(j, v, priority_tag<6>{});
+        deserialize_one_impl(j, v, detail::priority_tag<6>{});
     }
 
     // ---- reflected struct: member loop with pre-built static keys ---------
@@ -568,8 +573,8 @@ struct codec
         // one-time-initialized key (any length; thread-safe magic static);
         // no per-call std::string construction and no per-member constructor
         // call site in the hot path
-        static const std::string key = std::string(member_key_v<Unchecked, T, I>);
-        serialize_one(j[key], v.[:member_v<Unchecked, T, I>:]);
+        static const std::string key = std::string(detail::member_key_v<Unchecked, T, I>);
+        serialize_one(j[key], v.[:detail::member_v<Unchecked, T, I>:]);
     }
 
     template<typename B, typename T, std::size_t... I>
@@ -582,22 +587,22 @@ struct codec
     template<typename B, typename T>
     static void reflect_to_json(B& j, const T& v)
     {
-        reflect_to_json_impl(j, v, std::make_index_sequence<member_count<Unchecked, T>>{});
+        reflect_to_json_impl(j, v, std::make_index_sequence<detail::member_count_v<Unchecked, T>>{});
     }
 
     template<typename B, typename T, std::size_t I>
     static void deserialize_member(const B& j, T& v, std::true_type /* bit-field */)
     {
-        static const std::string key = std::string(member_key_v<Unchecked, T, I>);
-        using M = typename [: std::meta::type_of(member_v<Unchecked, T, I>) :];
-        v.[:member_v<Unchecked, T, I>:] = j.at(key).template get<M>();
+        static const std::string key = std::string(detail::member_key_v<Unchecked, T, I>);
+        using M = typename [: std::meta::type_of(detail::member_v<Unchecked, T, I>) :];
+        v.[:detail::member_v<Unchecked, T, I>:] = j.at(key).template get<M>();
     }
 
     template<typename B, typename T, std::size_t I>
     static void deserialize_member(const B& j, T& v, std::false_type /* ordinary */)
     {
-        static const std::string key = std::string(member_key_v<Unchecked, T, I>);
-        deserialize_one(j.at(key), v.[:member_v<Unchecked, T, I>:]);
+        static const std::string key = std::string(detail::member_key_v<Unchecked, T, I>);
+        deserialize_one(j.at(key), v.[:detail::member_v<Unchecked, T, I>:]);
     }
 
     // bit-fields cannot bind to a T& (no address): tag-dispatch instead of
@@ -606,7 +611,7 @@ struct codec
     template<typename B, typename T, std::size_t I>
     static void deserialize_member(const B& j, T& v)
     {
-        deserialize_member<B, T, I>(j, v, std::bool_constant<member_is_bit_field_v<Unchecked, T, I>>{});
+        deserialize_member<B, T, I>(j, v, std::bool_constant<detail::member_is_bit_field_v<Unchecked, T, I>>{});
     }
 
     template<typename B, typename T, std::size_t... I>
@@ -618,7 +623,7 @@ struct codec
     template<typename B, typename T>
     static void reflect_from_json(const B& j, T& v)
     {
-        reflect_from_json_impl(j, v, std::make_index_sequence<member_count<Unchecked, T>>{});
+        reflect_from_json_impl(j, v, std::make_index_sequence<detail::member_count_v<Unchecked, T>>{});
     }
 
     // ---- helpers ----------------------------------------------------------

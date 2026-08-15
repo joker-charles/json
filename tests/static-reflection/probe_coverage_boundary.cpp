@@ -61,10 +61,10 @@ using VecNoDefault = std::vector<NoDefault>;
 
 #define SHOW(name, T) \
     std::printf("%-24s adl_elig=%d refl=%d arr=%d obj=%d\n", name, \
-        (int)refl2::adl_branch_eligible<json, T>, \
-        (int)refl2::is_reflectable_struct<false, T>::value, \
-        (int)refl2::is_array_like<T>::value, \
-        (int)refl2::is_object_like<T>::value)
+        (int)refl2::detail::adl_branch_eligible_v<json, T>, \
+        (int)refl2::detail::is_reflectable_struct<false, T>::value, \
+        (int)refl2::detail::is_array_like<T>::value, \
+        (int)refl2::detail::is_object_like<T>::value)
 
 int main()
 {

@@ -226,30 +226,30 @@ int main()
     // ---- trait-level facts ------------------------------------------------
     std::printf("[0] dispatch classification (compile-time)\n");
     check("scalar / string stay on the adl branch",
-          refl2::adl_branch_eligible<json, int> &&
-          refl2::adl_branch_eligible<json, std::string> &&
-          refl2::adl_branch_eligible<json, mine::Date> &&
-          refl2::adl_branch_eligible<json, Celsius>);
+          refl2::detail::adl_branch_eligible_v<json, int> &&
+          refl2::detail::adl_branch_eligible_v<json, std::string> &&
+          refl2::detail::adl_branch_eligible_v<json, mine::Date> &&
+          refl2::detail::adl_branch_eligible_v<json, Celsius>);
     check("array/object containers go to element recursion (never adl)",
-          !refl2::adl_branch_eligible<json, std::vector<std::string>> &&
-          !refl2::adl_branch_eligible<json, std::vector<mine::Date>> &&
-          !refl2::adl_branch_eligible<json, std::vector<Address>> &&
-          !refl2::adl_branch_eligible<json, std::map<std::string, Address>>);
+          !refl2::detail::adl_branch_eligible_v<json, std::vector<std::string>> &&
+          !refl2::detail::adl_branch_eligible_v<json, std::vector<mine::Date>> &&
+          !refl2::detail::adl_branch_eligible_v<json, std::vector<Address>> &&
+          !refl2::detail::adl_branch_eligible_v<json, std::map<std::string, Address>>);
     check("C arrays: char[N] stays on the string path, plain C array -> invalid",
-          refl2::adl_branch_eligible<json, char[5]> &&
-          !refl2::adl_branch_eligible<json, Address[2]> &&
-          !refl2::is_reflectable_struct<false, Address[2]>::value);
+          refl2::detail::adl_branch_eligible_v<json, char[5]> &&
+          !refl2::detail::adl_branch_eligible_v<json, Address[2]> &&
+          !refl2::detail::is_reflectable_struct<false, Address[2]>::value);
     check("plain struct / container-of-plain -> NOT adl-serializable",
-          !refl2::is_adl_serializable<json, Address>::value &&
-          !refl2::is_adl_serializable<json, std::vector<Address>>::value &&
-          !refl2::is_adl_serializable<json, std::map<std::string, Address>>::value &&
-          !refl2::is_adl_deserializable<json, std::vector<Address>>::value);
+          !refl2::detail::is_adl_serializable<json, Address>::value &&
+          !refl2::detail::is_adl_serializable<json, std::vector<Address>>::value &&
+          !refl2::detail::is_adl_serializable<json, std::map<std::string, Address>>::value &&
+          !refl2::detail::is_adl_deserializable<json, std::vector<Address>>::value);
     check("nested json value is adl-viable via the string_like trap, but the",
-          refl2::is_adl_serializable<json, json>::value && refl2::is_nested_json<json, json>::value);
+          refl2::detail::is_adl_serializable<json, json>::value && refl2::detail::is_nested_json<json, json>::value);
     check("  json branch (priority 5) preempts it", true);
     check("private-only class reflectable only with unchecked()",
-          !refl2::is_reflectable_struct<false, OnlyPrivate>::value &&
-          refl2::is_reflectable_struct<true, OnlyPrivate>::value);
+          !refl2::detail::is_reflectable_struct<false, OnlyPrivate>::value &&
+          refl2::detail::is_reflectable_struct<true, OnlyPrivate>::value);
     check("Account: unprivileged counts 2 public members, unchecked 3",
           member_count_public<Account> == 2 && member_count_all<Account> == 3);
 
@@ -338,8 +338,8 @@ int main()
     // ---- (D) std::optional (dedicated branch, never array-like) -----------
     std::printf("\n[D] std::optional: dedicated branch, never array-like\n");
     check("optional classification: never array-like",
-          !refl2::is_array_like<std::optional<int>>::value &&
-          !refl2::is_array_like<std::optional<Address>>::value);
+          !refl2::detail::is_array_like<std::optional<int>>::value &&
+          !refl2::detail::is_array_like<std::optional<Address>>::value);
     {
         json ja1, ja2, jn1, jn2;
         codec_public::to_json(ja1, std::optional<int>{5});
@@ -386,15 +386,15 @@ int main()
         check("derived round-trip preserves base members", jd3 == jd2);
     }
     check("private vs protected base classification (is_private/is_protected)",
-          refl2::has_private_bases_p<false, DerivedPriv>() &&
-          !refl2::has_protected_bases_p<false, DerivedPriv>() &&
-          !refl2::has_private_bases_p<false, Derived2>());
+          refl2::detail::has_private_bases<false, DerivedPriv>() &&
+          !refl2::detail::has_protected_bases<false, DerivedPriv>() &&
+          !refl2::detail::has_private_bases<false, Derived2>());
     check("virtual base detected (shared virtual subobject guard)",
-          refl2::has_virtual_bases_p<false, DiaV>() &&
-          !refl2::has_virtual_bases_p<false, Derived2>());
+          refl2::detail::has_virtual_bases<false, DiaV>() &&
+          !refl2::detail::has_virtual_bases<false, Derived2>());
     check("duplicate member names across hierarchy detected (compile-time guard)",
-          refl2::has_duplicate_member_keys<false, Dia2>() &&
-          !refl2::has_duplicate_member_keys<false, Derived2>());
+          refl2::detail::has_duplicate_member_keys<false, Dia2>() &&
+          !refl2::detail::has_duplicate_member_keys<false, Derived2>());
     {
         DerivedPriv dp{"b", 1, 42};
         json jdp;
@@ -409,9 +409,9 @@ int main()
           std::meta::is_enumerable_type(^^Derived2) &&
           !std::meta::is_enumerable_type(^^IncompleteT));
     check("bit-field classification: reflectable, not array-like",
-          refl2::is_reflectable_struct<false, BF>::value &&
-          !refl2::is_array_like<BF>::value &&
-          refl2::member_count<false, BF> == 3);
+          refl2::detail::is_reflectable_struct<false, BF>::value &&
+          !refl2::detail::is_array_like<BF>::value &&
+          refl2::detail::member_count_v<false, BF> == 3);
     {
         BF bf{}; bf.a = 3; bf.b = 5; bf.c = 9;
         json jbf;
