@@ -30,8 +30,10 @@
   (the macro's omission hazard is structurally impossible). If the library
   ships the codec (scenario B), the user's one-time cost is 0 — every type
   breaks even from the first one; writing it yourself (scenario A) costs
-  v1 = 25 lines (flat only) / v2 = 667 lines whole file (463 code-only),
-  break-even ≈ 25 / ≈ 667 (≈ 463) types.
+  v1 = the naive reflection serializer (25 lines, flat structs only) /
+  v2 = the complete ADL-aware recursive codec "refl2" (667 lines whole
+  file, 463 code-only), break-even ≈ 25 / ≈ 667 (≈ 463) types. (Definitions:
+  §2.1.)
 - **At -O2 the flat path is size-identical to the macro version** (exe
   equal at every N, text within 32 B). The extended
   inheritance/optional/bit-field paths do NOT collapse that far: text
