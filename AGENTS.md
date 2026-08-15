@@ -166,6 +166,15 @@ covered by the repository's doctest unit suite — see §5 "Repository test suit
 - **Every new overload / concept / trait rewrite must be validated** by the
   differential / zero-drift probes outlined in `M4_ASSESSMENT.md` §7. The burden
   is on the change to prove byte-identical behavior, not on reviewers to trust it.
+- **Session scratch files live in `.tmp/` or `build/scratch/` (both
+  gitignored).** `/tmp` does not survive across tool invocations in this
+  environment — never rely on it for anything you need again (experiment
+  TUs, negative compile cases, one-off probes, measurement artifacts).
+  `.tmp/` is for session drafts/experiments, `build/scratch/` for
+  measurement artifacts (bench binaries, driver output). Anything
+  reproducible belongs in the repo: fixtures under
+  `tests/static-reflection/`, measurement snapshots under
+  `docs/static-reflection/data/` (see EVALUATION.md §5).
 
 ## 6. Doc map
 
