@@ -24,8 +24,9 @@
 #
 # Requires GNU /usr/bin/time, size and nm. The full default sweep is ~90
 # compiles (≈10 min on the branch machine); reduce BENCH_N_SET/BENCH_RUNS
-# for a smoke run. Raw runs go to $RESULTS_FILE (uncommitted working
-# artifact, matching the §5 convention).
+# for a smoke run. Raw runs go to $RESULTS_FILE (regenerable working
+# artifact); the authoritative session snapshot is committed under
+# docs/static-reflection/data/ (see EVALUATION.md §5).
 set -euo pipefail
 
 BENCH_N_SET="${BENCH_N_SET:-1 20 28 50 100}"

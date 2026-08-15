@@ -642,8 +642,9 @@ g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Isingle_include -Iincl
 （未入库的工作产物）。
 
 三模式重测（本会话、同一台机器、同一工具链；宏/v1 与新的 v2 模式在同一次扫描中
-重跑，取 3 次最小值；原始数据在 `build/scratch/measure_results.txt`，由
-`tests/static-reflection/bench_macro_vs_reflection.sh` 生成，未入库）：
+重跑，取 3 次最小值；原始数据已入库为 `docs/static-reflection/data/measure_results_20260815.txt`，
+由 `tests/static-reflection/bench_macro_vs_reflection.sh` 生成——`build/scratch/`
+副本是可再生的工作产物）：
 宏与 v1 的可执行文件大小在每个 N 上都与上一版报告完全一致（如 N=50 -O0：
 530,088 / 669,208；N=100 -O2：266,640 / 421,720）；新的 v2 模式在 **-O2 下与宏
 大小完全相同**（113,384 / 131,088 / 145,120 / 182,608 / 266,640；text 相差不超过
@@ -654,7 +655,9 @@ g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Isingle_include -Iincl
 
 运行时测量（本修订，§2.2）：`bench_runtime.cpp` 三种模式，扁平 + 嵌套，
 `to_json`/`from_json`/round-trip；预热 + 7 轮 × 20 万次迭代，报告中位数；驱动
-`tests/static-reflection/runtime_measure.sh`。"旧 codec" 基线是优化前的 codec
+`tests/static-reflection/runtime_measure.sh`；驱动的原始输出与 round-trip 样本
+已入库为 `docs/static-reflection/data/runtime_measure_20260815.txt`。"旧 codec"
+基线是优化前的 codec
 （从提交 62290f3b 提取），以 `tests/static-reflection/refl2_codec_old.hpp` +
 `bench_runtime_old.cpp` 入库，保证旧-对-优化列可复现。驱动的第一次运行被一个
 脚本 bug 作废：

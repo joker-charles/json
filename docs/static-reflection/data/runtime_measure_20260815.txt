@@ -1,0 +1,56 @@
+# runtime measure — authoritative 2026-08-15 session data (EVALUATION.md §2.2)
+# driver:   tests/static-reflection/runtime_measure.sh (RUNS=7, seed=12345)
+# binaries: built per bench_runtime.cpp header (-O2) into build/scratch;
+#           old-codec baseline = tests/static-reflection/bench_runtime_old.cpp
+# reported: min/median us/op of 7 binary runs per mode per direction
+
+== macro ==
+  flat serialize  min=0.688 median=0.693 us/op
+  flat deserialize  min=0.110 median=0.112 us/op
+  nested serialize  min=1.396 median=1.398 us/op
+  nested deserialize  min=0.243 median=0.248 us/op
+== refl v1 ==
+  flat serialize  min=0.588 median=0.590 us/op
+  flat deserialize  min=0.101 median=0.103 us/op
+  nested serialize — (n/a)
+  nested deserialize — (n/a)
+== refl2 v2 (old codec) ==
+  flat serialize  min=0.659 median=0.696 us/op
+  flat deserialize  min=0.111 median=0.115 us/op
+  nested serialize  min=1.199 median=1.258 us/op
+  nested deserialize  min=0.212 median=0.225 us/op
+== refl2 v2 (optimized) ==
+  flat serialize  min=0.658 median=0.665 us/op
+  flat deserialize  min=0.103 median=0.105 us/op
+  nested serialize  min=1.206 median=1.215 us/op
+  nested deserialize  min=0.197 median=0.201 us/op
+
+# supplementary: round-trip (to_json+dump+parse+from_json), 3 runs each,
+#                us/op (dump/parse dominate; used only as end-to-end
+#                no-regression band in the report)
+# seed=12345 -O2:
+## brt_macro
+  flat     round-trip     2.339 us/op
+  nested   round-trip     5.040 us/op
+  flat     round-trip     2.352 us/op
+  nested   round-trip     4.964 us/op
+  flat     round-trip     2.411 us/op
+  nested   round-trip     5.097 us/op
+## brt_BENCH_REFLECTION
+  flat     round-trip     2.221 us/op
+  flat     round-trip     2.227 us/op
+  flat     round-trip     2.201 us/op
+## brt_old_v2
+  flat     round-trip     2.430 us/op
+  nested   round-trip     5.071 us/op
+  flat     round-trip     2.444 us/op
+  nested   round-trip     5.143 us/op
+  flat     round-trip     2.438 us/op
+  nested   round-trip     5.040 us/op
+## brt_BENCH_ADL_REFLECTION
+  flat     round-trip     2.459 us/op
+  nested   round-trip     5.032 us/op
+  flat     round-trip     2.358 us/op
+  nested   round-trip     4.799 us/op
+  flat     round-trip     2.357 us/op
+  nested   round-trip     5.072 us/op
