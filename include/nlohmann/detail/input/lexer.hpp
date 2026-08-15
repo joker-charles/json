@@ -978,7 +978,7 @@ class lexer : public lexer_base<BasicJsonType>
         return ec == std::errc();
     }
 
-    template < typename Number, enable_if_t < std::is_signed<Number>::value && !detail::is_basic_json<Number>::value, int > = 0 >
+    template < typename Number, enable_if_t < std::is_signed<Number>::value, int > = 0 >
     static bool try_parse_integer(const char* first, const char* last, Number& value) noexcept
     {
         const auto [ptr, ec] = std::from_chars(first, last, value);
@@ -996,7 +996,7 @@ class lexer : public lexer_base<BasicJsonType>
         return errno != ERANGE;
     }
 
-    template < typename Number, enable_if_t < std::is_signed<Number>::value && !detail::is_basic_json<Number>::value, int > = 0 >
+    template < typename Number, enable_if_t < std::is_signed<Number>::value, int > = 0 >
     static bool try_parse_integer(const char* str, const char* /*last*/, Number& value) noexcept
     {
         char* end = nullptr; // NOLINT(misc-const-correctness,cppcoreguidelines-pro-type-vararg,hicpp-vararg)
