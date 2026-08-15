@@ -9522,6 +9522,22 @@ scan_number_done:
         return token_string;
     }
 
+    // Format a control character (< 0x20) as the library's error-token escape
+    // "<U+00XX>". Uses a branch-free uppercase hex nibble table (the same
+    // pattern as serializer::hex_bytes) instead of snprintf("%.4X"),
+    // eliminating the vararg/format-string usage. Output is byte-identical:
+    // control chars are 0x00..0x1F so the codepoint is always two uppercase
+    // hex digits.
+    static std::string escape_control_character(std::uint8_t c)
+    {
+        static constexpr char hex[] = "0123456789ABCDEF";
+        std::string out = "<U+00";
+        out += hex[(c >> 4) & 0x0F];
+        out += hex[c & 0x0F];
+        out += '>';
+        return out;
+    }
+
     /// return the last read token (for errors only).  Will never contain EOF
     /// (an arbitrary value that is not a valid char value, often -1), because
     /// 255 may legitimately occur.  May contain NUL, which should be escaped.
@@ -9537,9 +9553,7 @@ scan_number_done:
             if (static_cast<unsigned char>(c) <= '\x1F')
             {
                 // escape control characters
-                std::array<char, 9> cs{{}};
-                static_cast<void>((std::snprintf)(cs.data(), cs.size(), "<U+%.4X>", static_cast<unsigned char>(c))); // NOLINT(cppcoreguidelines-pro-type-vararg,hicpp-vararg)
-                result += cs.data();
+                result += escape_control_character(static_cast<std::uint8_t>(c));
             }
             else
             {
