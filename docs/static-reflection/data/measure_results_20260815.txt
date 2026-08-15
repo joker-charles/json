@@ -47,3 +47,23 @@ refl2  N=100  O=2  wall_min=5.52     rss_min=499952    exe=266640     text=20895
 # -O2 N=50: macro vs refl2 — size-identical (182608 B); text 138326 vs 138358 B (32 B delta)
 # -O2 N=100: macro vs refl2 — size-identical (266640 B); text 208925 vs 208957 B (32 B delta)
 SWEEP DONE
+
+# --- -O2 compile-time rerun (same session; supersedes the -O2 wall columns
+#     above — EVALUATION.md §2.2 Q2: -O2 wall time is load-sensitive and not
+#     reliable vs macro; medians reported in the report table) ---
+# 7 compiles per config; wall seconds, min and median:
+macro  N=1    O=2  min=3.04  median=3.17
+refl   N=1    O=2  min=3.12  median=3.23
+refl2  N=1    O=2  min=2.88  median=2.98
+macro  N=20   O=2  min=3.10  median=3.18
+refl   N=20   O=2  min=3.44  median=3.52
+refl2  N=20   O=2  min=2.97  median=2.99
+macro  N=28   O=2  min=3.14  median=3.26
+refl   N=28   O=2  min=3.95  median=4.17
+refl2  N=28   O=2  min=3.50  median=3.53
+macro  N=50   O=2  min=3.75  median=3.79
+refl   N=50   O=2  min=4.86  median=4.87
+refl2  N=50   O=2  min=3.87  median=3.89
+macro  N=100  O=2  min=4.97  median=5.01
+refl   N=100  O=2  min=7.03  median=7.13
+refl2  N=100  O=2  min=5.57  median=5.62

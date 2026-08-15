@@ -9,6 +9,17 @@
 > version of this document carried numbers that did **not** survive re-measurement;
 > §5 lists exactly which claims were corrected.
 
+> **Applicability.** Every number below is single-sample evidence: one
+> compiler (GCC 16.1.0, `g++-16`), one library (nlohmann/json 3.12.0), one
+> machine (12th-gen i5-12600KF, x86-64), one data shape (person-like flat
+> and shallow-nested structs with string/numeric/container members), and
+> the flags listed per section (`-std=c++26 -freflection`; `-O0`/`-O2`).
+> Absolute values — and some ratios — may differ substantially on other
+> compilers (Clang/MSVC), other library versions, or other type shapes;
+> the durable findings are the **methodology** and the **same-toolchain
+> relative relationships** (e.g. refl2 never slower than the macro
+> baseline, size identity at -O2).
+
 This document records *how* we evaluated two modernization directions for a
 header-only template library (nlohmann/json) — (A) replacing hand-written
 macros/SFINAE with C++20 concepts, and (B) replacing user-facing macros with
@@ -360,7 +371,8 @@ probe):
 ### 2.2 Results
 
 Re-measured in one session (three modes, same TU, same `-std=c++26
--freflection`, min of 3; raw runs in §5). All three modes print the same
+-freflection`; compile times: -O0 min of 3, -O2 median of 7; raw runs
+committed in §5). All three modes print the same
 counter — the JSON output is identical — so the numbers are pure serializer
 cost, not behavior drift.
 
@@ -408,23 +420,31 @@ point answers different questions depending on who pays the one-time cost:
   ships is the 404-line implementation (plus the extension burden documented
   in §2.1's coverage boundary).
 
-**Q2 compile time** (same TU, same flags, min of 3):
+**Q2 compile time** (same TU, same flags; -O0: min of 3 — stable; -O2:
+median of 7 — high-noise, see the note below):
 
 | N | macro -O0 | v1 -O0 | v2 -O0 | macro -O2 | v1 -O2 | v2 -O2 |
 |---|---|---|---|---|---|---|
-| 1 | 2.21 s | 2.35 s | 2.29 s | 3.15 s | 3.32 s | 3.12 s |
-| 20 | 2.41 s | 2.59 s | 2.49 s | 3.39 s | 3.62 s | 3.03 s |
-| 28 | 2.50 s | 2.66 s | 2.57 s | 3.44 s | 4.25 s | 3.57 s |
-| 50 | 2.69 s | 2.98 s | 2.93 s | 3.96 s | 4.61 s | 3.63 s |
-| 100 | 2.77 s | 3.19 s | 3.13 s | 4.80 s | 7.26 s | 5.52 s |
+| 1 | 2.21 s | 2.35 s | 2.29 s | 3.17 s | 3.23 s | 2.98 s |
+| 20 | 2.41 s | 2.59 s | 2.49 s | 3.18 s | 3.52 s | 2.99 s |
+| 28 | 2.50 s | 2.66 s | 2.57 s | 3.26 s | 4.17 s | 3.53 s |
+| 50 | 2.69 s | 2.98 s | 2.93 s | 3.79 s | 4.87 s | 3.89 s |
+| 100 | 2.77 s | 3.19 s | 3.13 s | 5.01 s | 7.13 s | 5.62 s |
 
 v2 is **cheaper to compile than v1** at every measured point (−1.7…−3.9% at
--O0, −6.0…−24.0% at -O2) and close to the macro baseline (+2.8…+13.0% at
--O0; −10.6…+15.0% at -O2 — the -O2 spread is dominated by min-of-3 wall-time
-noise: v2 beats macro at N=1/20/50 and trails at N=28/100). The dispatch
-machinery is resolved at compile time and adds less per-type instantiation
-work than v1's per-member `j[...] = v.[:m:]` +
-`std::string(identifier_of(m))` codegen.
+-O0; −7.7…−21.2% at -O2, medians of 7) and close to the macro baseline at
+-O0 (+2.8…+13.0%, min of 3). The dispatch machinery is resolved at compile
+time and adds less per-type instantiation work than v1's per-member
+`j[...] = v.[:m:]` + `std::string(identifier_of(m))` codegen.
+
+**-O2 compile time is not reliable on this machine.** The -O2 wall times
+were re-measured with 7 compiles per config (medians above; raw values in
+§5's snapshot) and still swing −6.0…+12.2% vs macro across N (v2 faster at
+N=1/20, slower at N=28/100) under machine load. The earlier min-of-3 run
+swung −10.6…+15.0% — same picture, different bounds. The robust evidence in
+this evaluation is the **-O0 compile time** (stable), the **-O2 binary size
+identity** (Q3) and the **runtime throughput** below; the -O2 compile-time
+column should be read as indicative only.
 
 **Q3 binary** (executable bytes / `size` text, per N):
 
@@ -485,9 +505,21 @@ feeds a printed sink counter. `-O2`, seed 12345, min/median of 7 binary runs:
 Scope: `dump`/`parse` are library code, byte-identical across modes — the
 table measures only the **conversion layer** (DOM build / DOM read).
 Round-trip (`to_json` + `dump` + `parse` + `from_json`) is an end-to-end
-no-regression check: it is dominated by `dump`/`parse`, and all modes land in
-the same band (flat ≈ 2.2–2.5 us/op, nested ≈ 5.05–5.23 us/op), so the
-conversion-layer differences above are real but small.
+check; the full numbers (min/median of 3 runs each, raw samples in §5's
+`runtime_measure_20260815.txt`):
+
+| mode | flat round-trip (min / median) | nested round-trip (min / median) |
+|---|---|---|
+| macro | 2.339 / 2.352 us/op | 4.964 / 5.040 us/op |
+| refl v1 | 2.201 / 2.221 us/op | — (v1 n/a) |
+| refl2 v2 (old codec) | 2.430 / 2.438 us/op | 5.040 / 5.071 us/op |
+| refl2 v2 (optimized) | 2.357 / 2.358 us/op | 4.799 / 5.032 us/op |
+
+All modes land in the same band (flat ≈ 2.2–2.5 us/op, nested ≈ 4.8–5.15
+us/op): the end-to-end time is dominated by `dump`/`parse` (identical
+library code), and the mode-to-mode differences (≤ ~9% on flat, <2% on
+nested — the old-codec flat median 2.438 vs v1 2.221 is the largest) are a
+small fraction of the conversion-layer component — no end-to-end regression.
 
 Reading the numbers:
 - refl2 v2 is **never slower than the macro baseline**, and on the nested
@@ -668,6 +700,13 @@ library's 238–376-line error cascade.
 6. **`-freflection` must not go into `CMAKE_CXX_FLAGS`** — it leaks into nested
    subproject `TryCompile` probes that compile with the default standard and
    fail. (Preset fix + AGENTS.md rule.)
+7. **Single-toolchain evidence — state the scope with the numbers.** Every
+   number here is g++-16 / nlohmann-json / one machine / one type shape;
+   the durable claims are the methodology and the same-toolchain
+   relationships, not the absolutes (see "Applicability" in the header).
+   And: wall-clock compile times at -O2 are load-sensitive and should be
+   reported with their noise or dropped (see §2.2 Q2) — binary size and
+   runtime measurements are the stable evidence.
 
 ## 4. Reproduce
 
@@ -733,12 +772,16 @@ methodology are the point**.
 
 Re-measured 2026-08-15 on this machine (12th Gen i5-12600KF, 10 cores,
 g++-16 16.1.0-2ubuntu1, no ccache; baseline develop `cdf52ae9`, branch
-`cca6c3c5`). Raw runs (3× per config, min reported) are in the session's
-`/tmp/eval-20260815/results/{matrix1,matrix2,matrix3,runtime,probes}.txt`
-(uncommitted working artifacts).
+`cca6c3c5`). The earlier concepts-evaluation raw runs (the §1 matrix/runtime
+logs) lived in `/tmp/eval-20260815/results/` and **were not preserved** —
+they vanished with the session, which is exactly the failure mode this
+section's closing lesson warns about; the §1 numbers survive only in the
+tables above and are not re-derivable from repo artifacts. Everything in the
+current revision, by contrast, has repo-side drivers and committed raw
+snapshots (`docs/static-reflection/data/`, see below).
 
 Three-mode re-measurement (this session, same machine, same toolchain; the
-sweep re-ran macro/v1 together with the new v2 mode, min of 3; raw runs
+sweep re-ran macro/v1 together with the new v2 mode; raw runs
 committed as `docs/static-reflection/data/measure_results_20260815.txt`,
 generated by `tests/static-reflection/bench_macro_vs_reflection.sh` — the
 `build/scratch/` copy is the regenerable working artifact): the
@@ -746,12 +789,13 @@ macro and v1 executable sizes reproduce the previous report exactly at every
 N (e.g. N=50 -O0: 530,088 / 669,208; N=100 -O2: 266,640 / 421,720); the new
 v2 mode is **size-identical to macro at -O2** at every N (113,384 / 131,088 /
 145,120 / 182,608 / 266,640; text within 32 B) and cheaper to compile than
-v1 (−6.0…−24.0% at -O2). §2.2's tables now carry the three-mode numbers; the
-previous two-mode table rows for macro/v1 are superseded by the same-session
-values. The `-O2` wall times shifted relative to the earlier session numbers
-(v2 vs macro now −10.6…+15.0% instead of −1.4…+3.1%): min-of-3 wall times are
-noisy under machine load — v2 beats macro at N=1/20/50 and trails at
-N=28/100 — while the exe/text/nm facts are stable.
+v1 (−7.7…−21.2% at -O2, medians of 7). §2.2's tables now carry the
+three-mode numbers; the previous two-mode table rows for macro/v1 are
+superseded by the same-session values. The `-O2` wall times are
+**load-sensitive and not reliable vs macro** — an extra 7-compile rerun
+(medians: v2 −6.0…+12.2% vs macro across N) landed in a different range than
+the earlier min-of-3 run (−10.6…+15.0%); the stable facts are the -O0
+compile times, the exe/text/nm identity at -O2, and the runtime throughput.
 
 Runtime measurements (this revision, §2.2): `bench_runtime.cpp` in the three
 modes, flat + nested, `to_json`/`from_json`/round-trip; warmup + 7 runs ×
