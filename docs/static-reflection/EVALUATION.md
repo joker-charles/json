@@ -308,12 +308,13 @@ serialize_one(j, v), highest priority first:
   (`codec<false>`) — private members are neither serialized nor parsed;
   `codec<true>` switches to `unchecked()` for library-internal use (the
   two-layer policy from §2.3, demonstrated in §2.5).
-- One-time cost: the header is **423 lines** total — 278 lines of code
-  (including the 10 `#include`/`#pragma once` lines), 101 comment lines (69
-  of them the design/pitfall/coverage documentation block), 44 blank lines.
+- One-time cost: the header is **565 lines** total — 386 lines of code
+  (including the 10 `#include`/`#pragma once` lines), 129 comment lines (83
+  of them the design/pitfall/coverage documentation block), 50 blank lines.
   This replaces the earlier inline `namespace refl2` block (311 lines + 1
   `#include <meta>` = 312); the increase buys the optimization machinery
-  below, the `std::optional` guard and the documented coverage boundary.
+  below, the `std::optional` branch, the inheritance (subobjects_of)
+  recursion and the documented coverage boundary.
 
 **Optimizations in this revision** (measured, see §2.2 runtime):
 - **Member keys are one-time-initialized `static const std::string`**
@@ -335,14 +336,31 @@ serialize_one(j, v), highest priority first:
   a deep library error; it hits the clean priority-0 `static_assert` instead
   (`char[N]` still serializes as a string).
 
+**Inheritance is supported**: base-class members are serialized.
+`nonstatic_data_members_of` sees only direct members, so the member facts
+are computed from `subobjects_of` (direct base subobjects + direct data
+members, access-filtered, bases first) with a consteval recursion into each
+base via `type_of(base_info)` — multi-level, depth-first, in layout order;
+the member-access splice `v.[:m:]` works for members of base classes too
+(verified). Two shapes are compile errors instead of silent loss:
+**private/protected bases** under `codec<false>` (`has_inaccessible_bases`;
+use `codec<true>` or add a `to_json`) and **duplicate member names across
+the hierarchy** (same name in a base and a derived class, or diamond
+inheritance) — either would silently overwrite JSON keys.
+
+**`std::optional<T>` is fully supported** via its own dispatch branch
+(priority 5): it serializes as `T` / `null` for any refl2-serializable `T`
+(reflectable structs, containers, nested json, ...) — `optional<PlainStruct>`
+now round-trips. The `is_optional` exclusion from `is_array_like` is still
+required: C++23 added `begin()`/`end()` + `value_type` to `std::optional`,
+which would otherwise misclassify it as array-like and silently serialize
+`optional<int>{5}` as `"[5]"` (verified before the fix).
+
 **Coverage boundary** (what v2 deliberately does NOT handle — such types fall
 to the priority-0 `static_assert` with an actionable message; each extension
-below raises the one-time cost beyond the current 423 lines):
-- **Inheritance**: `nonstatic_data_members_of` reports only directly-declared
-  members, so base-class members are silently ignored (would need `bases_of`
-  recursion, ~15 lines).
-- **Private/protected base classes; unions; `std::variant`** (would need
-  `variant_size`/`variant_alternative` integration, ~20 lines).
+below raises the one-time cost beyond the current 565 lines):
+- **unions; `std::variant`** (would need `variant_size`/`variant_alternative`
+  integration, ~20 lines, plus a discriminator format design).
 - **pointers / self-referential types**.
 - **Ranges with `begin`/`end` but no `value_type` member**: NOT excluded —
   they fall through to the adl branch (nlohmann's range-array path accepts
@@ -354,15 +372,6 @@ below raises the one-time cost beyond the current 423 lines):
   `value_type{}`); **map keys other than string-like / arithmetic**.
 - C arrays: not supported, but now a clean compile error (string-like
   `char[N]` still works).
-
-**`std::optional<T>` is supported** natively through the adl branch —
-it serializes as `T` / `null`, exactly like nlohmann's own optional support.
-This needed an explicit `is_optional` exclusion from `is_array_like`: C++23
-added `begin()`/`end()` + `value_type` to `std::optional`, which would
-otherwise misclassify it as array-like and silently serialize
-`optional<int>{5}` as `"[5]"` instead of `"5"` (verified before the fix;
-probe [D] in §2.5). `optional<PlainStruct>` (T not nlohmann-constructible)
-falls to the clean priority-0 static_assert.
 
 Two new pitfalls were hit and fixed while building v2 (reproduced by the
 probe):
@@ -396,24 +405,25 @@ point answers different questions depending on who pays the one-time cost:
   of this evaluation: the codec is a header the user copies into their
   project). Per-type user lines: macro = struct + macro call = 2/type;
   reflection = struct only = 1/type; one-time cost: v1 = 25 lines
-  (flat structs only), v2 = 423 lines (refl2_codec.hpp, whole file).
+  (flat structs only), v2 = 565 lines (refl2_codec.hpp, whole file).
 
   | types | macro | refl v1 | refl2 v2 |
   |---|---|---|---|
-  | 1 | 2 | 26 | 424 |
-  | 20 | 40 | 45 | 443 |
-  | **25** | 50 | 50 | 448 |
-  | 50 | 100 | 75 | 473 |
-  | 100 | 200 | 125 | 523 |
-  | **423** | 846 | 448 | 846 |
+  | 1 | 2 | 26 | 566 |
+  | 20 | 40 | 45 | 585 |
+  | **25** | 50 | 50 | 590 |
+  | 50 | 100 | 75 | 615 |
+  | 100 | 200 | 125 | 665 |
+  | **565** | 1130 | 590 | 1130 |
 
   Both reflection versions save **1 line per type**; the naive v1 needs a
   **25-line** one-time serializer (break-even ≈ 25 types) but only works for
   flat structs, while the complete v2 (recursion + ADL + private-member
-  policy + the documented coverage boundary) needs a **423-line** one-time
-  serializer (break-even ≈ 423 types) and handles nested structs, containers
-  of plain structs, user customization, `std::optional` and
-  `unprivileged()` access control — which v1 cannot do at all.
+  policy + inheritance + `std::optional` + the documented coverage boundary)
+  needs a **565-line** one-time serializer (break-even ≈ 565 types) and
+  handles nested structs, containers of plain structs, user customization,
+  base-class members and `unprivileged()` access control — which v1 cannot
+  do at all.
 
 - **Scenario B — the library ships v2 as a default facility** (like the
   macros today): the user's one-time cost is **0**, so every type saves 1
@@ -425,12 +435,12 @@ point answers different questions depending on who pays the one-time cost:
   | 20 | 40 | 20 | 20 |
   | 100 | 200 | 100 | 100 |
 
-  The 423-line codec then becomes a **maintainer cost** — paid once by the
+  The 565-line codec then becomes a **maintainer cost** — paid once by the
   library, amortized over all users — not a per-user cost. Scenario A's
   "312 types to break even" framing was misleading: it only describes users
   who re-implement the serializer by hand; for the library as a provider the
   user-side cost is zero from the first type, and what the library actually
-  ships is the 423-line implementation (plus the extension burden documented
+  ships is the 565-line implementation (plus the extension burden documented
   in §2.1's coverage boundary).
 
 **Q2 compile time** (same TU, same flags; -O0: min of 3 — stable; -O2:
@@ -650,7 +660,7 @@ type is reachable.
 
 `tests/static-reflection/probe_adl_recursion.cpp` verifies the paths the
 v2 design depends on — it includes the shared `refl2_codec.hpp` (no inline
-copy) and runs **24 checks, all PASS, ASan clean at -O0 and -O1**:
+copy) and runs **33 checks, all PASS, ASan clean at -O0 and -O1**:
 
 - **[A] Nested plain structs** — struct-in-struct, `vector<PlainStruct>` and
   `map<string, PlainStruct>` members serialize and round-trip through the
@@ -667,11 +677,18 @@ copy) and runs **24 checks, all PASS, ASan clean at -O0 and -O1**:
   private member untouched; `codec<true>` (unchecked) serializes all 3. The
   classification facts are also static_asserted: a private-only class is
   reflectable only under unchecked(), and member counts are 2 vs 3.
-- **[D] `std::optional`** — the C++23 `begin`/`end` + `value_type` guard:
-  `optional<int>` is classified adl-eligible (never array-like) and
-  serializes byte-equal to native nlohmann (`5` / `null`, round-trip
-  verified), while `optional<Address>` (a plain struct) is classified
-  not-adl/not-array-like — it hits the clean priority-0 static_assert.
+- **[D] `std::optional`** — dedicated dispatch branch, never array-like:
+  `optional<int>` serializes byte-equal to native nlohmann (`5` / `null`,
+  round-trip verified), and `optional<Address>` (a plain struct) now
+  round-trips through the reflection recursion (object / `null` /
+  `nullopt`).
+- **[F] inheritance** — base-class members are serialized via the
+  `subobjects_of` recursion: a multi-level `Derived : Mid : Base` round-trips
+  with all four members (verified against the exact JSON); the compile-time
+  guards are trait-checked: private bases are detected under the
+  unprivileged policy (`has_inaccessible_bases`) and duplicate member names
+  across a diamond hierarchy are detected; `codec<true>` serializes
+  private-base members too.
 - **[E] v1 parity** — on flat structs, v2 output is identical to the v1 naive
   serializer (no regression on the case v1 could already handle).
 
@@ -843,8 +860,9 @@ Claims that **reproduce exactly** (stable facts):
 - §1.4: alt-string parameter-order trap and the `<T, B>` fix (minimal repro).
 - All 16 probes build and pass per their documented build lines;
   `concepts_smoke` output identical under c++11/20/26.
-- §2.5 probe: **24 checks, all PASS, ASan clean at -O0 and -O1** — including
-  the C-array classification check and the [D] `std::optional` guard checks.
+- §2.5 probe: **33 checks, all PASS, ASan clean at -O0 and -O1** — including
+  the C-array classification check and the [D] `std::optional` / [F]
+  inheritance checks.
 - §2.2 runtime: refl2-vs-macro ordering and the old-vs-optimized deltas
   reproduced across the driver runs (nested faster than macro; optimized
   faster than old codec on every direction).
@@ -865,6 +883,23 @@ Claims that **did not reproduce** and were corrected:
   compile-time-only for non-optional types — a N=50 -O2 spot-check rebuilt
   macro and refl2 size-identical (182,608 B each, text within 32 B) with the
   fixed codec.
+- §2.1 coverage boundary, **inheritance** (this revision): the boundary entry
+  ("base members silently ignored, would need bases_of recursion") is
+  obsolete — inheritance is now implemented. Member facts come from
+  `std::meta::subobjects_of` (verified: direct bases + direct members,
+  access-filtered, bases first) with a consteval recursion into each base
+  via `type_of(base_info)` (the direct enumeration of `bases_of` entries
+  hits the known "not a complete class type" trap — [LLVM
+  #172136](https://github.com/llvm/llvm-project/issues/172136) — the
+  `type_of` route works on this toolchain). Private/protected bases and
+  duplicate member names across the hierarchy are clean compile errors
+  (probe [F]). `std::optional` is now fully supported via its own dispatch
+  branch (`optional<PlainStruct>` round-trips; the earlier "hits the
+  priority-0 static_assert" note in §2.1 was superseded). The one-time cost
+  moved 423 → 565 lines and Q1 was re-derived (break-even ≈ 565 types);
+  probe counts 33 checks. The bench sweep numbers are unaffected (bench
+  types are flat, no optional/inheritance) — N=50 -O2 macro vs refl2
+  re-verified size-identical (182,608 B each) with the new codec.
 - §2.2 "nm counts 288 symbols at N=50": misattributed — the new sweep shows
   238 at N=50 (288 is the N=100 value; macro/v2 identical at every N). The
   claim itself (v2 `nm` == macro at -O2) holds and is now stated for all N.
