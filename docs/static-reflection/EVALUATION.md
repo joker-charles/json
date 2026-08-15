@@ -31,8 +31,8 @@
   ships the codec (scenario B), the user's one-time cost is 0 — every type
   breaks even from the first one; writing it yourself (scenario A) costs
   v1 = the naive reflection serializer (25 lines, flat structs only) /
-  v2 = the complete ADL-aware recursive codec "refl2" (667 lines whole
-  file, 463 code-only), break-even ≈ 25 / ≈ 667 (≈ 463) types. (Definitions:
+  v2 = the complete ADL-aware recursive codec "refl2" (672 lines whole
+  file, 466 code-only), break-even ≈ 25 / ≈ 672 (≈ 466) types. (Definitions:
   §2.1.)
 - **At -O2 the flat path is size-identical to the macro version** (exe
   equal at every N, text within 32 B). The extended
@@ -341,9 +341,9 @@ serialize_one(j, v), highest priority first:
   (`codec<false>`) — private members are neither serialized nor parsed;
   `codec<true>` switches to `unchecked()` for library-internal use (the
   two-layer policy from §2.3, demonstrated in §2.5).
-- One-time cost: the header is **667 lines** total — 463 lines of code
+- One-time cost: the header is **672 lines** total — 466 lines of code
   (including the 10 `#include`/`#pragma once` lines), 148 comment lines (89
-  of them the design/pitfall/coverage documentation block), 56 blank lines.
+  of them the design/pitfall/coverage documentation block), 58 blank lines.
   This replaces the earlier inline `namespace refl2` block (311 lines + 1
   `#include <meta>` = 312); the increase buys the optimization machinery
   below, the `std::optional` branch, the inheritance (subobjects_of)
@@ -360,11 +360,11 @@ serialize_one(j, v), highest priority first:
   keys (≤15 chars); longer keys fail with `refers to a result of 'operator new'`.
 - The member loop switched from `template for` to an `std::index_sequence`
   pack expansion over consteval variable templates (`member_v<U,T,I>`,
-  `member_key_v<U,T,I>`, `member_count<U,T>`) — the pattern this branch
+  `member_key_v<U,T,I>`, `member_count_v<U,T>`) — the pattern this branch
   verified on GCC 16; still no `if constexpr`-with-splices anywhere.
 - The array branch serializes directly into `j.emplace_back()` (which returns
   a reference to the new element) instead of a temp `json` + `push_back`.
-- **Diagnostic hardening**: `adl_branch_eligible` now excludes C arrays unless
+- **Diagnostic hardening**: `adl_branch_eligible_v` now excludes C arrays unless
   string-like (`!(std::is_array<T>::value && !is_string_like<B,T>)`) — a plain
   C array no longer falls into nlohmann's C-array `to_json` path and dies with
   a deep library error; it hits the clean priority-0 `static_assert` instead
@@ -400,7 +400,7 @@ which would otherwise misclassify it as array-like and silently serialize
 
 **Coverage boundary** (what v2 deliberately does NOT handle — such types fall
 to the priority-0 `static_assert` with an actionable message; each extension
-below raises the one-time cost beyond the current 667 lines):
+below raises the one-time cost beyond the current 672 lines):
 - **unions; `std::variant`** (would need `variant_size`/`variant_alternative`
   integration, ~20 lines, plus a discriminator format design).
 - **pointers / self-referential types**.
@@ -428,7 +428,7 @@ probe):
   detection treats `map<string, PlainStruct>` as adl-usable (the tuple
   machinery makes `get<pair<const string, PlainStruct>>` look viable) but
   breaks on instantiation. Fix: array/object-like containers are excluded
-  from the adl branch (`adl_branch_eligible`) and always go through the
+  from the adl branch (`adl_branch_eligible_v`) and always go through the
   codec's own element recursion — behavior-identical for what nlohmann
   handles, and it additionally covers containers of plain reflected structs.
 
@@ -447,26 +447,26 @@ point answers different questions depending on who pays the one-time cost:
   of this evaluation: the codec is a header the user copies into their
   project). Per-type user lines: macro = struct + macro call = 2/type;
   reflection = struct only = 1/type; one-time cost: v1 = 25 lines
-  (flat structs only), v2 = 667 lines (refl2_codec.hpp, whole file; the
-  code body alone is 463 lines — 148 comment / 56 blank lines are the
+  (flat structs only), v2 = 672 lines (refl2_codec.hpp, whole file; the
+  code body alone is 466 lines — 148 comment / 58 blank lines are the
   design/pitfall/coverage documentation, see §2.1; counting only code moves
-  the v2 break-even to ≈ 463 types).
+  the v2 break-even to ≈ 466 types).
 
   | types | macro | refl v1 | refl2 v2 |
   |---|---|---|---|
-  | 1 | 2 | 26 | 668 |
-  | 20 | 40 | 45 | 687 |
-  | **25** | 50 | 50 | 692 |
-  | 50 | 100 | 75 | 717 |
-  | 100 | 200 | 125 | 767 |
-  | **667** | 1334 | 692 | 1334 |
+  | 1 | 2 | 26 | 673 |
+  | 20 | 40 | 45 | 692 |
+  | **25** | 50 | 50 | 697 |
+  | 50 | 100 | 75 | 722 |
+  | 100 | 200 | 125 | 772 |
+  | **672** | 1344 | 697 | 1344 |
 
   Both reflection versions save **1 line per type**; the naive v1 needs a
   **25-line** one-time serializer (break-even ≈ 25 types) but only works for
   flat structs, while the complete v2 (recursion + ADL + private-member
   policy + inheritance + `std::optional` + bit-fields + the documented
-  coverage boundary) needs a **667-line** one-time serializer (break-even
-  ≈ 667 types) and handles nested structs, containers of plain structs,
+  coverage boundary) needs a **672-line** one-time serializer (break-even
+  ≈ 672 types) and handles nested structs, containers of plain structs,
   user customization, base-class members and `unprivileged()` access
   control — which v1 cannot do at all.
 
@@ -480,12 +480,12 @@ point answers different questions depending on who pays the one-time cost:
   | 20 | 40 | 20 | 20 |
   | 100 | 200 | 100 | 100 |
 
-  The 667-line codec then becomes a **maintainer cost** — paid once by the
+  The 672-line codec then becomes a **maintainer cost** — paid once by the
   library, amortized over all users — not a per-user cost. Scenario A's
   "312 types to break even" framing was misleading: it only describes users
   who re-implement the serializer by hand; for the library as a provider the
   user-side cost is zero from the first type, and what the library actually
-  ships is the 667-line implementation (plus the extension burden documented
+  ships is the 672-line implementation (plus the extension burden documented
   in §2.1's coverage boundary).
 
 **Q2 compile time** (same TU, same flags; -O0: min of 3 — stable; -O2:
@@ -1033,8 +1033,18 @@ Claims that **did not reproduce** and were corrected:
     note + §2.2 updated). Bit-field serialize is 61% faster than the
     hand-written initializer-list baseline (the baseline shape, not the
     typical macro one).
-  - The Q1 Scenario-A break-even is reported with both figures: 667 lines
-    (whole file, conservative) and 463 lines (code body only; ≈ 463 types).
+  - The Q1 Scenario-A break-even is reported with both figures: 672 lines
+    (whole file, conservative) and 466 lines (code body only; ≈ 466 types).
+- **Naming/structure alignment with nlohmann** (this revision): refl2
+  internals moved into a flat `refl2::detail` namespace (mirroring
+  `nlohmann::detail`); renames for internal consistency —
+  `has_private_bases_p`/`has_protected_bases_p`/`has_virtual_bases_p` lost
+  the undocumented `_p` suffix, `member_count` → `member_count_v`,
+  `adl_branch_eligible` → `adl_branch_eligible_v`,
+  `reflect_context` → `access_context_for`, `unsupported` → `always_false`.
+  Probes updated to `refl2::detail::`; codegen unchanged (N=50 -O2 still
+  size-identical, 182,608 B each); one-time cost 667 → 672 lines (the
+  namespace wrapper lines).
 - §2.2 "nm counts 288 symbols at N=50": misattributed — the new sweep shows
   238 at N=50 (288 is the N=100 value; macro/v2 identical at every N). The
   claim itself (v2 `nm` == macro at -O2) holds and is now stated for all N.
