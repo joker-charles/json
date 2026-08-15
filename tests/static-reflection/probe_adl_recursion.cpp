@@ -43,6 +43,7 @@
 #include "refl2_codec.hpp"
 
 #include <meta>
+#include <optional>
 
 using json = nlohmann::json;
 
@@ -312,6 +313,27 @@ int main()
     codec_all::to_json(jau, acct);
     check("unchecked: private member included",
           jau.dump() == R"({"balance":42.5,"owner":"ada","secret_id_":99})");
+
+    // ---- (D) std::optional (C++23 begin/end misclassification guard) ------
+    std::printf("\n[D] std::optional: native via adl, never array-like\n");
+    check("optional classification: int -> adl branch, PlainStruct -> not",
+          refl2::adl_branch_eligible<json, std::optional<int>> &&
+          !refl2::is_array_like<std::optional<int>>::value &&
+          !refl2::adl_branch_eligible<json, std::optional<Address>> &&
+          !refl2::is_array_like<std::optional<Address>>::value);
+    {
+        json ja1, ja2, jn1, jn2;
+        codec_public::to_json(ja1, std::optional<int>{5});
+        codec_public::to_json(ja2, std::optional<int>{});
+        nlohmann::to_json(jn1, std::optional<int>{5});
+        nlohmann::to_json(jn2, std::optional<int>{});
+        check("optional<int>: 5 / null, byte-equal to native nlohmann",
+              ja1.dump() == "5" && ja2.dump() == "null" && ja1 == jn1 && ja2 == jn2);
+        std::optional<int> out;
+        codec_public::from_json(ja1, out);
+        check("optional<int>: from_json round-trip",
+              out.has_value() && *out == 5);
+    }
 
     // ---- (E) v1 compatibility on flat structs ------------------------------
     std::printf("\n[E] flat-struct parity with the v1 naive serializer\n");

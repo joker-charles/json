@@ -50,15 +50,28 @@
 //     bases_of recursion, ~15 lines)
 //   * private/protected base classes; unions; std::variant (would need
 //     variant_size/variant_alternative integration, ~20 lines)
-//   * std::optional<T> only when T is adl-able (optional<PlainStruct> falls
-//     through); pointers / self-referential types
-//   * ranges with begin/end but no value_type member; non-default-constructible
-//     container elements (from_json needs value_type{}); map keys other than
-//     string-like / arithmetic
+//   * std::optional<T>: handled via the adl branch (nlohmann's native
+//     optional support) — serializes as T / null, NOT as an array. This
+//     needs an explicit is_optional exclusion from is_array_like: C++23
+//     added begin()/end() + value_type to std::optional, which would
+//     otherwise misclassify it as array-like and silently serialize
+//     optional<int>{5} as "[5]" instead of "5" (verified before the fix).
+//     optional<PlainStruct> (T not nlohmann-constructible) falls to the
+//     priority-0 static_assert.
+//   * pointers / self-referential types
+//   * ranges with begin/end but no value_type member: NOT excluded — they
+//     fall through to the adl branch (nlohmann's range-array path accepts
+//     any begin/end type at detection level), so a const-iterable
+//     compatible range serializes as an array while an incompatible one
+//     (e.g. non-const-iterable) dies with a deep library error rather than
+//     the clean static_assert
+//   * non-default-constructible container elements (from_json needs
+//     value_type{}); map keys other than string-like / arithmetic
 #pragma once
 
 #include <charconv>   // from_chars
 #include <cstdio>     // fprintf, abort (fixed-size from_json size mismatch)
+#include <optional>   // is_optional (C++23 begin/end misclassification guard)
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -106,6 +119,12 @@ template<typename T>
 struct is_object_like<T, std::void_t<typename T::key_type, typename T::mapped_type>>
     : std::true_type {};
 
+// std::optional is NOT array-like even though C++23 gives it
+// begin()/end() + value_type — otherwise optional<int>{5} would silently
+// serialize as "[5]" instead of "5"/null (verified before this guard).
+template<typename T> struct is_optional : std::false_type {};
+template<typename T> struct is_optional<std::optional<T>> : std::true_type {};
+
 template<typename T, typename = void>
 struct is_array_like : std::false_type {};
 template<typename T>
@@ -113,7 +132,7 @@ struct is_array_like<T, std::void_t<
     decltype(std::begin(std::declval<const T&>())),
     decltype(std::end(std::declval<const T&>())),
     typename T::value_type>>
-    : std::bool_constant<!is_object_like<T>::value> {};
+    : std::bool_constant<!is_object_like<T>::value && !is_optional<T>::value> {};
 
 // The access-context policy: codec<false> = unprivileged (public members
 // only), codec<true> = unchecked (everything, for library internals).
