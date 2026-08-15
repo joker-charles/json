@@ -612,12 +612,12 @@ g++-16 -std=c++26 -freflection -O2 -Iinclude -DBENCH_REFLECTION \
   -o /tmp/brt1 tests/static-reflection/bench_runtime.cpp                   # refl v1
 g++-16 -std=c++26 -freflection -O2 -Iinclude -DBENCH_ADL_REFLECTION \
   -o /tmp/brt2 tests/static-reflection/bench_runtime.cpp                   # refl2 v2
-# "旧 codec" 基线（旧-对-优化列）：优化前的 codec（提交 62290f3b）——从该提交重建
-# bench_runtime_old.cpp（或保留 scratch 副本；见 §5），然后：
-#   g++-16 -std=c++26 -freflection -O2 -Iinclude -DBENCH_ADL_REFLECTION \
-#     -o /tmp/brt_old bench_runtime_old.cpp
-# 驱动（每个模式 RUNS=7 次二进制运行取 min/中位数；未入库的产物）：
-bash build/scratch/runtime_measure.sh
+# "旧 codec" 基线（旧-对-优化列）：优化前的 codec（从提交 62290f3b 提取，
+# 以 refl2_codec_old.hpp + bench_runtime_old.cpp 入库，保证 "before" 侧可复现）：
+g++-16 -std=c++26 -freflection -O2 -Iinclude -DBENCH_ADL_REFLECTION \
+  -o /tmp/brt_old tests/static-reflection/bench_runtime_old.cpp
+# 驱动（每个模式 RUNS=7 次二进制运行取 min/中位数）：
+bash tests/static-reflection/runtime_measure.sh
 
 # ADL 感知递归编解码器探针（§2.5）：嵌套 / ADL / 私有 / 对齐
 g++-16 -std=c++26 -freflection -O0 -Iinclude \
@@ -654,9 +654,10 @@ g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Isingle_include -Iincl
 
 运行时测量（本修订，§2.2）：`bench_runtime.cpp` 三种模式，扁平 + 嵌套，
 `to_json`/`from_json`/round-trip；预热 + 7 轮 × 20 万次迭代，报告中位数；驱动
-`build/scratch/runtime_measure.sh`（未入库）。"旧 codec" 基线是优化前的 codec
-（提交 62290f3b）抽出的 `build/scratch/refl2_codec_old.hpp` +
-`bench_runtime_old.cpp`（未入库）。驱动的第一次运行被一个脚本 bug 作废：
+`tests/static-reflection/runtime_measure.sh`。"旧 codec" 基线是优化前的 codec
+（从提交 62290f3b 提取），以 `tests/static-reflection/refl2_codec_old.hpp` +
+`bench_runtime_old.cpp` 入库，保证旧-对-优化列可复现。驱动的第一次运行被一个
+脚本 bug 作废：
 bash 里 `declare -A samples` **不会**重置已存在的全局关联数组，所以样本在四个
 二进制之间累积，后面每个模式的 min/中位数都被交叉污染（v1 的"嵌套"行显示宏的
 精确值，所有模式共享同一个扁平 serialize 最小值 0.553/0.582）。用显式

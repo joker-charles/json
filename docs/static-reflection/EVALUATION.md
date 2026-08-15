@@ -706,12 +706,12 @@ g++-16 -std=c++26 -freflection -O2 -Iinclude -DBENCH_REFLECTION \
 g++-16 -std=c++26 -freflection -O2 -Iinclude -DBENCH_ADL_REFLECTION \
   -o /tmp/brt2 tests/static-reflection/bench_runtime.cpp                   # refl2 v2
 # "old codec" baseline for the old-vs-optimized column: the pre-optimization
-# codec (commit 62290f3b) — rebuild bench_runtime_old.cpp from that commit
-# (or keep the scratch copy; see §5), then:
-#   g++-16 -std=c++26 -freflection -O2 -Iinclude -DBENCH_ADL_REFLECTION \
-#     -o /tmp/brt_old bench_runtime_old.cpp
-# driver (min/median of RUNS=7 binary runs per mode; uncommitted artifact):
-bash build/scratch/runtime_measure.sh
+# codec (extracted from commit 62290f3b, kept as refl2_codec_old.hpp +
+# bench_runtime_old.cpp so the "before" side is reproducible):
+g++-16 -std=c++26 -freflection -O2 -Iinclude -DBENCH_ADL_REFLECTION \
+  -o /tmp/brt_old tests/static-reflection/bench_runtime_old.cpp
+# driver (min/median of RUNS=7 binary runs per mode):
+bash tests/static-reflection/runtime_measure.sh
 
 # the ADL-aware recursive codec probe (§2.5): nested / ADL / private / parity
 g++-16 -std=c++26 -freflection -O0 -Iinclude \
@@ -754,12 +754,13 @@ N=28/100 — while the exe/text/nm facts are stable.
 
 Runtime measurements (this revision, §2.2): `bench_runtime.cpp` in the three
 modes, flat + nested, `to_json`/`from_json`/round-trip; warmup + 7 runs ×
-200k iterations, median reported; driver `build/scratch/runtime_measure.sh`
-(uncommitted). The "old codec" baseline is the pre-optimization codec
-(commit 62290f3b) extracted to `build/scratch/refl2_codec_old.hpp` +
-`bench_runtime_old.cpp` (uncommitted). The driver's first run was invalidated
-by a script bug: `declare -A samples` does **not** reset an existing global
-associative array in bash, so samples accumulated across the four binaries
+200k iterations, median reported; driver `tests/static-reflection/runtime_measure.sh`.
+The "old codec" baseline is the pre-optimization codec (extracted from
+commit 62290f3b) kept in the repo as `tests/static-reflection/refl2_codec_old.hpp` +
+`bench_runtime_old.cpp` so the old-vs-optimized column is reproducible.
+The driver's first run was invalidated by a script bug: `declare -A samples`
+does **not** reset an existing global associative array in bash, so samples
+accumulated across the four binaries
 and every later mode's min/median was cross-contaminated (v1's "nested" rows
 showed macro's exact values, and all modes shared one flat-serialize minimum
 0.553/0.582). Fixed with an explicit `samples=()` reset and re-run; the
