@@ -308,13 +308,14 @@ serialize_one(j, v), highest priority first:
   (`codec<false>`) — private members are neither serialized nor parsed;
   `codec<true>` switches to `unchecked()` for library-internal use (the
   two-layer policy from §2.3, demonstrated in §2.5).
-- One-time cost: the header is **565 lines** total — 386 lines of code
-  (including the 10 `#include`/`#pragma once` lines), 129 comment lines (83
-  of them the design/pitfall/coverage documentation block), 50 blank lines.
+- One-time cost: the header is **667 lines** total — 463 lines of code
+  (including the 10 `#include`/`#pragma once` lines), 148 comment lines (89
+  of them the design/pitfall/coverage documentation block), 56 blank lines.
   This replaces the earlier inline `namespace refl2` block (311 lines + 1
   `#include <meta>` = 312); the increase buys the optimization machinery
   below, the `std::optional` branch, the inheritance (subobjects_of)
-  recursion and the documented coverage boundary.
+  recursion with its guards, bit-field from_json support and the documented
+  coverage boundary.
 
 **Optimizations in this revision** (measured, see §2.2 runtime):
 - **Member keys are one-time-initialized `static const std::string`**
@@ -342,11 +343,19 @@ are computed from `subobjects_of` (direct base subobjects + direct data
 members, access-filtered, bases first) with a consteval recursion into each
 base via `type_of(base_info)` — multi-level, depth-first, in layout order;
 the member-access splice `v.[:m:]` works for members of base classes too
-(verified). Two shapes are compile errors instead of silent loss:
-**private/protected bases** under `codec<false>` (`has_inaccessible_bases`;
-use `codec<true>` or add a `to_json`) and **duplicate member names across
-the hierarchy** (same name in a base and a derived class, or diamond
-inheritance) — either would silently overwrite JSON keys.
+(verified). Three shapes are compile errors instead of silent loss:
+**private bases** and **protected bases** under `codec<false>` — distinct
+messages via `is_private` / `is_protected` on the unchecked base list (use
+`codec<true>` or add a `to_json`) — and **virtual bases** (`is_virtual`): a
+shared virtual subobject would flatten its members multiple times while C++
+has one such subobject, so the members would wrongly duplicate
+(deduplication not implemented). **Duplicate member names across the
+hierarchy** (same name in a base and a derived class, or diamond
+inheritance) are also compile errors — they would silently overwrite JSON
+keys. **Bit-fields**: named bit-fields serialize normally (verified) and
+`from_json` assigns them via `get<M>()` (they cannot bind to a `T&` — no
+address, same limitation as the macro path); unnamed bit-fields are not
+subobjects and are skipped.
 
 **`std::optional<T>` is fully supported** via its own dispatch branch
 (priority 5): it serializes as `T` / `null` for any refl2-serializable `T`
@@ -358,7 +367,7 @@ which would otherwise misclassify it as array-like and silently serialize
 
 **Coverage boundary** (what v2 deliberately does NOT handle — such types fall
 to the priority-0 `static_assert` with an actionable message; each extension
-below raises the one-time cost beyond the current 565 lines):
+below raises the one-time cost beyond the current 667 lines):
 - **unions; `std::variant`** (would need `variant_size`/`variant_alternative`
   integration, ~20 lines, plus a discriminator format design).
 - **pointers / self-referential types**.
@@ -405,25 +414,25 @@ point answers different questions depending on who pays the one-time cost:
   of this evaluation: the codec is a header the user copies into their
   project). Per-type user lines: macro = struct + macro call = 2/type;
   reflection = struct only = 1/type; one-time cost: v1 = 25 lines
-  (flat structs only), v2 = 565 lines (refl2_codec.hpp, whole file).
+  (flat structs only), v2 = 667 lines (refl2_codec.hpp, whole file).
 
   | types | macro | refl v1 | refl2 v2 |
   |---|---|---|---|
-  | 1 | 2 | 26 | 566 |
-  | 20 | 40 | 45 | 585 |
-  | **25** | 50 | 50 | 590 |
-  | 50 | 100 | 75 | 615 |
-  | 100 | 200 | 125 | 665 |
-  | **565** | 1130 | 590 | 1130 |
+  | 1 | 2 | 26 | 668 |
+  | 20 | 40 | 45 | 687 |
+  | **25** | 50 | 50 | 692 |
+  | 50 | 100 | 75 | 717 |
+  | 100 | 200 | 125 | 767 |
+  | **667** | 1334 | 692 | 1334 |
 
   Both reflection versions save **1 line per type**; the naive v1 needs a
   **25-line** one-time serializer (break-even ≈ 25 types) but only works for
   flat structs, while the complete v2 (recursion + ADL + private-member
-  policy + inheritance + `std::optional` + the documented coverage boundary)
-  needs a **565-line** one-time serializer (break-even ≈ 565 types) and
-  handles nested structs, containers of plain structs, user customization,
-  base-class members and `unprivileged()` access control — which v1 cannot
-  do at all.
+  policy + inheritance + `std::optional` + bit-fields + the documented
+  coverage boundary) needs a **667-line** one-time serializer (break-even
+  ≈ 667 types) and handles nested structs, containers of plain structs,
+  user customization, base-class members and `unprivileged()` access
+  control — which v1 cannot do at all.
 
 - **Scenario B — the library ships v2 as a default facility** (like the
   macros today): the user's one-time cost is **0**, so every type saves 1
@@ -435,12 +444,12 @@ point answers different questions depending on who pays the one-time cost:
   | 20 | 40 | 20 | 20 |
   | 100 | 200 | 100 | 100 |
 
-  The 565-line codec then becomes a **maintainer cost** — paid once by the
+  The 667-line codec then becomes a **maintainer cost** — paid once by the
   library, amortized over all users — not a per-user cost. Scenario A's
   "312 types to break even" framing was misleading: it only describes users
   who re-implement the serializer by hand; for the library as a provider the
   user-side cost is zero from the first type, and what the library actually
-  ships is the 565-line implementation (plus the extension burden documented
+  ships is the 667-line implementation (plus the extension burden documented
   in §2.1's coverage boundary).
 
 **Q2 compile time** (same TU, same flags; -O0: min of 3 — stable; -O2:
@@ -660,7 +669,7 @@ type is reachable.
 
 `tests/static-reflection/probe_adl_recursion.cpp` verifies the paths the
 v2 design depends on — it includes the shared `refl2_codec.hpp` (no inline
-copy) and runs **33 checks, all PASS, ASan clean at -O0 and -O1**:
+copy) and runs **38 checks, all PASS, ASan clean at -O0 and -O1**:
 
 - **[A] Nested plain structs** — struct-in-struct, `vector<PlainStruct>` and
   `map<string, PlainStruct>` members serialize and round-trip through the
@@ -685,10 +694,15 @@ copy) and runs **33 checks, all PASS, ASan clean at -O0 and -O1**:
 - **[F] inheritance** — base-class members are serialized via the
   `subobjects_of` recursion: a multi-level `Derived : Mid : Base` round-trips
   with all four members (verified against the exact JSON); the compile-time
-  guards are trait-checked: private bases are detected under the
-  unprivileged policy (`has_inaccessible_bases`) and duplicate member names
-  across a diamond hierarchy are detected; `codec<true>` serializes
-  private-base members too.
+  guards are trait-checked: private vs protected bases are classified with
+  `is_private` / `is_protected`, virtual bases are detected (`is_virtual`),
+  duplicate member names across a diamond hierarchy are detected, and
+  `codec<true>` serializes private-base members too.
+- **[G] toolchain facts** — `is_enumerable_type` pre-checks the `bases_of`
+  enumeration trap (true for a complete class, false for an incomplete
+  type); bit-fields are reflectable and not array-like, named bit-fields
+  serialize and `from_json` round-trips them (`get<M>()` assignment — they
+  cannot bind to a `T&`), and the unnamed bit-field is skipped.
 - **[E] v1 parity** — on flat structs, v2 output is identical to the v1 naive
   serializer (no regression on the case v1 could already handle).
 
@@ -860,9 +874,9 @@ Claims that **reproduce exactly** (stable facts):
 - §1.4: alt-string parameter-order trap and the `<T, B>` fix (minimal repro).
 - All 16 probes build and pass per their documented build lines;
   `concepts_smoke` output identical under c++11/20/26.
-- §2.5 probe: **33 checks, all PASS, ASan clean at -O0 and -O1** — including
+- §2.5 probe: **38 checks, all PASS, ASan clean at -O0 and -O1** — including
   the C-array classification check and the [D] `std::optional` / [F]
-  inheritance checks.
+  inheritance / [G] toolchain-fact checks.
 - §2.2 runtime: refl2-vs-macro ordering and the old-vs-optimized deltas
   reproduced across the driver runs (nested faster than macro; optimized
   faster than old codec on every direction).
@@ -896,10 +910,19 @@ Claims that **did not reproduce** and were corrected:
   (probe [F]). `std::optional` is now fully supported via its own dispatch
   branch (`optional<PlainStruct>` round-trips; the earlier "hits the
   priority-0 static_assert" note in §2.1 was superseded). The one-time cost
-  moved 423 → 565 lines and Q1 was re-derived (break-even ≈ 565 types);
-  probe counts 33 checks. The bench sweep numbers are unaffected (bench
-  types are flat, no optional/inheritance) — N=50 -O2 macro vs refl2
-  re-verified size-identical (182,608 B each) with the new codec.
+  moved 423 → 565 → 667 lines and Q1 was re-derived each time (break-even
+  ≈ 667 types); probe counts 38 checks. Later hardening (same session): the
+  private/protected base guard was split into distinct `is_private` /
+  `is_protected` diagnostics, virtual bases became a dedicated compile error
+  (`is_virtual` — a shared virtual subobject would duplicate its members;
+  previously they surfaced as a misleading duplicate-key error), and
+  bit-field `from_json` got a `get<M>()`-assignment path (bit-fields cannot
+  bind to a `T&`, so the ordinary member path failed to compile; the macro
+  path has the same limitation). `is_enumerable_type` was verified as a
+  pre-check for the `bases_of` enumeration trap. The bench sweep numbers are
+  unaffected (bench types are flat, no optional/inheritance/bit-fields) —
+  N=50 -O2 macro vs refl2 re-verified size-identical (182,608 B each) with
+  the new codec.
 - §2.2 "nm counts 288 symbols at N=50": misattributed — the new sweep shows
   238 at N=50 (288 is the N=100 value; macro/v2 identical at every N). The
   claim itself (v2 `nm` == macro at -O2) holds and is now stated for all N.
