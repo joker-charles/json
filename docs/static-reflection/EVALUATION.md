@@ -22,6 +22,35 @@
 > -O2; the extended inheritance/optional/bit-field paths are measured in
 > §2.2 and do not collapse quite as far).
 
+**Key findings** (quick reference — measurements and caveats in §1/§2):
+- **Concepts are free.** The full modernization (concepts + reflection-
+  ready) costs ≈0–1% wall / ≤0.6% `.o` at the target standard; the
+  concepts slice alone ≈0%.
+- **Reflection saves 1 line per type** and cannot silently omit members
+  (the macro's omission hazard is structurally impossible). If the library
+  ships the codec (scenario B), the user's one-time cost is 0 — every type
+  breaks even from the first one; writing it yourself (scenario A) costs
+  v1 = 25 lines (flat only) / v2 = 667 lines whole file (463 code-only),
+  break-even ≈ 25 / ≈ 667 (≈ 463) types.
+- **At -O2 the flat path is size-identical to the macro version** (exe
+  equal at every N, text within 32 B). The extended
+  inheritance/optional/bit-field paths do NOT collapse that far: text
+  +1.9% / exe +5.5% for a three-type TU (+11.6% per inherited/optional
+  single-type TU; bit-fields −2.2%).
+- **Runtime: never slower than macro on flat/shallow-nested types**
+  (nested ~13–19% faster). Extended paths: deserialize 20–37% faster,
+  but serialize 5–6% slower for inherited/optional types.
+- **Unsupported types get one actionable static_assert** (11 error lines)
+  instead of the library's 238 (enable_if) / 376 (concepts) error
+  cascades; the v2 dispatch also collapses at -O2 to ~macro code size on
+  flat types.
+- **v2 is cheaper to compile than v1** (−1.7…−3.9% at -O0; −7.7…−21.2%
+  at -O2); -O2 wall times vs macro are load-noise on this machine and are
+  not used for conclusions.
+- **Single-toolchain evidence** — g++-16 / nlohmann-json 3.12.0 / one
+  machine / person-like shapes: ratios and methodology are the durable
+  findings (see Applicability), not the absolutes.
+
 This document records *how* we evaluated two modernization directions for a
 header-only template library (nlohmann/json) — (A) replacing hand-written
 macros/SFINAE with C++20 concepts, and (B) replacing user-facing macros with
