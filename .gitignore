@@ -45,3 +45,9 @@ nlohmann_json.spdx
 
 # Bazel-related
 MODULE.bazel.lock
+
+# CMake export compile commands (build artifact)
+/compile_commands.json
+
+# user-local CMake presets (machine-specific toolchain, not shared)
+/CMakeUserPresets.json
