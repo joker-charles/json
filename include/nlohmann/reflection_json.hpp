@@ -2821,4 +2821,570 @@ struct reflection_bson_parser
     }
 };
 
+// ---------------------------------------------------------------------------
+// Reflection-driven UBJSON writer, OPTIMIZED MODES + BJData (M4E).
+//
+// Superset of reflection_ubjson_serializer: adds the '#' count prefix
+// (use_count), the '$' type prefix (use_type — requires use_count, as in the
+// library), the top-level-prefix control (add_prefix), and the BJData dialect
+// (use_bjdata). Number routing still comes from the reflection enumerator set
+// via `template for` + per-enumerator NTTP actions; the byte-code table
+// (kUbjsonCodes) stays the single source of truth for the primary codes, the
+// optimized-mode extensions (count/type prefixes, 'u'/'m'/'M' BJData rungs,
+// per-element prefixes) are selected inside the actions — exactly the same
+// division of labor as the no-optimization writer.
+//
+// BJData specifics replicated from binary_writer.hpp write_ubjson:
+//   * ALL numbers and length prefixes are LITTLE-endian (write_number(n,
+//     OutputIsLittleEndian=use_bjdata)) — not just the unsigned types;
+//   * the unsigned ladders gain 'u' (uint16) / 'm' (uint32) / 'M' (uint64)
+//     rungs between the signed rungs;
+//   * the '$' type optimization EXCLUDES the markers [ '[' '{' 'S' 'H' 'T'
+//     'F' 'N' 'Z' ] (bjdx list) — such containers fall back to per-element
+//     prefixes;
+//   * an object with exactly {_ArrayType_, _ArraySize_, _ArrayData_} is
+//     encoded as a JData ndarray ([$<dtype>#<size-array> <compact elements>])
+//     when the dtype/size/element-kind checks pass, else falls back to a
+//     plain object;
+//   * draft3 (bjdata_version_t::draft3) encodes binary with the 'B' marker
+//     instead of 'U'.
+// Byte-level output is differential-tested byte-identical against the real
+// library's to_ubjson / to_bjdata (m4e_ubjson_opt.cpp).
+// ---------------------------------------------------------------------------
+struct reflection_ubjson_optimized_serializer
+{
+    std::vector<std::uint8_t> out;
+
+    explicit reflection_ubjson_optimized_serializer(
+        const basic_json_reflection& j,
+        const bool use_count_,
+        const bool use_type_,
+        const bool use_bjdata_ = false,
+        const bool bjdata_draft3_ = false)
+        : use_count(use_count_),
+          use_type(use_type_),
+          use_bjdata(use_bjdata_),
+          bjdata_draft3(use_bjdata_ && bjdata_draft3_)
+    {
+        write(j, true); // top level always carries its prefix
+    }
+
+    const std::vector<std::uint8_t>& bytes() const
+    {
+        return out;
+    }
+
+  private:
+    const bool use_count;
+    const bool use_type;
+    const bool use_bjdata;
+    const bool bjdata_draft3;
+
+    static bool host_little_endian()
+    {
+        const uint16_t x = 1;
+        return *reinterpret_cast<const uint8_t*>(&x) == 1;
+    }
+
+    // endian-aware fixed-width number: little=true for BJData (all numbers
+    // and lengths are little-endian there), big-endian otherwise — the
+    // library's write_number(n, OutputIsLittleEndian=use_bjdata)
+    template<typename T>
+    void write_num(const T v, const bool little)
+    {
+        std::array<uint8_t, sizeof(T)> tmp{};
+        std::memcpy(tmp.data(), &v, sizeof(T));
+        if (host_little_endian() != little)
+        {
+            std::reverse(tmp.begin(), tmp.end());
+        }
+        out.insert(out.end(), tmp.begin(), tmp.end());
+    }
+
+    // --- number ladders (binary_writer.hpp write_number_with_ubjson_prefix;
+    // use_bjdata adds the 'u'/'m'/'M' rungs, everything little-endian) ---
+    void ubjson_signed(const std::int64_t n, const bool add_prefix)
+    {
+        if ((std::numeric_limits<std::int8_t>::min)() <= n && n <= (std::numeric_limits<std::int8_t>::max)())
+        {
+            if (add_prefix) out.push_back('i');
+            write_num(static_cast<std::int8_t>(n), use_bjdata);
+        }
+        else if (0 <= n && n <= static_cast<std::int64_t>((std::numeric_limits<std::uint8_t>::max)()))
+        {
+            if (add_prefix) out.push_back('U');
+            write_num(static_cast<std::uint8_t>(n), use_bjdata);
+        }
+        else if ((std::numeric_limits<std::int16_t>::min)() <= n && n <= (std::numeric_limits<std::int16_t>::max)())
+        {
+            if (add_prefix) out.push_back('I');
+            write_num(static_cast<std::int16_t>(n), use_bjdata);
+        }
+        else if (use_bjdata && 0 <= n && n <= static_cast<std::int64_t>((std::numeric_limits<std::uint16_t>::max)()))
+        {
+            if (add_prefix) out.push_back('u'); // uint16 - bjdata only
+            write_num(static_cast<std::uint16_t>(n), use_bjdata);
+        }
+        else if ((std::numeric_limits<std::int32_t>::min)() <= n && n <= (std::numeric_limits<std::int32_t>::max)())
+        {
+            if (add_prefix) out.push_back('l');
+            write_num(static_cast<std::int32_t>(n), use_bjdata);
+        }
+        else if (use_bjdata && 0 <= n && n <= static_cast<std::int64_t>((std::numeric_limits<std::uint32_t>::max)()))
+        {
+            if (add_prefix) out.push_back('m'); // uint32 - bjdata only
+            write_num(static_cast<std::uint32_t>(n), use_bjdata);
+        }
+        else if ((std::numeric_limits<std::int64_t>::min)() <= n && n <= (std::numeric_limits<std::int64_t>::max)())
+        {
+            if (add_prefix) out.push_back('L');
+            write_num(static_cast<std::int64_t>(n), use_bjdata);
+        }
+        else
+        {
+            // high-precision number (unreachable for int64 in practice)
+            if (add_prefix) out.push_back('H');
+            high_precision(n);
+        }
+    }
+
+    void ubjson_unsigned(const std::uint64_t n, const bool add_prefix)
+    {
+        if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int8_t>::max)()))
+        {
+            if (add_prefix) out.push_back('i');
+            write_num(static_cast<std::uint8_t>(n), use_bjdata);
+        }
+        else if (n <= (std::numeric_limits<std::uint8_t>::max)())
+        {
+            if (add_prefix) out.push_back('U');
+            write_num(static_cast<std::uint8_t>(n), use_bjdata);
+        }
+        else if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int16_t>::max)()))
+        {
+            if (add_prefix) out.push_back('I');
+            write_num(static_cast<std::int16_t>(n), use_bjdata);
+        }
+        else if (use_bjdata && n <= static_cast<std::uint64_t>((std::numeric_limits<std::uint16_t>::max)()))
+        {
+            if (add_prefix) out.push_back('u'); // uint16 - bjdata only
+            write_num(static_cast<std::uint16_t>(n), use_bjdata);
+        }
+        else if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int32_t>::max)()))
+        {
+            if (add_prefix) out.push_back('l');
+            write_num(static_cast<std::int32_t>(n), use_bjdata);
+        }
+        else if (use_bjdata && n <= static_cast<std::uint64_t>((std::numeric_limits<std::uint32_t>::max)()))
+        {
+            if (add_prefix) out.push_back('m'); // uint32 - bjdata only
+            write_num(static_cast<std::uint32_t>(n), use_bjdata);
+        }
+        else if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)()))
+        {
+            if (add_prefix) out.push_back('L');
+            write_num(static_cast<std::int64_t>(n), use_bjdata);
+        }
+        else if (use_bjdata && n <= (std::numeric_limits<std::uint64_t>::max)())
+        {
+            if (add_prefix) out.push_back('M'); // uint64 - bjdata only
+            write_num(static_cast<std::uint64_t>(n), use_bjdata);
+        }
+        else
+        {
+            // high-precision number: uint64 above int64 max (plain UBJSON)
+            if (add_prefix) out.push_back('H');
+            high_precision(n);
+        }
+    }
+
+    // 'H' + length-prefixed decimal dump (the library: json(n).dump())
+    template<typename T>
+    void high_precision(const T n)
+    {
+        char tmp[32];
+        const auto [p, ec] = std::to_chars(tmp, tmp + sizeof(tmp), n);
+        ubjson_unsigned(static_cast<std::uint64_t>(p - tmp), true);
+        out.insert(out.end(), reinterpret_cast<const uint8_t*>(tmp), reinterpret_cast<const uint8_t*>(p));
+    }
+
+    void ubjson_float(const double n, const bool add_prefix)
+    {
+        // number_float_t is double: the prefix is always 'D' + float64
+        // (UBJSON floats are NOT compacted — verified fact)
+        if (add_prefix) out.push_back('D');
+        write_num(n, use_bjdata);
+    }
+
+    // --- the element-type prefix for '$' type optimization (binary_writer.hpp
+    // ubjson_prefix) ---
+    char prefix_of(const json& j) const noexcept
+    {
+        if (j.is_null())
+        {
+            return 'Z';
+        }
+        if (j.is_boolean())
+        {
+            return j.get<bool>() ? 'T' : 'F';
+        }
+        if (j.is_number_unsigned())
+        {
+            return prefix_unsigned(j.get<std::uint64_t>());
+        }
+        if (j.is_number_integer())
+        {
+            return prefix_signed(j.get<std::int64_t>());
+        }
+        if (j.is_number_float())
+        {
+            return 'D';
+        }
+        if (j.is_string())
+        {
+            return 'S';
+        }
+        if (j.is_array() || j.is_binary())
+        {
+            return '[';
+        }
+        if (j.is_object())
+        {
+            return '{';
+        }
+        return 'N'; // discarded
+    }
+
+    char prefix_signed(const std::int64_t n) const noexcept
+    {
+        if ((std::numeric_limits<std::int8_t>::min)() <= n && n <= (std::numeric_limits<std::int8_t>::max)()) return 'i';
+        if (0 <= n && n <= static_cast<std::int64_t>((std::numeric_limits<std::uint8_t>::max)())) return 'U';
+        if ((std::numeric_limits<std::int16_t>::min)() <= n && n <= (std::numeric_limits<std::int16_t>::max)()) return 'I';
+        if (use_bjdata && 0 <= n && n <= static_cast<std::int64_t>((std::numeric_limits<std::uint16_t>::max)())) return 'u';
+        if ((std::numeric_limits<std::int32_t>::min)() <= n && n <= (std::numeric_limits<std::int32_t>::max)()) return 'l';
+        if (use_bjdata && 0 <= n && n <= static_cast<std::int64_t>((std::numeric_limits<std::uint32_t>::max)())) return 'm';
+        if ((std::numeric_limits<std::int64_t>::min)() <= n && n <= (std::numeric_limits<std::int64_t>::max)()) return 'L';
+        return 'H';
+    }
+
+    char prefix_unsigned(const std::uint64_t n) const noexcept
+    {
+        if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int8_t>::max)())) return 'i';
+        if (n <= (std::numeric_limits<std::uint8_t>::max)()) return 'U';
+        if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int16_t>::max)())) return 'I';
+        if (use_bjdata && n <= static_cast<std::uint64_t>((std::numeric_limits<std::uint16_t>::max)())) return 'u';
+        if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int32_t>::max)())) return 'l';
+        if (use_bjdata && n <= static_cast<std::uint64_t>((std::numeric_limits<std::uint32_t>::max)())) return 'm';
+        if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)())) return 'L';
+        if (use_bjdata && n <= (std::numeric_limits<std::uint64_t>::max)()) return 'M';
+        return 'H';
+    }
+
+    // wrap a real json element into a reflection and write it (the recursion
+    // carrier, same as the other writers)
+    void write_element(const json& el, const bool add_prefix)
+    {
+        basic_json_reflection val;
+        val.assign_from(el);
+        write(val, add_prefix);
+    }
+
+    // --- main dispatch: `template for` over the enumerator set ---
+    void write(const basic_json_reflection& j, const bool add_prefix)
+    {
+        const value_t t = j.type();
+        template for (constexpr auto r : kValueTInfos)
+        {
+            constexpr value_t V = static_cast<value_t>([: r :]);
+            if (t == V)
+            {
+                write_one<V>(j, add_prefix);
+            }
+        }
+    }
+
+    template<value_t V>
+    void write_one(const basic_json_reflection& j, const bool add_prefix)
+    {
+        const auto& u = j.value();
+        if constexpr (V == value_t::null)
+        {
+            if (add_prefix) out.push_back('Z');
+        }
+        else if constexpr (V == value_t::boolean)
+        {
+            if (add_prefix) out.push_back(u.boolean ? 'T' : 'F');
+        }
+        else if constexpr (V == value_t::number_integer)
+        {
+            ubjson_signed(u.number_integer, add_prefix);
+        }
+        else if constexpr (V == value_t::number_unsigned)
+        {
+            ubjson_unsigned(u.number_unsigned, add_prefix);
+        }
+        else if constexpr (V == value_t::number_float)
+        {
+            ubjson_float(u.number_float, add_prefix);
+        }
+        else if constexpr (V == value_t::string)
+        {
+            if (add_prefix) out.push_back('S');
+            ubjson_unsigned(static_cast<std::uint64_t>(u.string->size()), true);
+            out.insert(out.end(), u.string->begin(), u.string->end());
+        }
+        else if constexpr (V == value_t::array)
+        {
+            write_array(*u.array, add_prefix);
+        }
+        else if constexpr (V == value_t::binary)
+        {
+            write_binary(*u.binary, add_prefix);
+        }
+        else if constexpr (V == value_t::object)
+        {
+            write_object(*u.object, add_prefix);
+        }
+        // discarded: nothing (the library's default: break)
+    }
+
+    void write_array(const json::array_t& arr, const bool add_prefix)
+    {
+        if (add_prefix) out.push_back('[');
+
+        bool prefix_required = true;
+        if (use_type && !arr.empty())
+        {
+            const char first_prefix = prefix_of(arr.front());
+            const bool same_prefix = std::all_of(arr.begin() + 1, arr.end(),
+                                                 [this, first_prefix](const json& v)
+            {
+                return prefix_of(v) == first_prefix;
+            });
+            if (same_prefix && !(use_bjdata && bjdata_excluded(first_prefix)))
+            {
+                prefix_required = false;
+                out.push_back('$');
+                out.push_back(static_cast<uint8_t>(first_prefix));
+            }
+        }
+
+        if (use_count)
+        {
+            out.push_back('#');
+            ubjson_unsigned(static_cast<std::uint64_t>(arr.size()), true);
+        }
+
+        for (const auto& el : arr)
+        {
+            write_element(el, prefix_required);
+        }
+
+        if (!use_count)
+        {
+            out.push_back(']');
+        }
+    }
+
+    void write_object(const json::object_t& obj, const bool add_prefix)
+    {
+        // BJData: JData ndarray detection (write_bjdata_ndarray) — on success
+        // the object is replaced by the typed-array encoding
+        if (use_bjdata && obj.size() == 3 &&
+                obj.find("_ArrayType_") != obj.end() &&
+                obj.find("_ArraySize_") != obj.end() &&
+                obj.find("_ArrayData_") != obj.end() &&
+                !write_bjdata_ndarray(obj))
+        {
+            return;
+        }
+
+        if (add_prefix) out.push_back('{');
+
+        bool prefix_required = true;
+        if (use_type && !obj.empty())
+        {
+            const char first_prefix = prefix_of(obj.begin()->second);
+            const bool same_prefix = std::all_of(obj.begin(), obj.end(),
+                                                 [this, first_prefix](const json::object_t::value_type& el)
+            {
+                return prefix_of(el.second) == first_prefix;
+            });
+            if (same_prefix && !(use_bjdata && bjdata_excluded(first_prefix)))
+            {
+                prefix_required = false;
+                out.push_back('$');
+                out.push_back(static_cast<uint8_t>(first_prefix));
+            }
+        }
+
+        if (use_count)
+        {
+            out.push_back('#');
+            ubjson_unsigned(static_cast<std::uint64_t>(obj.size()), true);
+        }
+
+        for (const auto& el : obj)
+        {
+            ubjson_unsigned(static_cast<std::uint64_t>(el.first.size()), true);
+            out.insert(out.end(), el.first.begin(), el.first.end());
+            write_element(el.second, prefix_required);
+        }
+
+        if (!use_count)
+        {
+            out.push_back('}');
+        }
+    }
+
+    void write_binary(const json::binary_t& bin, const bool add_prefix)
+    {
+        if (add_prefix) out.push_back('[');
+
+        // draft2 skips the '$' prefix for an EMPTY binary
+        if (use_type && (bjdata_draft3 || !bin.empty()))
+        {
+            out.push_back('$');
+            out.push_back(bjdata_draft3 ? 'B' : 'U');
+        }
+
+        if (use_count)
+        {
+            out.push_back('#');
+            ubjson_unsigned(static_cast<std::uint64_t>(bin.size()), true);
+        }
+
+        if (use_type)
+        {
+            out.insert(out.end(), bin.begin(), bin.end());
+        }
+        else
+        {
+            for (const auto b : bin)
+            {
+                out.push_back(bjdata_draft3 ? 'B' : 'U');
+                out.push_back(b);
+            }
+        }
+
+        if (!use_count)
+        {
+            out.push_back(']');
+        }
+    }
+
+    // markers excluded from the BJData '$' type optimization
+    // (binary_writer.hpp bjdx list)
+    static bool bjdata_excluded(const char prefix) noexcept
+    {
+        switch (prefix)
+        {
+            case '[': case '{': case 'S': case 'H':
+            case 'T': case 'F': case 'N': case 'Z':
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // --- JData ndarray (binary_writer.hpp write_bjdata_ndarray); returns
+    // true when the object is NOT an encodable ndarray (caller falls back to
+    // a plain object), false after a successful typed-array encoding ---
+    bool write_bjdata_ndarray(const json::object_t& obj)
+    {
+        static const std::map<std::string, char> kDtype =
+        {
+            {"uint8", 'U'}, {"int8", 'i'}, {"uint16", 'u'}, {"int16", 'I'},
+            {"uint32", 'm'}, {"int32", 'l'}, {"uint64", 'M'}, {"int64", 'L'},
+            {"single", 'd'}, {"double", 'D'}, {"char", 'C'}, {"byte", 'B'}
+        };
+
+        const auto t_it = kDtype.find(obj.at("_ArrayType_").template get<std::string>());
+        if (t_it == kDtype.end())
+        {
+            return true; // unknown dtype -> plain object
+        }
+        const char dtype = t_it->second;
+
+        // dimension product must be a valid non-negative length
+        std::size_t len = (obj.at("_ArraySize_").empty() ? 0 : 1);
+        for (const auto& el : obj.at("_ArraySize_"))
+        {
+            if (!el.is_number_integer() || (!el.is_number_unsigned() && el.template get<std::int64_t>() < 0))
+            {
+                return true;
+            }
+            const auto dim = el.template get<std::uint64_t>();
+            if (dim > static_cast<std::uint64_t>((std::numeric_limits<std::size_t>::max)()))
+            {
+                return true; // a dimension that does not fit std::size_t
+            }
+            const auto dim_size = static_cast<std::size_t>(dim);
+            if (dim_size != 0 && len > (std::numeric_limits<std::size_t>::max)() / dim_size)
+            {
+                return true;
+            }
+            len *= dim_size;
+        }
+
+        if (obj.at("_ArrayData_").size() != len)
+        {
+            return true;
+        }
+
+        const bool ndarray_is_float = (dtype == 'd' || dtype == 'D');
+        for (const auto& el : obj.at("_ArrayData_"))
+        {
+            if (ndarray_is_float ? !el.is_number_float() : !el.is_number_integer())
+            {
+                return true;
+            }
+        }
+
+        out.push_back('[');
+        out.push_back('$');
+        out.push_back(static_cast<uint8_t>(dtype));
+        out.push_back('#');
+
+        write_element(obj.at("_ArraySize_"), true); // a full optimized array
+
+        // compact element payloads (write_number(..., OutputIsLittleEndian=true))
+        const auto& data = obj.at("_ArrayData_");
+        switch (dtype)
+        {
+            case 'U': case 'C': case 'B':
+                for (const auto& el : data) write_num(static_cast<std::uint8_t>(el.template get<std::uint64_t>()), true);
+                break;
+            case 'i':
+                for (const auto& el : data) write_num(static_cast<std::int8_t>(el.template get<std::int64_t>()), true);
+                break;
+            case 'u':
+                for (const auto& el : data) write_num(static_cast<std::uint16_t>(el.template get<std::uint64_t>()), true);
+                break;
+            case 'I':
+                for (const auto& el : data) write_num(static_cast<std::int16_t>(el.template get<std::int64_t>()), true);
+                break;
+            case 'm':
+                for (const auto& el : data) write_num(static_cast<std::uint32_t>(el.template get<std::uint64_t>()), true);
+                break;
+            case 'l':
+                for (const auto& el : data) write_num(static_cast<std::int32_t>(el.template get<std::int64_t>()), true);
+                break;
+            case 'M':
+                for (const auto& el : data) write_num(el.template get<std::uint64_t>(), true);
+                break;
+            case 'L':
+                for (const auto& el : data) write_num(el.template get<std::int64_t>(), true);
+                break;
+            case 'd':
+                for (const auto& el : data) write_num(static_cast<float>(el.template get<double>()), true);
+                break;
+            case 'D':
+                for (const auto& el : data) write_num(el.template get<double>(), true);
+                break;
+        }
+        return false;
+    }
+};
+
 } // namespace rjson
