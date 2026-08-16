@@ -42,8 +42,17 @@ byte-identical by `m4_binary.cpp`); **M4B-2**: the BSON READ direction —
 `reflection_bson_parser` dispatches element types through the
 reflection-generated `kBsonsLoad` reverse table (byte code -> {union slot,
 payload kind}), the mirror image of the writer, differential-tested
-byte-identical by `m4b_bson_reader.cpp`. Design:
-`docs/static-reflection/M5_REFLECTION_TO_JSON.md`; verified facts:
+byte-identical by `m4b_bson_reader.cpp`; **M4D**: the tagged-union API
+surface is completed in `basic_json_reflection` — `type_name`/`size`/`empty`/
+`at`/`erase`/`clear`/`swap`/all six comparison operators — plus the
+reflection-generated value_t name & ordering tables (`kValueTNames`/
+`kValueTTypeNames`/`kValueTWeights` + `value_t_order`/`value_t_less`) that
+replace the hand-written `value_t.hpp order[]`/`type_name()` switch inside
+the reflection header (identifier-keyed consteval, discarded stays
+unordered), differential-tested by `m4d_api.cpp` (1411 checks, ASan clean).
+Design:
+`docs/static-reflection/M5_REFLECTION_TO_JSON.md` (M5/M6) and
+`docs/static-reflection/M4D_API_SURFACE.md` (M4D); verified facts:
 `docs/static-reflection/VERIFIED_FACTS.md`.
 
 ## 2. Safety boundaries (non-negotiable)

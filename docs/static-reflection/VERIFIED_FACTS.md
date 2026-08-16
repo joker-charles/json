@@ -228,3 +228,37 @@
     only (documented boundary).
   - The reflection serializer's dump previously rendered -0.0 as "0.0";
     fixed to match the library ("-0.0", std::signbit check).
+- **M4D completed API surface** (verified by `m4d_api.cpp` differential, 1411
+  checks, ASan clean; design in `docs/static-reflection/M4D_API_SURFACE.md`):
+  - The value_t ordering/name tables (`kValueTNames`/`kValueTTypeNames`/
+    `kValueTWeights` + `value_t_order`/`value_t_less`/`value_t_weight`) are
+    generated from `enumerators_of(^^value_t)` via identifier-keyed consteval
+    functions (repro_m1 route a) and REPLACE the reliance on the hand-written
+    `value_t.hpp order[]`/`json.hpp type_name()` switch inside the reflection
+    header. Weights: null=0, boolean=1, number_*=2, object=3, array=4,
+    string=5, binary=6, discarded=-1 (unordered); the 10->8 partial mapping
+    is unchanged (null/discarded have no union slot). The 10x10 pairwise
+    differential vs `value_t::operator<=>`/`operator<` (incl. discarded
+    unordered) is byte-exact.
+  - The real library's `size()`/`empty()` semantics are NOT container-size for
+    every type: null -> 0/true, array/object -> container, and EVERY other
+    type (string/boolean/numbers/binary/discarded) -> 1/false.
+  - `std::swap(m_value, other.m_value)` on the REAL `json_value` is a safe
+    bitwise exchange: all 8 union members are trivial (pointers/scalars), so
+    the implicitly-declared move ops are trivial — the real library's own
+    `swap(reference)` does exactly this (json.hpp:3545).
+  - `basic_json_reflection::at`/`erase` return the REAL `nlohmann::json&`
+    stored in the object/array containers, so mutations through `at` write
+    straight into the stored containers.
+  - nlohmann exceptions derive ONLY from `std::exception` (NOT
+    `std::out_of_range`/`std::runtime_error`) — differential harnesses must
+    map the study library's plain std exceptions onto the nlohmann taxonomy
+    by category tag, not by catch type.
+  - The real `dump_float` writes "null" for NaN **and** +/-inf
+    (`if (!std::isfinite(x))`) — the reflection serializer previously wrote
+    "1e+999"/"-1e+999" for inf (latent drift, exposed by the M4D value
+    matrix, fixed; m3_dump now pins +inf/-inf/NaN/-0.0).
+  - nlohmann initializer_list nesting: `{"b", {"nested", true}}` builds "b"
+    as an ARRAY `["nested", true]` (the inner list's elements are not
+    arrays, so the object-pair detection fails); nested objects need the
+    double-brace form `{"b", {{"nested", true}}}`.

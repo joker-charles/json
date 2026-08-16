@@ -63,6 +63,9 @@ g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Iinclude \
 # M4B-2 BSON reader: read differential vs from_bson + negatives + ASan
 g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Isingle_include -Iinclude \
   -o /tmp/m4b2 tests/static-reflection/m4b_bson_reader.cpp && /tmp/m4b2
+# M4D API surface: type_name/at/erase/clear/swap/compare + value_t tables
+g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Isingle_include -Iinclude \
+  -o /tmp/m4d tests/static-reflection/m4d_api.cpp && /tmp/m4d
 ```
 
 The full fixture list lives in `tests/static-reflection/`; each file documents
