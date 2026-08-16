@@ -38,6 +38,7 @@ struct STuple    { std::tuple<int, double> t; };
 struct SVBool    { std::vector<bool> v; };
 struct SBareBin  { std::vector<std::uint8_t> v; };   // upstream: number array, not binary
 struct SPath     { std::filesystem::path p; };
+struct SU8       { std::u8string s; };               // char8_t string -> string overload
 
 static int g_fail = 0;
 static void check(const char* what, bool ok)
@@ -114,6 +115,13 @@ int main()
         SPath s; s.p = "/tmp/x";
         json j; refl2::codec<false>::to_json(j, s);
         check("path -> string", j["p"] == "/tmp/x");
+    }
+
+    // u8string (char8_t string): the dedicated char8_t overload, not a number array
+    {
+        SU8 s; s.s = u8"hi";
+        json j; refl2::codec<false>::to_json(j, s);
+        check("u8string -> \"hi\"", j["s"] == "hi");
     }
 
     std::printf("\n%s (%d failure%s)\n", g_fail == 0 ? "PROBE PASS" : "PROBE FAIL",
