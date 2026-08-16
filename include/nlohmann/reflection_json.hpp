@@ -57,6 +57,7 @@
 #include <cstdio>      // snprintf
 #include <cstdlib>     // abort
 #include <cstring>     // memcpy
+#include <iterator>    // reverse_iterator, advance, next (M4D-2 iterators)
 #include <limits>      // numeric_limits
 #include <stdexcept>   // runtime_error, out_of_range (BSON check, at/erase bounds)
 #include <string>
@@ -463,8 +464,14 @@ void destroy_one(refl_detail::real_json_value& u)
 // ---------------------------------------------------------------------------
 // Restricted tagged union mirroring the storage semantics.
 // ---------------------------------------------------------------------------
+// M4D-2: the iterator class is defined AFTER basic_json_reflection (it needs
+// the complete storage type); the class itself only needs the declaration.
+template<bool IsConst> class reflection_iterator;
+
 struct basic_json_reflection
 {
+    template<bool> friend class reflection_iterator;
+
     value_t m_type = value_t::null;
     refl_detail::real_json_value m_value{}; // value-init zeroes member [0] (object ptr)
 
@@ -1102,7 +1109,572 @@ struct basic_json_reflection
         }
         return !(lhs < rhs);
     }
+
+    // ---- iterators (M4D-2) ------------------------------------------------
+    // Defined out of line after reflection_iterator (which needs this class
+    // complete; this class needs only the forward declaration).
+    using iterator = reflection_iterator<false>;
+    using const_iterator = reflection_iterator<true>;
+    using reverse_iterator = std::reverse_iterator<iterator>;
+    using const_reverse_iterator = std::reverse_iterator<const_iterator>;
+
+    iterator begin() noexcept;
+    iterator end() noexcept;
+    const_iterator begin() const noexcept;
+    const_iterator end() const noexcept;
+    const_iterator cbegin() const noexcept;
+    const_iterator cend() const noexcept;
+    reverse_iterator rbegin() noexcept;
+    reverse_iterator rend() noexcept;
+    const_reverse_iterator rbegin() const noexcept;
+    const_reverse_iterator rend() const noexcept;
+    const_reverse_iterator crbegin() const noexcept;
+    const_reverse_iterator crend() const noexcept;
+
+    // --- element access via operator[] (null implicitly converts, exactly
+    // like the library: null -> array/object, then index/key access) ---
+    json& operator[](const std::size_t idx);
+    json& operator[](const json::object_t::key_type& key);
+
+    // --- lookup ---
+    iterator find(const json::object_t::key_type& key) noexcept;
+    bool contains(const json::object_t::key_type& key) const noexcept;
+    std::size_t count(const json::object_t::key_type& key) const noexcept;
+
+    // --- erase with iterators (the M4D iterator forms) ---
+    iterator erase(iterator pos);
+    iterator erase(iterator first, iterator last);
 };
+
+// ---------------------------------------------------------------------------
+// Iterator over the tagged union (M4D-2).
+//
+// Mirrors iter_impl.hpp: three modes — object (std::map iterator), array
+// (std::vector iterator), and primitive (a 0/1 begin/end index for scalar,
+// string, binary, null, discarded values — primitive_iterator_t semantics:
+// begin=0, end=1, dereference only at begin). The container ELEMENTS are the
+// real nlohmann::json values stored in the object/array containers, so
+// dereferencing returns json& (const-qualified per IsConst) exactly like the
+// library. Non-container values are NOT stored as json — the reflection holds
+// raw scalars / string_t / binary_t in the union — so a primitive-mode
+// dereference materializes the value into an iterator-owned scratch json
+// (documented aliasing limitation of this study library: the last
+// dereference wins; the real library dereferences the value in place).
+// The 12 hand-written switches of iter_impl.hpp are type-routed through the
+// is_* predicate set / mode_for, and the member-level erase/operator[]
+// dispatch uses the same template-for-over-kValueTInfos pattern as
+// construct/destroy/clear.
+// ---------------------------------------------------------------------------
+template<bool IsConst>
+class reflection_iterator
+{
+  public:
+    using iterator_category = std::bidirectional_iterator_tag;
+    using value_type = json;
+    using difference_type = std::ptrdiff_t;
+    using pointer = std::conditional_t<IsConst, const json*, json*>;
+    using reference = std::conditional_t<IsConst, const json&, json&>;
+
+  private:
+    using reflection_t = std::conditional_t<IsConst, const basic_json_reflection, basic_json_reflection>;
+    using object_iterator_t = std::conditional_t<IsConst,
+        typename json::object_t::const_iterator, typename json::object_t::iterator>;
+    using array_iterator_t = std::conditional_t<IsConst,
+        typename json::array_t::const_iterator, typename json::array_t::iterator>;
+
+    friend class basic_json_reflection;
+
+    reflection_t* m_object = nullptr;
+    std::uint8_t m_mode = 0;        // 0 = primitive, 1 = object, 2 = array
+    object_iterator_t m_object_it{};
+    array_iterator_t m_array_it{};
+    std::ptrdiff_t m_primitive = 0; // primitive_iterator_t: 0 = begin, 1 = end
+    mutable json m_scratch;         // materialized primitive/string/binary value
+
+    // the mode of a value's current type (replaces iter_impl's switch)
+    static std::uint8_t mode_for(const basic_json_reflection& j) noexcept
+    {
+        if (j.is_object())
+        {
+            return 1;
+        }
+        if (j.is_array())
+        {
+            return 2;
+        }
+        return 0;
+    }
+
+  public:
+    reflection_iterator() = default;
+
+    explicit reflection_iterator(reflection_t* object) noexcept
+        : m_object(object), m_mode(mode_for(*object))
+    {}
+
+    void set_begin() noexcept
+    {
+        if (m_mode == 1)
+        {
+            m_object_it = m_object->m_value.object->begin();
+        }
+        else if (m_mode == 2)
+        {
+            m_array_it = m_object->m_value.array->begin();
+        }
+        else
+        {
+            // null is empty: begin == end; every other primitive has one element
+            m_primitive = m_object->is_null() ? 1 : 0;
+        }
+    }
+
+    void set_end() noexcept
+    {
+        if (m_mode == 1)
+        {
+            m_object_it = m_object->m_value.object->end();
+        }
+        else if (m_mode == 2)
+        {
+            m_array_it = m_object->m_value.array->end();
+        }
+        else
+        {
+            m_primitive = 1;
+        }
+    }
+
+    reference operator*() const
+    {
+        if (m_mode == 1)
+        {
+            return m_object_it->second;
+        }
+        if (m_mode == 2)
+        {
+            return *m_array_it;
+        }
+        // primitive/string/binary: the library returns *m_object (a real
+        // json); the reflection stores raw scalars, so synthesize the value
+        // into the iterator-owned scratch (aliasing: last deref wins)
+        if (m_primitive != 0)
+        {
+            throw std::runtime_error("reflection_iterator: cannot get value");
+        }
+        const value_t t = m_object->type();
+        if (t == value_t::boolean)
+        {
+            m_scratch = m_object->m_value.boolean;
+        }
+        else if (t == value_t::number_integer)
+        {
+            m_scratch = m_object->m_value.number_integer;
+        }
+        else if (t == value_t::number_unsigned)
+        {
+            m_scratch = m_object->m_value.number_unsigned;
+        }
+        else if (t == value_t::number_float)
+        {
+            m_scratch = m_object->m_value.number_float;
+        }
+        else if (t == value_t::string)
+        {
+            m_scratch = *m_object->m_value.string;
+        }
+        else if (t == value_t::binary)
+        {
+            m_scratch = *m_object->m_value.binary;
+        }
+        else
+        {
+            throw std::runtime_error("reflection_iterator: cannot get value");
+        }
+        return m_scratch;
+    }
+
+    pointer operator->() const
+    {
+        return &operator*();
+    }
+
+    reflection_iterator& operator++()
+    {
+        if (m_mode == 1)
+        {
+            std::advance(m_object_it, 1);
+        }
+        else if (m_mode == 2)
+        {
+            std::advance(m_array_it, 1);
+        }
+        else
+        {
+            ++m_primitive;
+        }
+        return *this;
+    }
+    reflection_iterator operator++(int)&
+    {
+        auto result = *this;
+        ++(*this);
+        return result;
+    }
+    reflection_iterator& operator--()
+    {
+        if (m_mode == 1)
+        {
+            std::advance(m_object_it, -1);
+        }
+        else if (m_mode == 2)
+        {
+            std::advance(m_array_it, -1);
+        }
+        else
+        {
+            --m_primitive;
+        }
+        return *this;
+    }
+    reflection_iterator operator--(int)&
+    {
+        auto result = *this;
+        --(*this);
+        return result;
+    }
+
+    // --- comparisons (same-object requirement, mirroring iter_impl) ---
+    bool operator==(const reflection_iterator& other) const
+    {
+        if (m_object != other.m_object)
+        {
+            throw std::runtime_error("cannot compare iterators of different containers");
+        }
+        if (m_object == nullptr)
+        {
+            return true;
+        }
+        if (m_mode == 1)
+        {
+            return m_object_it == other.m_object_it;
+        }
+        if (m_mode == 2)
+        {
+            return m_array_it == other.m_array_it;
+        }
+        return m_primitive == other.m_primitive;
+    }
+    bool operator!=(const reflection_iterator& other) const
+    {
+        return !(*this == other);
+    }
+    bool operator<(const reflection_iterator& other) const
+    {
+        if (m_object != other.m_object)
+        {
+            throw std::runtime_error("cannot compare iterators of different containers");
+        }
+        if (m_object == nullptr)
+        {
+            return false;
+        }
+        if (m_mode == 1)
+        {
+            throw std::runtime_error("cannot compare order of object iterators");
+        }
+        if (m_mode == 2)
+        {
+            return m_array_it < other.m_array_it;
+        }
+        return m_primitive < other.m_primitive;
+    }
+    bool operator<=(const reflection_iterator& other) const
+    {
+        return !(other < *this);
+    }
+    bool operator>(const reflection_iterator& other) const
+    {
+        return !(*this <= other);
+    }
+    bool operator>=(const reflection_iterator& other) const
+    {
+        return !(*this < other);
+    }
+
+    reflection_iterator& operator+=(const difference_type i)
+    {
+        if (m_mode == 1)
+        {
+            throw std::runtime_error("cannot use offsets with object iterators");
+        }
+        if (m_mode == 2)
+        {
+            std::advance(m_array_it, i);
+        }
+        else
+        {
+            m_primitive += i;
+        }
+        return *this;
+    }
+    reflection_iterator& operator-=(const difference_type i)
+    {
+        return operator+=(-i);
+    }
+    reflection_iterator operator+(const difference_type i) const
+    {
+        auto result = *this;
+        result += i;
+        return result;
+    }
+    friend reflection_iterator operator+(const difference_type i, const reflection_iterator& it)
+    {
+        auto result = it;
+        result += i;
+        return result;
+    }
+    reflection_iterator operator-(const difference_type i) const
+    {
+        auto result = *this;
+        result -= i;
+        return result;
+    }
+    difference_type operator-(const reflection_iterator& other) const
+    {
+        if (m_mode == 1)
+        {
+            throw std::runtime_error("cannot use offsets with object iterators");
+        }
+        if (m_mode == 2)
+        {
+            return m_array_it - other.m_array_it;
+        }
+        return m_primitive - other.m_primitive;
+    }
+
+    reference operator[](const difference_type n) const
+    {
+        if (m_mode == 1)
+        {
+            throw std::runtime_error("cannot use operator[] for object iterators");
+        }
+        if (m_mode == 2)
+        {
+            return *std::next(m_array_it, n);
+        }
+        if (m_primitive == -n)
+        {
+            return operator*();
+        }
+        throw std::runtime_error("reflection_iterator: cannot get value");
+    }
+
+    // the key of an object iterator (iter_impl::key)
+    const json::object_t::key_type& key() const
+    {
+        if (m_object->is_object())
+        {
+            return m_object_it->first;
+        }
+        throw std::runtime_error("cannot use key() for non-object iterators");
+    }
+
+    reference value() const
+    {
+        return operator*();
+    }
+};
+
+// ---------------------------------------------------------------------------
+// basic_json_reflection iterator members (out of line — they need the
+// complete reflection_iterator defined above)
+// ---------------------------------------------------------------------------
+inline basic_json_reflection::iterator basic_json_reflection::begin() noexcept
+{
+    iterator it(this);
+    it.set_begin();
+    return it;
+}
+inline basic_json_reflection::iterator basic_json_reflection::end() noexcept
+{
+    iterator it(this);
+    it.set_end();
+    return it;
+}
+inline basic_json_reflection::const_iterator basic_json_reflection::begin() const noexcept
+{
+    const_iterator it(this);
+    it.set_begin();
+    return it;
+}
+inline basic_json_reflection::const_iterator basic_json_reflection::end() const noexcept
+{
+    const_iterator it(this);
+    it.set_end();
+    return it;
+}
+inline basic_json_reflection::const_iterator basic_json_reflection::cbegin() const noexcept
+{
+    return begin();
+}
+inline basic_json_reflection::const_iterator basic_json_reflection::cend() const noexcept
+{
+    return end();
+}
+inline basic_json_reflection::reverse_iterator basic_json_reflection::rbegin() noexcept
+{
+    return reverse_iterator(end());
+}
+inline basic_json_reflection::reverse_iterator basic_json_reflection::rend() noexcept
+{
+    return reverse_iterator(begin());
+}
+inline basic_json_reflection::const_reverse_iterator basic_json_reflection::rbegin() const noexcept
+{
+    return const_reverse_iterator(end());
+}
+inline basic_json_reflection::const_reverse_iterator basic_json_reflection::rend() const noexcept
+{
+    return const_reverse_iterator(begin());
+}
+inline basic_json_reflection::const_reverse_iterator basic_json_reflection::crbegin() const noexcept
+{
+    return rbegin();
+}
+inline basic_json_reflection::const_reverse_iterator basic_json_reflection::crend() const noexcept
+{
+    return rend();
+}
+
+inline json& basic_json_reflection::operator[](const std::size_t idx)
+{
+    if (is_null())
+    {
+        // implicitly convert a null value to an empty array (library semantics)
+        m_type = value_t::array;
+        construct_one<value_t::array>(m_value);
+    }
+    if (!is_array())
+    {
+        throw std::runtime_error(std::string("cannot use operator[] with a numeric argument with ") + type_name());
+    }
+    if (idx >= m_value.array->size())
+    {
+        // fill up the array with null values if given idx is outside the range
+        m_value.array->resize(idx + 1);
+    }
+    return m_value.array->operator[](idx);
+}
+
+inline json& basic_json_reflection::operator[](const json::object_t::key_type& key)
+{
+    if (is_null())
+    {
+        // implicitly convert a null value to an empty object (library semantics)
+        m_type = value_t::object;
+        construct_one<value_t::object>(m_value);
+    }
+    if (!is_object())
+    {
+        throw std::runtime_error(std::string("cannot use operator[] with a string argument with ") + type_name());
+    }
+    auto result = m_value.object->emplace(key, nullptr);
+    return result.first->second;
+}
+
+inline basic_json_reflection::iterator basic_json_reflection::find(const json::object_t::key_type& key) noexcept
+{
+    if (is_object())
+    {
+        iterator it(this);
+        it.m_object_it = m_value.object->find(key);
+        return it;
+    }
+    return end();
+}
+
+inline bool basic_json_reflection::contains(const json::object_t::key_type& key) const noexcept
+{
+    return is_object() && m_value.object->find(key) != m_value.object->end();
+}
+
+inline std::size_t basic_json_reflection::count(const json::object_t::key_type& key) const noexcept
+{
+    return is_object() ? m_value.object->count(key) : 0;
+}
+
+inline basic_json_reflection::iterator basic_json_reflection::erase(iterator pos)
+{
+    if (this != pos.m_object)
+    {
+        throw std::runtime_error("iterators are not compatible");
+    }
+    iterator result = end();
+    template for (constexpr auto r : kValueTInfos)
+    {
+        constexpr value_t V = static_cast<value_t>([: r :]);
+        if (m_type == V)
+        {
+            if constexpr (V == value_t::object)
+            {
+                result.m_object_it = m_value.object->erase(pos.m_object_it);
+            }
+            else if constexpr (V == value_t::array)
+            {
+                result.m_array_it = m_value.array->erase(pos.m_array_it);
+            }
+            else if constexpr (V == value_t::null || V == value_t::discarded)
+            {
+                throw std::runtime_error(std::string("cannot use erase() with ") + type_name());
+            }
+            else
+            {
+                // scalar/string/binary: erasing the single element resets the
+                // value to null (string/binary pointers freed by destroy())
+                destroy();
+            }
+        }
+    }
+    return result;
+}
+
+inline basic_json_reflection::iterator basic_json_reflection::erase(iterator first, iterator last)
+{
+    if (this != first.m_object || this != last.m_object)
+    {
+        throw std::runtime_error("iterators are not compatible");
+    }
+    iterator result = end();
+    template for (constexpr auto r : kValueTInfos)
+    {
+        constexpr value_t V = static_cast<value_t>([: r :]);
+        if (m_type == V)
+        {
+            if constexpr (V == value_t::object)
+            {
+                result.m_object_it = m_value.object->erase(first.m_object_it, last.m_object_it);
+            }
+            else if constexpr (V == value_t::array)
+            {
+                result.m_array_it = m_value.array->erase(first.m_array_it, last.m_array_it);
+            }
+            else if constexpr (V == value_t::null || V == value_t::discarded)
+            {
+                throw std::runtime_error(std::string("cannot use erase() with ") + type_name());
+            }
+            else
+            {
+                if (first.m_primitive != 0 || last.m_primitive != 1)
+                {
+                    throw std::runtime_error("iterators out of range");
+                }
+                destroy();
+            }
+        }
+    }
+    return result;
+}
 
 // ---------------------------------------------------------------------------
 // Reflection-driven serializer.
