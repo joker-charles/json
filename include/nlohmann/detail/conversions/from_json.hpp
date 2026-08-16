@@ -176,7 +176,17 @@ inline void from_json(const BasicJsonType& j, typename BasicJsonType::number_int
 }
 
 #if !JSON_DISABLE_ENUM_SERIALIZATION
-#ifdef JSON_HAS_CPP_20
+#if defined(__cpp_impl_reflection) && defined(__cpp_lib_reflection)
+// C++26 static reflection (M6): an enum whose enumerators carry
+// [[=refl2::json_name{"..."}]] annotations maps from strings (replacing
+// NLOHMANN_JSON_SERIALIZE_ENUM); an unannotated enum keeps the integer path
+// byte-for-byte (zero drift).
+template<typename BasicJsonType, concepts::enum_type EnumType>
+inline void from_json(const BasicJsonType& j, EnumType& e)
+{
+    refl2::detail::deserialize_enum(j, e);
+}
+#elif defined(JSON_HAS_CPP_20)
 template<typename BasicJsonType, concepts::enum_type EnumType>
 inline void from_json(const BasicJsonType& j, EnumType& e)
 {

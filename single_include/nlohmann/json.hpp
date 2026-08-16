@@ -5527,6 +5527,8 @@ concept array_like =
 
 // #include <nlohmann/adl_serializer.hpp>
 
+// #include <nlohmann/detail/exceptions.hpp>
+// JSON_THROW, type_error (enum from_json)
 // #include <nlohmann/detail/meta/cpp_future.hpp>
 // is_detected_exact
 // #include <nlohmann/detail/meta/type_traits.hpp>
@@ -6078,6 +6080,168 @@ inline constexpr bool member_has_default_v =
     has_annotation<json_default>(member_v<U, T, I>);
 
 // ---------------------------------------------------------------------------
+// Enum serialization (M6) — replaces NLOHMANN_JSON_SERIALIZE_ENUM(_STRICT).
+// An enum with ANY enumerator annotated
+//   [[=refl2::json_name{"..."}]] enumerator = value    (attribute after the
+//   identifier — the only position GCC 16 accepts on enumerators) maps to
+//   strings: json_name overrides the string, an unannotated enumerator falls
+//   back to its identifier. An enum WITHOUT annotations keeps the library's
+//   integer path byte-for-byte (zero drift). The macro stays as the C++11
+//   path. Semantic notes vs the macro:
+//     * to_json of an out-of-table value returns the first entry (macro
+//       behavior);
+//     * from_json accepts the mapped strings AND integers (macro: only table
+//       entries) — documented divergence.
+// ---------------------------------------------------------------------------
+consteval std::size_t enum_count(std::meta::info enum_type)
+{
+    return std::meta::enumerators_of(enum_type).size();
+}
+
+// does the enum carry any json_name annotation on its enumerators?
+template<typename E>
+consteval bool enum_has_annotations()
+{
+    const std::size_t n = std::meta::enumerators_of(^^E).size();
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (has_annotation<json_name>(std::meta::enumerators_of(^^E)[i]))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+// compile-time enumerator facts (splice yields the enumerator VALUE; the
+// strings reuse member_json_key — json_name first, identifier_of fallback)
+template<typename E, std::size_t I>
+inline constexpr std::underlying_type_t<E> enum_value_v =
+    static_cast<std::underlying_type_t<E>>([: std::meta::enumerators_of(^^E)[I] :]);
+
+template<typename E, std::size_t I>
+inline constexpr std::array<char, 64> enum_string_v =
+    member_json_key(std::meta::enumerators_of(^^E)[I]);
+
+// runtime tables (index_sequence pack expansion — variable templates cannot
+// be indexed by a runtime loop variable)
+template<typename E, std::size_t... I>
+inline std::vector<std::underlying_type_t<E>> enum_values_impl(std::index_sequence<I...>)
+{
+    return {enum_value_v<E, I>...};
+}
+template<typename E>
+inline const std::vector<std::underlying_type_t<E>>& enum_values()
+{
+    static const std::vector<std::underlying_type_t<E>> table =
+        enum_values_impl<E>(std::make_index_sequence<enum_count(^^E)> {});
+    return table;
+}
+
+template<typename E, std::size_t... I>
+inline std::vector<std::string> enum_strings_impl(std::index_sequence<I...>)
+{
+    return {std::string(enum_string_v<E, I>.data())...};
+}
+template<typename E>
+inline const std::vector<std::string>& enum_strings()
+{
+    static const std::vector<std::string> table =
+        enum_strings_impl<E>(std::make_index_sequence<enum_count(^^E)> {});
+    return table;
+}
+
+// to_json: annotated enum -> string; unannotated -> the library's integer
+// path verbatim (signedness-derived number type; self-contained so this
+// header does not depend on templates defined AFTER it in {to,from}_json.hpp)
+template<typename B, typename E>
+void serialize_enum(B& j, E e)
+{
+    using U = std::underlying_type_t<E>;
+    if constexpr (enum_has_annotations<E>())
+    {
+        const U v = static_cast<U>(e);
+        const auto& values = enum_values<E>();
+        const auto& strings = enum_strings<E>();
+        std::size_t idx = 0; // macro to_json returns the first entry on miss
+        for (std::size_t i = 0; i < values.size(); ++i)
+        {
+            if (values[i] == v)
+            {
+                idx = i;
+                break;
+            }
+        }
+        j = strings[idx];
+    }
+    else if constexpr (std::is_unsigned<U>::value)
+    {
+        j = static_cast<typename B::number_unsigned_t>(e);
+    }
+    else
+    {
+        j = static_cast<typename B::number_integer_t>(e);
+    }
+}
+
+// integer fallback mirroring detail::get_arithmetic_value (number branches
+// only; self-contained for the same reason as serialize_enum)
+template<typename B, typename U>
+void enum_get_arithmetic(const B& j, U& val)
+{
+    if (j.is_number_unsigned())
+    {
+        val = static_cast<U>(*j.template get_ptr<const typename B::number_unsigned_t*>());
+    }
+    else if (j.is_number_integer())
+    {
+        val = static_cast<U>(*j.template get_ptr<const typename B::number_integer_t*>());
+    }
+    else if (j.is_number_float())
+    {
+        val = static_cast<U>(*j.template get_ptr<const typename B::number_float_t*>());
+    }
+    else
+    {
+        JSON_THROW(nlohmann::detail::type_error::create(
+                       302, nlohmann::detail::concat("type must be number, but is ", j.type_name()), &j));
+    }
+}
+
+// from_json: annotated enum accepts the mapped strings (json_name /
+// identifier) and falls back to the integer path for numbers; unannotated
+// enums keep the integer path verbatim.
+template<typename B, typename E>
+void deserialize_enum(const B& j, E& e)
+{
+    using U = std::underlying_type_t<E>;
+    if constexpr (enum_has_annotations<E>())
+    {
+        if (j.is_string())
+        {
+            const auto& s = j.template get_ref<const typename B::string_t&>();
+            const auto& strings = enum_strings<E>();
+            const auto& values = enum_values<E>();
+            for (std::size_t i = 0; i < strings.size(); ++i)
+            {
+                if (strings[i] == s)
+                {
+                    e = static_cast<E>(values[i]);
+                    return;
+                }
+            }
+            JSON_THROW(nlohmann::detail::type_error::create(
+                           302, nlohmann::detail::concat("cannot parse enum string '", s, "'"), &j));
+        }
+        // non-string JSON: integer path (mirrors the macro accepting integer
+        // mappings; documented divergence)
+    }
+    U val{};
+    enum_get_arithmetic(j, val);
+    e = static_cast<E>(val);
+}
+
+// ---------------------------------------------------------------------------
 } // namespace detail
 
 // The codec. All member functions are static; Unchecked is the access policy.
@@ -6606,7 +6770,17 @@ inline void from_json(const BasicJsonType& j, typename BasicJsonType::number_int
 }
 
 #if !JSON_DISABLE_ENUM_SERIALIZATION
-#ifdef JSON_HAS_CPP_20
+#if defined(__cpp_impl_reflection) && defined(__cpp_lib_reflection)
+// C++26 static reflection (M6): an enum whose enumerators carry
+// [[=refl2::json_name{"..."}]] annotations maps from strings (replacing
+// NLOHMANN_JSON_SERIALIZE_ENUM); an unannotated enum keeps the integer path
+// byte-for-byte (zero drift).
+template<typename BasicJsonType, concepts::enum_type EnumType>
+inline void from_json(const BasicJsonType& j, EnumType& e)
+{
+    refl2::detail::deserialize_enum(j, e);
+}
+#elif defined(JSON_HAS_CPP_20)
 template<typename BasicJsonType, concepts::enum_type EnumType>
 inline void from_json(const BasicJsonType& j, EnumType& e)
 {
@@ -7758,7 +7932,17 @@ inline void to_json(BasicJsonType& j, CompatibleNumberIntegerType val) noexcept
 }
 
 #if !JSON_DISABLE_ENUM_SERIALIZATION
-#ifdef JSON_HAS_CPP_20
+#if defined(__cpp_impl_reflection) && defined(__cpp_lib_reflection)
+// C++26 static reflection (M6): an enum whose enumerators carry
+// [[=refl2::json_name{"..."}]] annotations maps to strings (replacing
+// NLOHMANN_JSON_SERIALIZE_ENUM); an unannotated enum keeps the integer path
+// byte-for-byte (zero drift).
+template<typename BasicJsonType, concepts::enum_type EnumType>
+inline void to_json(BasicJsonType& j, EnumType e)
+{
+    refl2::detail::serialize_enum(j, e);
+}
+#elif defined(JSON_HAS_CPP_20)
 template<typename BasicJsonType, concepts::enum_type EnumType>
 inline void to_json(BasicJsonType& j, EnumType e) noexcept
 {
