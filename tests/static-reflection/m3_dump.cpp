@@ -15,6 +15,7 @@
 //       -Isingle_include -Iinclude -o m3_dump m3_dump.cpp && ./m3_dump
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <string>
 #include <utility>
 
@@ -68,6 +69,10 @@ int main()
     check(json(0.0), "float 0.0");
     check(json(2.5), "float 2.5");
     check(json(-0.5), "float -0.5");
+    check(json(-0.0), "float -0.0");
+    check(json(std::numeric_limits<double>::infinity()), "float +inf");
+    check(json(-std::numeric_limits<double>::infinity()), "float -inf");
+    check(json(std::numeric_limits<double>::quiet_NaN()), "float NaN");
     check(json("hello"), "string hello");
     check(json(""), "string empty");
     check(json("line\nbreak\t\"quoted\"\\"), "string escapes");
