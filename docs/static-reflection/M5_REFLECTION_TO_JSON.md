@@ -94,9 +94,12 @@ has_to_json  探测 adl_serializer<T,void>::to_json  (CPO 链)
 
 ## 8. 边界
 
-- 顶层 union/variant：排除集拦下，维持原编译错误（无新 static_assert；variant 集成需 `variant_size`/`variant_alternative`，未来扩展）。
-- 结构体内部的指针/变体成员：codec priority-0 static_assert（消息含指引）。
-- 非默认构造类型（from_json 的 `T&` 形式）：`has_non_default_from_json` 机制不自动提供（同 refl2 现状）。
+- 顶层 union：排除集拦下，维持原编译错误；**std::variant 自 M7 起已支持**
+  （oneof 线格式 `{"index":N,"value":...}`，见 `M7_VARIANT.md`；含 `json`
+  替代项的 variant 仍被 in_json_namespace 排除——循环防御的既定边界）。
+- 结构体内部的指针成员：codec priority-0 static_assert（消息含指引）；
+  variant 成员经成员递归自动支持（M7）。
+- 非默认构造类型（from_json 的 `T&` 形式）：`has_non_default_from_json` 机制不自动提供（同 refl2 现状）；variant 替代项 from_json 同样要求默认可构造。
 - `json_name` 键长上限 63（数组 64）。
 - 用户类型声明在 `nlohmann` 命名空间内：被 `in_json_namespace` 误判为库内部（罕见；文档化）。
 

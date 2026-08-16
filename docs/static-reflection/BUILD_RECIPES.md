@@ -66,6 +66,15 @@ g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Isingle_include -Iincl
 # M4D API surface: type_name/at/erase/clear/swap/compare + value_t tables
 g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Isingle_include -Iinclude \
   -o /tmp/m4d tests/static-reflection/m4d_api.cpp && /tmp/m4d
+# M4E UBJSON optimized modes + BJData (draft2/draft3)
+g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Isingle_include -Iinclude \
+  -o /tmp/m4e tests/static-reflection/m4e_ubjson_opt.cpp && /tmp/m4e
+# M7 top-level std::variant (codec)
+g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Iinclude \
+  -o /tmp/m7 tests/static-reflection/probe_variant.cpp && /tmp/m7
+# M4D-2 iterators: begin/end/operator[]/find/erase(iterator)
+g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Isingle_include -Iinclude \
+  -o /tmp/m4d2 tests/static-reflection/m4d2_iterators.cpp && /tmp/m4d2
 ```
 
 The full fixture list lives in `tests/static-reflection/`; each file documents

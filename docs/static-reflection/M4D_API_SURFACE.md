@@ -154,8 +154,10 @@ M4D 的比较矩阵首轮差分即暴露。已修（`!isfinite` 单分支），�
 
 ## 7. 边界与后续
 
-- `erase(iterator)` / `erase(first,last)` / `operator[]` / `value()` /
-  `count` / `contains` / `find`：留给迭代器里程碑（iter_impl 12 处 switch）。
-- 顶层 `std::variant` 支持仍未做（M5 §8 的既定边界）。
-- `swap(binary_t&)` 等容器形式已实现，但 `operator[]`（null → 隐式转型
-  容器）未做——`basic_json_reflection` 保持显式构造语义。
+- **迭代器形式已闭合（M4D-2）**：`erase(iterator)` / `erase(first,last)` /
+  `operator[]`（含 null 隐式转型）/ `find` / `contains` / `count` /
+  `begin`/`end`/`rbegin`/`rend` 全部落地（见 `M4D2_ITERATORS.md`）。
+- 顶层 `std::variant` 支持在 codec 侧（M7），与本文档的 tagged-union 面
+  正交。
+- `swap(binary_t&)` 等容器形式已实现；`value()`（默认值查询，306 语义）
+  与迭代器 `insert` 系列未做——保持显式构造语义与既有范围。

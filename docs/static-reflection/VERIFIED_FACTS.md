@@ -262,3 +262,62 @@
     as an ARRAY `["nested", true]` (the inner list's elements are not
     arrays, so the object-pair detection fails); nested objects need the
     double-brace form `{"b", {{"nested", true}}}`.
+- **UBJSON optimized modes + BJData (M4E)** (verified by `m4e_ubjson_opt.cpp`,
+  630 byte-identical checks vs `to_ubjson`/`to_bjdata`, ASan clean):
+  - BJData writes ALL numbers and length prefixes LITTLE-endian —
+    `write_number(n, OutputIsLittleEndian=use_bjdata)` applies to signed,
+    unsigned AND float payloads alike (not just the unsigned types).
+  - The BJData width ladders insert 'u' (uint16) / 'm' (uint32) / 'M'
+    (uint64) rungs between the signed rungs; plain UBJSON uint64 above
+    int64 max falls to 'H' high-precision (decimal dump + length prefix).
+  - The '$' type optimization checks `ubjson_prefix` equality (first element
+    assumed same for arrays, ALL values checked for objects) and EXCLUDES
+    the markers ['[' '{' 'S' 'H' 'T' 'F' 'N' 'Z'] under BJData only — plain
+    UBJSON happily emits `[$S#...` etc. use_type REQUIRES use_count (the
+    library JSON_ASSERTs it).
+  - BJData draft3 (bjdata_version_t::draft3) differs from draft2 ONLY in the
+    binary encoding: the marker is 'B' instead of 'U' and the '$' prefix is
+    emitted even for an empty binary.
+  - JData ndarray: an object with exactly {_ArrayType_, _ArraySize_,
+    _ArrayData_} is encoded as `[$<dtype>#<size-array> <compact elements>]`
+    when dtype is in the 12-entry map, every dimension is a non-negative
+    integer with a non-overflowing product, the data length matches, and
+    every element is the right kind (float for d/D, integer otherwise);
+    otherwise it falls back to a plain object. Compact elements are always
+    little-endian (write_number(..., true) hardcoded).
+  - The library's public to_ubjson/to_bjdata in this tree are STATIC
+    (`json::to_ubjson(j, use_count, use_type)`) with add_prefix fixed at
+    write_ubjson's default (true) — no add_prefix parameter is exposed.
+- **std::variant codec support (M7)** (verified by `probe_variant.cpp`, 39
+  checks, ASan clean):
+  - The oneof wire format is {"index": N, "value": <alternative>};
+    std::monostate serializes as "value": null and is skipped on read.
+  - from_json dispatches the runtime index through a compile-time
+    index_sequence fold (`idx == I ? emplace_and_deserialize<B,T,I>() :
+    void()`) — emplace<I>() requires default-constructible alternatives;
+    out-of-range index throws type_error 302.
+  - A `json` ALTERNATIVE inside a variant is NOT supported: the variant's
+    template arguments carry the nlohmann namespace, so in_json_namespace
+    classifies the whole type as library-internal (the M5 circularity
+    defense — no way around it without weakening the probes).
+  - The codec priority chain is nested json=7, variant=6, optional=5,
+    adl=4, array=3, object=2, struct=1, static_assert=0 — and BOTH dispatch
+    entry points (serialize_one/deserialize_one) MUST pass priority_tag<7>;
+    passing <6> silently reroutes nested json values into the array-like
+    branch (real regression caught by probe_adl_recursion during M7).
+- **Iterators (M4D-2)** (verified by `m4d2_iterators.cpp`, 50 checks, ASan
+  clean):
+  - The reflection iterator mirrors iter_impl: object (map iterator) /
+    array (vector iterator) / primitive (begin=0, end=1, deref only at
+    begin, null begin==end) modes. Container elements are the real
+    nlohmann::json values, so dereference returns json&; non-container
+    values are NOT stored as json (raw scalars / string_t / binary_t in
+    the union), so primitive-mode dereference materializes into an
+    iterator-owned mutable json scratch (last-deref-wins aliasing —
+    documented study-library limitation).
+  - operator[] has the library's null -> container implicit conversion
+    (null becomes an empty array/object) and the out-of-range array
+    fill-up via resize(idx+1); erase(iterator) on a scalar/string/binary
+    resets the value to null (destroy frees string/binary pointers);
+    erase(iterator) on null/discarded throws; cross-container iterator
+    comparison throws.

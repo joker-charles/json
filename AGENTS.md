@@ -49,10 +49,29 @@ reflection-generated value_t name & ordering tables (`kValueTNames`/
 `kValueTTypeNames`/`kValueTWeights` + `value_t_order`/`value_t_less`) that
 replace the hand-written `value_t.hpp order[]`/`type_name()` switch inside
 the reflection header (identifier-keyed consteval, discarded stays
-unordered), differential-tested by `m4d_api.cpp` (1411 checks, ASan clean).
+unordered), differential-tested by `m4d_api.cpp` (1411 checks, ASan clean);
+**M4E**: the UBJSON write direction is completed — `reflection_ubjson_optimized_serializer`
+adds the `'#'` count / `'$'` type optimized modes (use_type requires
+use_count), the BJData dialect (all numbers/prefixes little-endian, the
+`'u'`/`'m'`/`'M'` width rungs, the bjdx `'$'`-exclusion list, draft3's `'B'`
+binary marker) and the JData ndarray encoding, differential-tested
+byte-identical by `m4e_ubjson_opt.cpp` (630 checks, ASan clean); **M7**:
+top-level `std::variant` support in the refl2 codec (`reflection_to_json.hpp`)
+— the oneof wire format `{"index":N,"value":...}`, member recursion, and the
+interaction with the M5 exclusion set/circularity defenses (a `json`
+alternative stays excluded), verified by `probe_variant.cpp` (39 checks,
+ASan clean); **M4D-2**: the tagged-union iteration surface —
+`reflection_iterator<IsConst>` (object/array/primitive modes, mirroring
+iter_impl's 12 switches via type routing), `begin`/`end`/`rbegin`/`rend`,
+`operator[]` (null implicit conversion + array fill-up), `find`/`contains`/
+`count`, `erase(iterator)`/`erase(first,last)` — differential-tested by
+`m4d2_iterators.cpp` (50 checks, ASan clean).
 Design:
-`docs/static-reflection/M5_REFLECTION_TO_JSON.md` (M5/M6) and
-`docs/static-reflection/M4D_API_SURFACE.md` (M4D); verified facts:
+`docs/static-reflection/M5_REFLECTION_TO_JSON.md` (M5/M6),
+`docs/static-reflection/M4D_API_SURFACE.md` (M4D),
+`docs/static-reflection/M4E_UBJSON_OPT.md` (M4E),
+`docs/static-reflection/M7_VARIANT.md` (M7),
+`docs/static-reflection/M4D2_ITERATORS.md` (M4D-2); verified facts:
 `docs/static-reflection/VERIFIED_FACTS.md`.
 
 ## 2. Safety boundaries (non-negotiable)
