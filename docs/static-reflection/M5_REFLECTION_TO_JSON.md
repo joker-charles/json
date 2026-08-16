@@ -99,3 +99,24 @@ has_to_json  探测 adl_serializer<T,void>::to_json  (CPO 链)
 - 非默认构造类型（from_json 的 `T&` 形式）：`has_non_default_from_json` 机制不自动提供（同 refl2 现状）。
 - `json_name` 键长上限 63（数组 64）。
 - 用户类型声明在 `nlohmann` 命名空间内：被 `in_json_namespace` 误判为库内部（罕见；文档化）。
+
+## 9. M6 扩展：枚举字符串映射（替换 NLOHMANN_JSON_SERIALIZE_ENUM）
+
+同一注解层延伸到枚举器。**枚举器级** `json_name` 注解（GCC 16 只接受属性在标识符**之后**的语法位置）：
+
+```cpp
+enum class Color
+{
+    red = 1,
+    green [[=refl2::json_name{"GREEN"}]] = 2,   // 覆盖字符串
+    big = 3,                                    // 无注解 -> 枚举器名 "big"
+};
+json j = Color::green;   // "GREEN"
+auto c = json("big").get<Color>();   // Color::big
+```
+
+- **触发条件**：枚举只要有任何枚举器带 `json_name` 注解 → 整个枚举走字符串映射（注解覆盖 + 未注解枚举器回退 `identifier_of`）；**无注解枚举保持整数路径逐字节不变**（零漂移探针验证）。
+- **表生成**：`enumerators_of(^^E)` 编译期枚举器集；值经**枚举器 splice**（`[: enumerator :]`，变量模板上下文）取 `underlying` 值——`constant_of` 对枚举器返回 info 而非值，不可用；字符串复用 `member_json_key`（json_name 优先）。运行时表经 `index_sequence` 包展开（变量模板不能被运行时循环变量下标）。
+- **语义 vs 宏**（`probe_enum_reflection.cpp` 对照验证）：to_json 表外值返回第一项（宏行为）；from_json 接受映射字符串**与整数回退**（宏只认表项——文档化差异）；未知字符串抛 302。
+- **钩链**：`to_json.hpp`/`from_json.hpp` 的 enum 重载改为三态（反射变体 → `refl2::detail::{serialize,deserialize}_enum`；C++20 concepts 变体；C++11 enable_if 变体原样保留）；`JSON_DISABLE_ENUM_SERIALIZATION` 门控不变。实现自包含（整数路径用 `B::number_*` 赋值 + 内联算术取值，不依赖门控 include 之后才定义的库模板）。
+- 宏保留为 C++11 路径（FEASIBILITY 既定结论）。验证：22 项探针（含宏↔注解逐字节对照、双向、302、容器与结构体成员递归）+ 零漂移双编译 + doctest 套件（含 `test-udt` 的 SERIALIZE_ENUM 用例）+ `JSON_DISABLE_ENUM_SERIALIZATION` 编译路径 + 单头。

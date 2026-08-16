@@ -30,7 +30,10 @@ is wired into `detail::{to,from}_json` as reflection-gated catch-alls
 (`__cpp_impl_reflection && __cpp_lib_reflection`, i.e. only g++-16
 `-std=c++26 -freflection`) — arbitrary reflectable structs serialize
 bidirectionally with zero user code, replacing the NLOHMANN_DEFINE_TYPE_*
-macro family (Scenario B of EVALUATION.md). See
+macro family (Scenario B of EVALUATION.md); **M6**: enumerator-level
+`json_name` annotations replace NLOHMANN_JSON_SERIALIZE_ENUM (compile-time
+enumerator tables; unannotated enums keep the integer path, zero drift).
+See
 `docs/static-reflection/M5_REFLECTION_TO_JSON.md` and the doc map (§6).
 
 ## 2. Toolchain — trust, don't re-derive
@@ -212,6 +215,15 @@ Same toolchain ⇒ trust these; re-deriving them is wasted work.
     refl2 convention; the library's real customization surface is
     `adl_serializer<T, void>` (json_serializer<T, void>) — the codec now calls
     `<T, void>` and probes/specializations must match.
+  - **Enum string mapping (M6)**: enumerator-level `json_name` annotations
+    require the attribute AFTER the identifier
+    (`green [[=refl2::json_name{"GREEN"}]] = 2`); before the identifier is
+    rejected by GCC 16. `constant_of` on an enumerator yields an `info`, NOT
+    the value — take the value via an enumerator SPLICE in a variable
+    template (`[: enumerators_of(^^E)[I] :]`). Any annotated enumerator
+    switches the whole enum to string mapping (unannotated enumerators fall
+    back to `identifier_of`); a fully unannotated enum keeps the integer
+    path byte-for-byte.
 
 ## 4. Build & reproduce
 
@@ -231,6 +243,11 @@ g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Iinclude \
 g++-16 -std=c++26 -O1 -Iinclude \
   -o /tmp/prm_b tests/static-reflection/probe_reflection_replace_macros.cpp && /tmp/prm_b
 #   diff <(grep '^COMMON' <(./prm_b)) <(grep '^COMMON' <(./prm_r)) must be empty
+# M6 enum string mapping (macro<->annotation + zero drift)
+g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Iinclude \
+  -o /tmp/per_r tests/static-reflection/probe_enum_reflection.cpp && /tmp/per_r
+g++-16 -std=c++26 -O1 -Iinclude \
+  -o /tmp/per_b tests/static-reflection/probe_enum_reflection.cpp && /tmp/per_b
 ```
 
 The full fixture list lives in `tests/static-reflection/`; each file documents
