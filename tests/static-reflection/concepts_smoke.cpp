@@ -61,6 +61,17 @@ int main()
         CHECK(std::string(j.dump()) == "2.5", "float dump 2.5");
     }
 
+    // boolean to_json (concepts::boolean_like path in C++20, is_same in C++11)
+    {
+        json j = true;
+        CHECK(j.is_boolean() && j.get<bool>() == true, "boolean to_json (literal)");
+        bool b = false;
+        json j2 = b;
+        CHECK(j2.is_boolean() && j2.get<bool>() == false, "boolean to_json (bool var)");
+        json j3 = json(false);
+        CHECK(j3.is_boolean() && j3.get<bool>() == false, "boolean basic_json ctor");
+    }
+
     // object to_json (concepts::object_like path in C++20)
     {
         json j = Point{3, 4};
