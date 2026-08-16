@@ -362,12 +362,27 @@ decltype(std::end(std::declval<const T&>())),
 //                           push_back/insert/fixed-size dispatch all miss)
 //   * std::valarray      -> from_json has no push_back/insert; the fixed-size
 //                           branch aborts on the default-constructed size 0
+//   * std::u8string      -> char8_t is not constructible into string_t, so the
+//                           string-like probe misses it and the array branch
+//                           would emit a number array instead of the library's
+//                           dedicated char8_t-string overload (a string)
 // They route through the adl branch (the library's own overloads) instead.
+// char8_t string (std::u8string) — SFINAE-friendly probe (the value_type
+// access must be guarded so non-string types don't hard-error).
+template<typename T, typename = void>
+struct is_char8_string : std::false_type {};
+template<typename T>
+struct is_char8_string<T, std::void_t<typename T::value_type>>
+    : std::bool_constant <
+    nlohmann::detail::is_specialization_of<std::basic_string, T>::value
+    && std::is_same_v<typename T::value_type, char8_t> > {};
+
 template<typename B, typename T>
 inline constexpr bool is_library_dedicated_array =
     std::is_same<std::remove_cvref_t<T>, typename B::binary_t>::value
     || nlohmann::detail::is_specialization_of<std::forward_list, std::remove_cvref_t<T>>::value
-    || nlohmann::detail::is_specialization_of<std::valarray, std::remove_cvref_t<T>>::value;
+    || nlohmann::detail::is_specialization_of<std::valarray, std::remove_cvref_t<T>>::value
+    || is_char8_string<std::remove_cvref_t<T>>::value;
 
 // --- adl_serializer-based detection (the library's own customization
 // surface is adl_serializer<T, void> — json_serializer<T, void>) -----------
