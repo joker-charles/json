@@ -398,7 +398,11 @@ refl2 可序列化的 T（可反射结构、容器、嵌套 json 等）序列化
   完全做不到。
 
 - **场景 B —— 库把 v2 作为默认设施提供**（就像今天的宏）：用户的**一次性成本为 0**，
-  所以从**第一个类型**起每类型就省 1 行（盈亏平衡 = 1 个类型）：
+  所以从**第一个类型**起每类型就省 1 行（盈亏平衡 = 1 个类型）。**已落地（M5）**：
+  `include/nlohmann/reflection_to_json.hpp` 把 refl2 codec 接为
+  `detail::{to,from}_json` 的反射门控 catch-all（仅 g++-16 `-std=c++26 -freflection`），
+  并加 `json_name`/`json_ignore`/`json_default` 注解表达宏族语义——
+  见 `docs/static-reflection/M5_REFLECTION_TO_JSON.md`：
 
   | 类型数 | 宏 | refl2 v2 | 节省 |
   |---|---|---|---|

@@ -2,7 +2,7 @@
 
 > 分支：`feature/static-reflection`（基于 `develop`，cdf52ae9）
 > 编译器基准：`g++-16` 16.1.0（Ubuntu 16.1.0-2ubuntu1）/ libstdc++ 16，`-std=c++26 -freflection`
-> 状态：**M0–M3 完成并实机验证；M4 反射不推进、concepts 化分层落地到主库 to_json**。M0–M3 见下；M4 见 `docs/static-reflection/M4_ASSESSMENT.md`。已有：`concepts.hpp` 层 1/2 概念（原子探测 + 带 BasicJsonType 语义概念）、to_json 浮点/枚举/字符串/数组/对象 5 个重载 `JSON_HAS_CPP_20` 双轨 `requires`，五标准行为一致、差分与全部 fixture 零回归；range 视图维度以变量模板门控（不入 concept）；from_json 保留 enable_if。复合约束可行性实证见 §6/§7。
+> 状态：**M0–M3 完成并实机验证；M4 反射不推进、concepts 化分层落地到主库 to_json；M5 注解驱动的双向反射序列化器落地（替换 NLOHMANN_DEFINE_TYPE_* 宏族，场景 B）**。M0–M3 见下；M4 见 `docs/static-reflection/M4_ASSESSMENT.md`；M5 见 `docs/static-reflection/M5_REFLECTION_TO_JSON.md`。M4 已有：`concepts.hpp` 层 1/2 概念（原子探测 + 带 BasicJsonType 语义概念）、to_json 浮点/枚举/字符串/数组/对象 5 个重载 `JSON_HAS_CPP_20` 双轨 `requires`，五标准行为一致、差分与全部 fixture 零回归；range 视图维度以变量模板门控（不入 concept）；from_json 保留 enable_if。复合约束可行性实证见 §6/§7。M5 已有：`include/nlohmann/reflection_to_json.hpp`（refl2 codec 迁入 + `json_name`/`json_ignore`/`json_default` 注解层 + 双向 catch-all），门控于 `__cpp_impl_reflection && __cpp_lib_reflection`（仅 g++-16 `-std=c++26 -freflection`），宏↔注解差分探针、零漂移双编译、8 编译期负例、doctest 套件全部通过。
 
 ---
 

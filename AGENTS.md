@@ -23,7 +23,15 @@ Two coupled goals:
 
 Status: M0–M3 (reflection) complete & verified; M4 verdict: reflection does not
 replace type_traits, classification in `docs/static-reflection/M4_ASSESSMENT.md`;
-to_json concepts dual-path landed and committed. See the doc map (§6).
+to_json concepts dual-path landed and committed. **M5 shipped**: the refl2
+codec moved into `include/nlohmann/reflection_to_json.hpp` (new experimental
+header) with a `json_name`/`json_ignore`/`json_default` annotation layer, and
+is wired into `detail::{to,from}_json` as reflection-gated catch-alls
+(`__cpp_impl_reflection && __cpp_lib_reflection`, i.e. only g++-16
+`-std=c++26 -freflection`) — arbitrary reflectable structs serialize
+bidirectionally with zero user code, replacing the NLOHMANN_DEFINE_TYPE_*
+macro family (Scenario B of EVALUATION.md). See
+`docs/static-reflection/M5_REFLECTION_TO_JSON.md` and the doc map (§6).
 
 ## 2. Toolchain — trust, don't re-derive
 
@@ -144,6 +152,66 @@ Same toolchain ⇒ trust these; re-deriving them is wasted work.
     reorder these back to `<B, T>`. Do NOT leave this class of bug to be caught
     only by a non-default-string_t TU: `concepts_smoke`/dual tests use
     `std::string` where the wrong binding happens to agree, so they miss it.
+- **M5 reflection catch-all** (verified by `probe_reflection_replace_macros.cpp`
+  + `probe_adl_recursion.cpp`; design in `docs/static-reflection/M5_REFLECTION_TO_JSON.md`):
+  - **Gate macros**: `-freflection` is what defines `__cpp_impl_reflection` /
+    `__cpp_lib_reflection` — plain `-std=c++26` defines neither and `<meta>` is
+    empty. The to_json/from_json catch-alls are gated on
+    `defined(__cpp_impl_reflection) && defined(__cpp_lib_reflection)`.
+  - **The whole user-type chain hooks in with ONE overload**: `json j = s` goes
+    `is_compatible_type` (= `has_to_json`) → `adl_serializer<T,void>::to_json`
+    → CPO `::nlohmann::to_json` → `to_json_fn::operator()` → unqualified
+    `detail::to_json` (ordinary lookup = the overload set declared before
+    `to_json_fn`). A constrained catch-all declared before `to_json_fn` /
+    `from_json_fn` (the gated include sits at the top of those files) is found
+    by ordinary lookup; user free `to_json` is found by ADL at instantiation;
+    `adl_serializer<T,void>` specializations are called directly by the
+    constructor/get and never reach `detail::to_json`.
+  - **`&&` short-circuit does NOT stop template recursion**: `E1 && E2` where
+    `E2` is `SomeTrait<T>::value` instantiates `SomeTrait<T>` before evaluation
+    ("recursively required by substitution"). Circularity must be cut at the
+    probe level, not by operand ordering.
+  - **The catch-all makes the CPO path valid for plain structs**, so any probe
+    through `adl_serializer`/the CPO recurses. Three cuts: (1) user-customization
+    probes live in a private namespace (`refl2::detail::adl_probe`) where
+    ordinary lookup sees nothing and ADL never sees `nlohmann::detail` for
+    USER types — pure ADL detection of free functions; (2) library-internal
+    types (`identity_tag<T>`, `initializer_list<json_ref<json>>`, ...) ARE in
+    the associated namespace of `nlohmann::detail` via themselves or their
+    template arguments, so the probe re-enters the catch-all — exclude them
+    with `in_json_namespace(^^T)` (parent-chain walk comparing
+    `identifier_of` to `"nlohmann"`, recursing into `template_arguments_of`,
+    guarding `has_identifier` — the global namespace has none) placed FIRST in
+    the requires AND as a `false_type` partial specialization of the probes
+    (no probing at all); (3) the codec's own adl branch excludes
+    `eligible && adl_serializer_is_primary` — `adl_serializer_is_primary`
+    probes `&adl_serializer<T,void>::template to_json<B,T>` (addressable only
+    for the primary's member template, not a user specialization with a
+    non-template static to_json), so specialized types still take the adl
+    branch (customization wins) while plain structs are member-reflected.
+  - **from_json exclusion set must NOT use `is_getable`** (it probes
+    `j.get<T>()`, which goes through the catch-all — the same cycle);
+    containers are excluded structurally (`is_array_like`/`is_object_like`/
+    `is_optional`/string probes mirroring each side's own overload probes).
+  - **Annotation types must be structural AND extractable**: `std::string`/
+    `std::string_view` members are rejected ("does not have structural type" —
+    libstdc++ members are private); `const char*` members make
+    `meta::extract` throw "reflect_constant failed"; string literals can never
+    be template arguments. `json_name` uses a fixed `char value[64]` array
+    (structural + extractable). Annotation reading is query-domain only:
+    direct subscript of the transient `annotations_of` + `meta::remove_cvref`
+    (annotation types are cv/ref-qualified) + `meta::is_same_type` +
+    `extract<json_name>` — NO splices (a splice needs the entity as a
+    constant expression, which a consteval function parameter is not) and NO
+    `template for` (its range needs a constant too). Bind the WHOLE extract
+    result, not its array subobject ("accessing `<anonymous>` outside its
+    lifetime"). Member keys travel as value-copied `std::array<char,64>`
+    (a string_view into the extract temporary is not a constant expression
+    and dangles).
+  - `adl_serializer<T, B>` with an explicit second argument is a historical
+    refl2 convention; the library's real customization surface is
+    `adl_serializer<T, void>` (json_serializer<T, void>) — the codec now calls
+    `<T, void>` and probes/specializations must match.
 
 ## 4. Build & reproduce
 
@@ -157,6 +225,12 @@ g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Iinclude \
   -o /tmp/d tests/static-reflection/m2_diff.cpp && /tmp/d
 # M4 concepts dual-path smoke (compile for -std=c++11/20/26; outputs must match)
 g++-16 -std=c++20 -O0 -Iinclude -o /tmp/s tests/static-reflection/concepts_smoke.cpp && /tmp/s
+# M5 macro<->annotation differential + zero drift (reflection vs baseline)
+g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Iinclude \
+  -o /tmp/prm_r tests/static-reflection/probe_reflection_replace_macros.cpp && /tmp/prm_r
+g++-16 -std=c++26 -O1 -Iinclude \
+  -o /tmp/prm_b tests/static-reflection/probe_reflection_replace_macros.cpp && /tmp/prm_b
+#   diff <(grep '^COMMON' <(./prm_b)) <(grep '^COMMON' <(./prm_r)) must be empty
 ```
 
 The full fixture list lives in `tests/static-reflection/`; each file documents
@@ -199,8 +273,8 @@ covered by the repository's doctest unit suite — see §5 "Repository test suit
   `tests/src/unit-concepts_dual.cpp` (mentions `JSON_HAS_CPP_20`) registers
   both `_cpp11` and `_cpp20` targets and proves the dual path is behavior-preserving.
 - **Free-experiment region** (safe to change freely): `concepts.hpp`,
-  `reflection_json.hpp`, everything under `tests/static-reflection/`, and the
-  docs under `docs/static-reflection/`.
+  `reflection_json.hpp`, `reflection_to_json.hpp`, everything under
+  `tests/static-reflection/`, and the docs under `docs/static-reflection/`.
 - **Every new overload / concept / trait rewrite must be validated** by the
   differential / zero-drift probes outlined in `M4_ASSESSMENT.md` §7. The burden
   is on the change to prove byte-identical behavior, not on reviewers to trust it.
@@ -220,6 +294,13 @@ covered by the repository's doctest unit suite — see §5 "Repository test suit
   the mirror-union route, verified patterns & pitfalls.
 - `docs/static-reflection/M4_ASSESSMENT.md` — type_traits classification
   (A/B/C classes), the layered concepts strategy, composite-concept verdicts.
+- `docs/static-reflection/M5_REFLECTION_TO_JSON.md` — the reflection-driven
+  bidirectional serializer replacing the NLOHMANN_DEFINE_TYPE_* macro family:
+  the catch-all wiring (has_to_json → is_compatible_type → constructor → CPO →
+  detail::to_json chain), the exact-probe exclusion sets, the circularity
+  defenses (non-circular ADL probes, in_json_namespace, adl_serializer_is_primary),
+  the annotation layer (json_name/json_ignore/json_default), macro↔annotation
+  semantic differences, and the verification matrix.
 - Authoritative C++ feature/API facts (header map, signatures, reflection index):
   the **`modern-cpp` skill**; the local offline cppreference if present.
 

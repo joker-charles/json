@@ -472,7 +472,12 @@ point answers different questions depending on who pays the one-time cost:
 
 - **Scenario B — the library ships v2 as a default facility** (like the
   macros today): the user's one-time cost is **0**, so every type saves 1
-  line **from the very first type** (break-even = 1 type):
+  line **from the very first type** (break-even = 1 type). **Shipped as M5**:
+  `include/nlohmann/reflection_to_json.hpp` wires the refl2 codec into
+  `detail::{to,from}_json` as reflection-gated catch-alls (g++-16
+  `-std=c++26 -freflection` only) and adds `json_name`/`json_ignore`/
+  `json_default` annotations covering the macro family — see
+  `docs/static-reflection/M5_REFLECTION_TO_JSON.md`:
 
   | types | macro | refl2 v2 | saved |
   |---|---|---|---|
