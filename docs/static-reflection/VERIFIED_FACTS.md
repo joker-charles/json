@@ -321,3 +321,37 @@
     resets the value to null (destroy frees string/binary pointers);
     erase(iterator) on null/discarded throws; cross-container iterator
     comparison throws.
+- **Type-surface alignment** (verified by `probe_type_alignment.cpp`, 14
+  checks, ASan clean):
+  - `is_compatible_binary_type<json, B::binary_t> == 0`; bare
+    `std::vector<uint8_t>` IS a number array upstream (binary is the
+    `byte_container_with_subtype` wrapper, which exposes `value_type` +
+    `begin`/`end` and so was mis-classified array_like by refl2 — it is
+    now routed to the adl branch via `is_library_dedicated_array`).
+  - `std::u8string` (char8_t) is NOT string_like (char8_t does not
+    construct `string_t`), so the refl2 array branch emitted a number
+    array; it now routes to the library's char8_t-string overload via an
+    `is_char8_string` SFINAE probe (value_type access must be guarded —
+    non-string types hard-error otherwise).
+  - `std::forward_list` from_json has no push_back/insert/operator[] and
+    `std::valarray` from_json defaults to size 0 (fixed-size branch
+    aborts); both route to the adl branch (the library's front_inserter /
+    resize overloads).
+  - C-array members (int[N]) were a priority-0 static_assert; the
+    `!(std::is_array && !string_like)` adl exclusion was dropped so they
+    reach the library's C-array overloads. 2D C arrays route recursively
+    through the 1D overload.
+  - `std::map<non-string key, T>` members serialize as a key-to-string
+    object (`{"1":10}`) — a documented divergence from upstream's
+    pair-array form (`[[1,10]]`); refl2's form round-trips, upstream's
+    key-constructibility check is deliberately not mirrored (is_object_like
+    stays a key_type/mapped_type existence probe).
+- **concepts boolean** (verified by `concepts_smoke.cpp` across
+  `-std=c++11/14/17/20/26`): `boolean_like<T,B>` must use `B::boolean_t`
+  (not hard-coded `bool`, and no remove_cvref — the value param already
+  drops cv/ref), mirroring `is_same<T, B::boolean_t>` exactly.
+- **cold paths** (verified by `probe_negative_runtime.cpp`): struct
+  from_json type-mismatch throws type_error 304 (array/string) / 302
+  (wrong member type) / out_of_range 403 (missing key); json_default
+  falls back only on a MISSING key, an explicit null still throws 302;
+  annotated enum to_json of an out-of-table value returns the first entry.

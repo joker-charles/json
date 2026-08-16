@@ -66,6 +66,20 @@ iter_impl's 12 switches via type routing), `begin`/`end`/`rbegin`/`rend`,
 `operator[]` (null implicit conversion + array fill-up), `find`/`contains`/
 `count`, `erase(iterator)`/`erase(first,last)` — differential-tested by
 `m4d2_iterators.cpp` (50 checks, ASan clean).
+**Hardening & alignment** (later session): refl2 cold-path fixes — the
+array-like from_json gained an `insert` branch (std::set members were a
+compile error) and `json_name` a consteval ctor with a key-length
+static_assert; library-dedicated array types (`B::binary_t` / C array /
+`std::forward_list` / `std::valarray` / `std::u8string`) now route through
+the adl branch via `is_library_dedicated_array` (they were mis-serialized
+as number arrays / static_assert / compile-error / abort); a negative
+compile-fail harness (`compile_fail/`, 9 cases) plus runtime error-path
+(`probe_negative_runtime.cpp`) and upstream type-surface
+(`probe_type_alignment.cpp`) probes landed. The C++20 concepts modernization
+is completed: the to_json boolean overload is `concepts::boolean_like<T,B>`
+(the last pure-category overload left on enable_if). The main doctest suite
+is green (test-udt_cpp11 / test-serialization_cpp11 / test-conversions_cpp17
+/ test-concepts_dual_cpp20).
 Design:
 `docs/static-reflection/M5_REFLECTION_TO_JSON.md` (M5/M6),
 `docs/static-reflection/M4D_API_SURFACE.md` (M4D),
