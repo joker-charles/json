@@ -48,6 +48,7 @@
 #include <cstdlib>     // abort
 #include <cstring>     // memcpy
 #include <limits>      // numeric_limits
+#include <stdexcept>   // runtime_error (BSON top-level object check)
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -1012,4 +1013,877 @@ struct reflection_cbor_serializer
         }
     }
 };
+
+// ---------------------------------------------------------------------------
+// value_t -> binary-format byte-code tables (reflection-generated).
+//
+// Each table is indexed by the union SLOT index (0..7, the same indexing as
+// kStorage/kMemberIds: object, array, string, binary, boolean, number_integer,
+// number_unsigned, number_float) and holds the format's "primary" byte code
+// for that value type. 0xFF marks a value whose code is RANGE-DEPENDENT and
+// is therefore selected at runtime inside the writer action (e.g. MessagePack
+// fixnum/fixstr/fixarray vs the 8/16/32 forms, UBJSON int8..int64 narrowing,
+// BSON int32/int64 narrowing) — the writer's per-enumerator action handles
+// those. The tables are generated with the same consteval machinery as
+// kStorage/kMemberIds: the value_t -> slot mapping (slot_index) is the single
+// source of truth, so a value_t added without a slot_index specialization is
+// a compile error.
+// ---------------------------------------------------------------------------
+namespace refl_detail
+{
+// slot order matches the real json_value member list (see kMemberIds)
+constexpr std::array<value_t, 8> kSlotValueT =
+{
+    value_t::object, value_t::array, value_t::string, value_t::binary,
+    value_t::boolean, value_t::number_integer, value_t::number_unsigned,
+    value_t::number_float
+};
+
+// --- MessagePack: primary codes (0xFF = range-dependent) -------------------
+template<value_t V> struct msgpack_code
+{
+    static constexpr std::uint8_t value = 0xFF;
+};
+template<> struct msgpack_code<value_t::null> { static constexpr std::uint8_t value = 0xC0; }; // nil
+template<> struct msgpack_code<value_t::boolean> { static constexpr std::uint8_t value = 0xC3; }; // true; false is 0xC2
+template<> struct msgpack_code<value_t::string> { static constexpr std::uint8_t value = 0xD9; }; // str8; fixstr/str16/str32 are range-dependent
+template<> struct msgpack_code<value_t::array> { static constexpr std::uint8_t value = 0xDC; }; // array16; fixarray/array32 range-dependent
+template<> struct msgpack_code<value_t::object> { static constexpr std::uint8_t value = 0xDE; }; // map16; fixmap/map32 range-dependent
+template<> struct msgpack_code<value_t::binary> { static constexpr std::uint8_t value = 0xC4; }; // bin8; bin16/32 and ext/fixext variants
+template<> struct msgpack_code<value_t::number_float> { static constexpr std::uint8_t value = 0xCA; }; // float32; float64 is 0xCB
+// number_integer / number_unsigned: fully range-dependent (fixnum + uint/int 8..64)
+
+// --- UBJSON: primary codes ------------------------------------------------
+template<value_t V> struct ubjson_code
+{
+    static constexpr std::uint8_t value = 0xFF;
+};
+template<> struct ubjson_code<value_t::null> { static constexpr std::uint8_t value = 'Z'; };
+template<> struct ubjson_code<value_t::boolean> { static constexpr std::uint8_t value = 'T'; }; // false is 'F'
+template<> struct ubjson_code<value_t::string> { static constexpr std::uint8_t value = 'S'; };
+template<> struct ubjson_code<value_t::array> { static constexpr std::uint8_t value = '['; };
+template<> struct ubjson_code<value_t::object> { static constexpr std::uint8_t value = '{'; };
+template<> struct ubjson_code<value_t::binary> { static constexpr std::uint8_t value = '['; };
+template<> struct ubjson_code<value_t::number_float> { static constexpr std::uint8_t value = 'd'; }; // float32; float64 is 'D'
+// number_integer / number_unsigned: range-dependent ('i'/'U'/'I'/'l'/'L', 'H' high-precision)
+
+// --- BSON: element-type codes (all fixed except integer narrowing) --------
+template<value_t V> struct bson_code
+{
+    static constexpr std::uint8_t value = 0xFF;
+};
+template<> struct bson_code<value_t::object> { static constexpr std::uint8_t value = 0x03; };
+template<> struct bson_code<value_t::array> { static constexpr std::uint8_t value = 0x04; };
+template<> struct bson_code<value_t::string> { static constexpr std::uint8_t value = 0x02; };
+template<> struct bson_code<value_t::binary> { static constexpr std::uint8_t value = 0x05; };
+template<> struct bson_code<value_t::boolean> { static constexpr std::uint8_t value = 0x08; };
+template<> struct bson_code<value_t::null> { static constexpr std::uint8_t value = 0x0A; };
+template<> struct bson_code<value_t::number_integer> { static constexpr std::uint8_t value = 0x10; }; // int32; int64 is 0x12
+template<> struct bson_code<value_t::number_unsigned> { static constexpr std::uint8_t value = 0x10; }; // int32; int64/uint64 are 0x12/0x11
+template<> struct bson_code<value_t::number_float> { static constexpr std::uint8_t value = 0x01; };
+
+template<template<value_t> class CodeOf, std::size_t... I>
+consteval auto codes_impl(std::index_sequence<I...>)
+{
+    return std::array<std::uint8_t, sizeof...(I)> { CodeOf<kSlotValueT[I]>::value... };
+}
+} // namespace refl_detail
+
+// primary-code tables, one per binary format (indexed by union slot, 0..7)
+constexpr auto kMsgpackCodes =
+    refl_detail::codes_impl<refl_detail::msgpack_code>(std::make_index_sequence<8> {});
+constexpr auto kUbjsonCodes =
+    refl_detail::codes_impl<refl_detail::ubjson_code>(std::make_index_sequence<8> {});
+constexpr auto kBsonCodes =
+    refl_detail::codes_impl<refl_detail::bson_code>(std::make_index_sequence<8> {});
+
+// the tables cover exactly the 8 union slots; null/discarded have no slot
+static_assert(kMsgpackCodes.size() == 8 && kUbjsonCodes.size() == 8 && kBsonCodes.size() == 8,
+              "binary byte-code tables must cover every json_value member");
+static_assert(kUbjsonCodes[slot_index<value_t::null>::has ? 0 : 0] == kUbjsonCodes[0], "");
+
+// ---------------------------------------------------------------------------
+// Reflection-driven MessagePack writer.
+//
+// Same dispatch principle: value routing from the reflection enumerator set
+// (kValueTInfos) via `template for` + per-enumerator NTTP actions
+// (msgpack_one<V>); the primary byte codes come from the reflection-generated
+// kMsgpackCodes table, the range-dependent forms (fixnum/fixstr/fixarray/
+// fixmap, 8/16/32 width selection, ext/fixext binary) are selected inside the
+// action. Byte-level encoding replicates nlohmann's write_msgpack so the
+// output is byte-identical (differential-tested).
+// ---------------------------------------------------------------------------
+struct reflection_msgpack_serializer
+{
+    std::vector<std::uint8_t> out;
+
+    explicit reflection_msgpack_serializer(const basic_json_reflection& j)
+    {
+        dump(j);
+    }
+
+    std::string str() const
+    {
+        return std::string(out.begin(), out.end());
+    }
+    const std::vector<std::uint8_t>& bytes() const
+    {
+        return out;
+    }
+
+  private:
+    static bool little_endian()
+    {
+        const uint16_t x = 1;
+        return *reinterpret_cast<const uint8_t*>(&x) == 1;
+    }
+
+    template<typename T>
+    void append_big(T v)
+    {
+        const auto n = static_cast<std::size_t>(sizeof(T));
+        std::array<uint8_t, sizeof(T)> tmp{};
+        std::memcpy(tmp.data(), &v, n);
+        if (little_endian())
+        {
+            std::reverse(tmp.begin(), tmp.end());
+        }
+        out.insert(out.end(), tmp.begin(), tmp.end());
+    }
+
+    void dump(const basic_json_reflection& j)
+    {
+        const value_t t = j.type();
+        template for (constexpr auto r : kValueTInfos)
+        {
+            constexpr value_t V = static_cast<value_t>([: r :]);
+            if (t == V)
+            {
+                msgpack_one<V>(j);
+            }
+        }
+    }
+
+    template<value_t V>
+    void msgpack_one(const basic_json_reflection& j)
+    {
+        const auto& u = j.value();
+        if constexpr (V == value_t::null)
+        {
+            out.push_back(0xC0);
+        }
+        else if constexpr (V == value_t::boolean)
+        {
+            out.push_back(u.boolean ? 0xC3 : 0xC2);
+        }
+        else if constexpr (V == value_t::number_integer)
+        {
+            if (u.number_integer >= 0)
+            {
+                // MessagePack does not differentiate positive signed from
+                // unsigned integers — same code as number_unsigned
+                msgpack_unsigned(static_cast<std::uint64_t>(u.number_integer));
+            }
+            else
+            {
+                if (u.number_integer >= -32)
+                {
+                    // negative fixnum
+                    out.push_back(static_cast<std::uint8_t>(u.number_integer));
+                }
+                else if (u.number_integer >= (std::numeric_limits<std::int8_t>::min)())
+                {
+                    out.push_back(0xD0);
+                    out.push_back(static_cast<std::uint8_t>(u.number_integer));
+                }
+                else if (u.number_integer >= (std::numeric_limits<std::int16_t>::min)())
+                {
+                    out.push_back(0xD1);
+                    append_big(static_cast<std::int16_t>(u.number_integer));
+                }
+                else if (u.number_integer >= (std::numeric_limits<std::int32_t>::min)())
+                {
+                    out.push_back(0xD2);
+                    append_big(static_cast<std::int32_t>(u.number_integer));
+                }
+                else
+                {
+                    out.push_back(0xD3);
+                    append_big(static_cast<std::int64_t>(u.number_integer));
+                }
+            }
+        }
+        else if constexpr (V == value_t::number_unsigned)
+        {
+            msgpack_unsigned(u.number_unsigned);
+        }
+        else if constexpr (V == value_t::number_float)
+        {
+            msgpack_float(u.number_float);
+        }
+        else if constexpr (V == value_t::string)
+        {
+            msgpack_string(*u.string);
+        }
+        else if constexpr (V == value_t::array)
+        {
+            msgpack_array(*u.array);
+        }
+        else if constexpr (V == value_t::object)
+        {
+            msgpack_object(*u.object);
+        }
+        else if constexpr (V == value_t::binary)
+        {
+            msgpack_binary(*u.binary);
+        }
+        // null handled above; discarded: nothing (matches the library's
+        // default: break)
+    }
+
+    void msgpack_unsigned(const std::uint64_t n)
+    {
+        if (n < 128)
+        {
+            out.push_back(static_cast<std::uint8_t>(n)); // positive fixnum
+        }
+        else if (n <= (std::numeric_limits<std::uint8_t>::max)())
+        {
+            out.push_back(0xCC);
+            out.push_back(static_cast<std::uint8_t>(n));
+        }
+        else if (n <= (std::numeric_limits<std::uint16_t>::max)())
+        {
+            out.push_back(0xCD);
+            append_big(static_cast<std::uint16_t>(n));
+        }
+        else if (n <= (std::numeric_limits<std::uint32_t>::max)())
+        {
+            out.push_back(0xCE);
+            append_big(static_cast<std::uint32_t>(n));
+        }
+        else
+        {
+            out.push_back(0xCF);
+            append_big(static_cast<std::uint64_t>(n));
+        }
+    }
+
+    // replicate the library's write_compact_float (msgpack branch): float32
+    // when non-finite or exactly representable in float, else float64
+    void msgpack_float(const double n)
+    {
+        constexpr double F_MIN = static_cast<double>((std::numeric_limits<float>::lowest)());
+        constexpr double F_MAX = static_cast<double>((std::numeric_limits<float>::max)());
+        const bool use_float =
+            !std::isfinite(n) ||
+            (n >= F_MIN && n <= F_MAX &&
+             static_cast<double>(static_cast<float>(n)) == n);
+        if (use_float)
+        {
+            out.push_back(0xCA);
+            append_big(static_cast<float>(n));
+        }
+        else
+        {
+            out.push_back(0xCB);
+            append_big(n);
+        }
+    }
+
+    void msgpack_string(const std::string& s)
+    {
+        const auto N = s.size();
+        if (N <= 31)
+        {
+            out.push_back(static_cast<std::uint8_t>(0xA0 | N)); // fixstr
+        }
+        else if (N <= (std::numeric_limits<std::uint8_t>::max)())
+        {
+            out.push_back(0xD9);
+            out.push_back(static_cast<std::uint8_t>(N));
+        }
+        else if (N <= (std::numeric_limits<std::uint16_t>::max)())
+        {
+            out.push_back(0xDA);
+            append_big(static_cast<std::uint16_t>(N));
+        }
+        else
+        {
+            out.push_back(0xDB);
+            append_big(static_cast<std::uint32_t>(N));
+        }
+        out.insert(out.end(), s.begin(), s.end());
+    }
+
+    void msgpack_array(const json::array_t& arr)
+    {
+        const auto N = arr.size();
+        if (N <= 15)
+        {
+            out.push_back(static_cast<std::uint8_t>(0x90 | N)); // fixarray
+        }
+        else if (N <= (std::numeric_limits<std::uint16_t>::max)())
+        {
+            out.push_back(0xDC);
+            append_big(static_cast<std::uint16_t>(N));
+        }
+        else
+        {
+            out.push_back(0xDD);
+            append_big(static_cast<std::uint32_t>(N));
+        }
+        for (const auto& el : arr)
+        {
+            basic_json_reflection val;
+            val.assign_from(el);
+            dump(val);
+        }
+    }
+
+    void msgpack_object(const json::object_t& obj)
+    {
+        const auto N = obj.size();
+        if (N <= 15)
+        {
+            out.push_back(static_cast<std::uint8_t>(0x80 | (N & 0xF))); // fixmap
+        }
+        else if (N <= (std::numeric_limits<std::uint16_t>::max)())
+        {
+            out.push_back(0xDE);
+            append_big(static_cast<std::uint16_t>(N));
+        }
+        else
+        {
+            out.push_back(0xDF);
+            append_big(static_cast<std::uint32_t>(N));
+        }
+        for (const auto& el : obj)
+        {
+            msgpack_string(el.first); // MessagePack map keys are strings
+            basic_json_reflection val;
+            val.assign_from(el.second);
+            dump(val);
+        }
+    }
+
+    void msgpack_binary(const json::binary_t& bin)
+    {
+        const bool use_ext = bin.has_subtype();
+        const auto N = bin.size();
+        if (N <= (std::numeric_limits<std::uint8_t>::max)())
+        {
+            std::uint8_t output_type{};
+            bool fixed = true;
+            if (use_ext)
+            {
+                switch (N)
+                {
+                    case 1:
+                        output_type = 0xD4; // fixext 1
+                        break;
+                    case 2:
+                        output_type = 0xD5; // fixext 2
+                        break;
+                    case 4:
+                        output_type = 0xD6; // fixext 4
+                        break;
+                    case 8:
+                        output_type = 0xD7; // fixext 8
+                        break;
+                    case 16:
+                        output_type = 0xD8; // fixext 16
+                        break;
+                    default:
+                        output_type = 0xC7; // ext 8
+                        fixed = false;
+                        break;
+                }
+            }
+            else
+            {
+                output_type = 0xC4; // bin 8
+                fixed = false;
+            }
+            out.push_back(output_type);
+            if (!fixed)
+            {
+                out.push_back(static_cast<std::uint8_t>(N));
+            }
+        }
+        else if (N <= (std::numeric_limits<std::uint16_t>::max)())
+        {
+            out.push_back(use_ext ? 0xC8 : 0xC5); // ext 16 / bin 16
+            append_big(static_cast<std::uint16_t>(N));
+        }
+        else
+        {
+            out.push_back(use_ext ? 0xC9 : 0xC6); // ext 32 / bin 32
+            append_big(static_cast<std::uint32_t>(N));
+        }
+        if (use_ext)
+        {
+            out.push_back(static_cast<std::uint8_t>(bin.subtype()));
+        }
+        out.insert(out.end(), bin.begin(), bin.end());
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Reflection-driven UBJSON writer (no-optimization mode: use_count=false,
+// use_type=false, use_bjdata=false — the library's to_ubjson defaults).
+//
+// Primary byte codes from the reflection-generated kUbjsonCodes table;
+// number narrowing ('i'/'U'/'I'/'l'/'L', 'H' high-precision) is selected
+// inside the action. Byte-level encoding replicates nlohmann's write_ubjson
+// in the no-optimization mode so the output is byte-identical
+// (differential-tested). The optimized modes ('#'/'\$' prefixes, BJData) are
+// deliberately not implemented — see the coverage note in the docs.
+// ---------------------------------------------------------------------------
+struct reflection_ubjson_serializer
+{
+    std::vector<std::uint8_t> out;
+
+    explicit reflection_ubjson_serializer(const basic_json_reflection& j)
+    {
+        dump(j);
+    }
+
+    std::string str() const
+    {
+        return std::string(out.begin(), out.end());
+    }
+    const std::vector<std::uint8_t>& bytes() const
+    {
+        return out;
+    }
+
+  private:
+    static bool little_endian()
+    {
+        const uint16_t x = 1;
+        return *reinterpret_cast<const uint8_t*>(&x) == 1;
+    }
+
+    template<typename T>
+    void append_big(T v)
+    {
+        const auto n = static_cast<std::size_t>(sizeof(T));
+        std::array<uint8_t, sizeof(T)> tmp{};
+        std::memcpy(tmp.data(), &v, n);
+        if (little_endian())
+        {
+            std::reverse(tmp.begin(), tmp.end());
+        }
+        out.insert(out.end(), tmp.begin(), tmp.end());
+    }
+
+    void dump(const basic_json_reflection& j)
+    {
+        const value_t t = j.type();
+        template for (constexpr auto r : kValueTInfos)
+        {
+            constexpr value_t V = static_cast<value_t>([: r :]);
+            if (t == V)
+            {
+                ubjson_one<V>(j);
+            }
+        }
+    }
+
+    template<value_t V>
+    void ubjson_one(const basic_json_reflection& j)
+    {
+        const auto& u = j.value();
+        if constexpr (V == value_t::null)
+        {
+            out.push_back('Z');
+        }
+        else if constexpr (V == value_t::boolean)
+        {
+            out.push_back(u.boolean ? 'T' : 'F');
+        }
+        else if constexpr (V == value_t::number_integer)
+        {
+            ubjson_signed(u.number_integer);
+        }
+        else if constexpr (V == value_t::number_unsigned)
+        {
+            ubjson_unsigned(u.number_unsigned);
+        }
+        else if constexpr (V == value_t::number_float)
+        {
+            // UBJSON floats are NOT compacted: number_float_t is double,
+            // so the prefix is always 'D' + float64 (get_ubjson_float_prefix)
+            out.push_back('D');
+            append_big(u.number_float);
+        }
+        else if constexpr (V == value_t::string)
+        {
+            out.push_back('S');
+            ubjson_unsigned(static_cast<std::uint64_t>(u.string->size()));
+            out.insert(out.end(), u.string->begin(), u.string->end());
+        }
+        else if constexpr (V == value_t::array)
+        {
+            out.push_back('[');
+            for (const auto& el : *u.array)
+            {
+                basic_json_reflection val;
+                val.assign_from(el);
+                dump(val);
+            }
+            out.push_back(']');
+        }
+        else if constexpr (V == value_t::object)
+        {
+            out.push_back('{');
+            for (const auto& el : *u.object)
+            {
+                ubjson_unsigned(static_cast<std::uint64_t>(el.first.size()));
+                out.insert(out.end(), el.first.begin(), el.first.end());
+                basic_json_reflection val;
+                val.assign_from(el.second);
+                dump(val);
+            }
+            out.push_back('}');
+        }
+        else if constexpr (V == value_t::binary)
+        {
+            out.push_back('[');
+            // no-optimization mode: each byte with a 'U' prefix
+            for (const auto b : *u.binary)
+            {
+                out.push_back('U');
+                out.push_back(b);
+            }
+            out.push_back(']');
+        }
+        // discarded: nothing (matches the library's default: break)
+    }
+
+    // UBJSON number narrowing — two ladders replicated from
+    // write_number_with_ubjson_prefix (use_bjdata=false): the signed ladder
+    // (with an explicit 0 <= n <= u8_max middle rung — a negative value must
+    // never take the 'U' branch) and the unsigned ladder (values above
+    // int64 max fall to 'H' high-precision instead of overflowing the
+    // int64 conversion).
+    void ubjson_signed(const std::int64_t n)
+    {
+        if ((std::numeric_limits<std::int8_t>::min)() <= n && n <= (std::numeric_limits<std::int8_t>::max)())
+        {
+            out.push_back('i');
+            out.push_back(static_cast<std::uint8_t>(n));
+        }
+        else if (0 <= n && n <= static_cast<std::int64_t>((std::numeric_limits<std::uint8_t>::max)()))
+        {
+            out.push_back('U');
+            out.push_back(static_cast<std::uint8_t>(n));
+        }
+        else if ((std::numeric_limits<std::int16_t>::min)() <= n && n <= (std::numeric_limits<std::int16_t>::max)())
+        {
+            out.push_back('I');
+            append_big(static_cast<std::int16_t>(n));
+        }
+        else if ((std::numeric_limits<std::int32_t>::min)() <= n && n <= (std::numeric_limits<std::int32_t>::max)())
+        {
+            out.push_back('l');
+            append_big(static_cast<std::int32_t>(n));
+        }
+        else
+        {
+            out.push_back('L');
+            append_big(static_cast<std::int64_t>(n));
+        }
+    }
+
+    void ubjson_unsigned(const std::uint64_t n)
+    {
+        if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int8_t>::max)()))
+        {
+            out.push_back('i');
+            out.push_back(static_cast<std::uint8_t>(n));
+        }
+        else if (n <= (std::numeric_limits<std::uint8_t>::max)())
+        {
+            out.push_back('U');
+            out.push_back(static_cast<std::uint8_t>(n));
+        }
+        else if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int16_t>::max)()))
+        {
+            out.push_back('I');
+            append_big(static_cast<std::int16_t>(n));
+        }
+        else if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int32_t>::max)()))
+        {
+            out.push_back('l');
+            append_big(static_cast<std::int32_t>(n));
+        }
+        else if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)()))
+        {
+            out.push_back('L');
+            append_big(static_cast<std::int64_t>(n));
+        }
+        else
+        {
+            // high-precision number: 'H' + length + decimal-string dump
+            out.push_back('H');
+            const std::string num = json(n).dump();
+            ubjson_unsigned(static_cast<std::uint64_t>(num.size()));
+            out.insert(out.end(), num.begin(), num.end());
+        }
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Reflection-driven BSON writer.
+//
+// BSON is a document stream: the top-level value MUST be an object (the
+// library throws type_error 317 otherwise — replicated here), and every
+// element is [type-byte][name][0x00][value] with embedded little-endian
+// int32 length fields (documents, strings, arrays, binaries) computed by a
+// size pre-pass. Element type bytes come from the reflection-generated
+// kBsonCodes table; integer narrowing (int32/int64/uint64) is selected
+// inside the action. Byte-level encoding replicates nlohmann's write_bson so
+// the output is byte-identical (differential-tested).
+// ---------------------------------------------------------------------------
+struct reflection_bson_serializer
+{
+    std::vector<std::uint8_t> out;
+
+    explicit reflection_bson_serializer(const basic_json_reflection& j)
+    {
+        write_bson(j);
+    }
+
+    std::string str() const
+    {
+        return std::string(out.begin(), out.end());
+    }
+    const std::vector<std::uint8_t>& bytes() const
+    {
+        return out;
+    }
+
+  private:
+    static bool little_endian()
+    {
+        const uint16_t x = 1;
+        return *reinterpret_cast<const uint8_t*>(&x) == 1;
+    }
+
+    // little-endian (BSON)
+    template<typename T>
+    void append_little(T v)
+    {
+        const auto n = static_cast<std::size_t>(sizeof(T));
+        std::array<uint8_t, sizeof(T)> tmp{};
+        std::memcpy(tmp.data(), &v, n);
+        if (!little_endian())
+        {
+            std::reverse(tmp.begin(), tmp.end());
+        }
+        out.insert(out.end(), tmp.begin(), tmp.end());
+    }
+
+    static std::int32_t to_bson_length(const std::size_t size)
+    {
+        return static_cast<std::int32_t>(size);
+    }
+
+    void write_bson(const basic_json_reflection& j)
+    {
+        if (j.is_object())
+        {
+            bson_object(*j.value().object);
+            return;
+        }
+        throw std::runtime_error("to serialize to BSON, top-level type must be object, but is " +
+                                 std::string(j.type() == value_t::null ? "null" : "not object"));
+    }
+
+    void bson_object(const json::object_t& obj)
+    {
+        append_little(to_bson_length(calc_object_size(obj)));
+        for (const auto& el : obj)
+        {
+            bson_element(el.first, el.second);
+        }
+        out.push_back(0x00);
+    }
+
+    void bson_entry_header(const std::string& name, const std::uint8_t element_type)
+    {
+        out.push_back(element_type);
+        out.insert(out.end(), name.begin(), name.end());
+        out.push_back(0x00);
+    }
+
+    void bson_element(const std::string& name, const json& j)
+    {
+        basic_json_reflection val;
+        val.assign_from(j);
+        const value_t t = val.type();
+        template for (constexpr auto r : kValueTInfos)
+        {
+            constexpr value_t V = static_cast<value_t>([: r :]);
+            if (t == V)
+            {
+                bson_one<V>(name, val);
+            }
+        }
+    }
+
+    template<value_t V>
+    void bson_one(const std::string& name, const basic_json_reflection& j)
+    {
+        const auto& u = j.value();
+        if constexpr (V == value_t::object)
+        {
+            bson_entry_header(name, kBsonCodes[slot_index<value_t::object>::value]);
+            bson_object(*u.object);
+        }
+        else if constexpr (V == value_t::array)
+        {
+            bson_entry_header(name, kBsonCodes[slot_index<value_t::array>::value]);
+            append_little(to_bson_length(calc_array_size(*u.array)));
+            std::size_t idx = 0;
+            for (const auto& el : *u.array)
+            {
+                bson_element(std::to_string(idx++), el);
+            }
+            out.push_back(0x00);
+        }
+        else if constexpr (V == value_t::string)
+        {
+            bson_entry_header(name, kBsonCodes[slot_index<value_t::string>::value]);
+            append_little(to_bson_length(u.string->size() + 1ul));
+            out.insert(out.end(), u.string->begin(), u.string->end());
+            out.push_back(0x00);
+        }
+        else if constexpr (V == value_t::binary)
+        {
+            bson_entry_header(name, kBsonCodes[slot_index<value_t::binary>::value]);
+            append_little(to_bson_length(u.binary->size()));
+            out.push_back(u.binary->has_subtype() ? static_cast<std::uint8_t>(u.binary->subtype())
+                                                  : static_cast<std::uint8_t>(0x00));
+            out.insert(out.end(), u.binary->begin(), u.binary->end());
+        }
+        else if constexpr (V == value_t::boolean)
+        {
+            bson_entry_header(name, kBsonCodes[slot_index<value_t::boolean>::value]);
+            out.push_back(u.boolean ? 0x01 : 0x00);
+        }
+        else if constexpr (V == value_t::null)
+        {
+            // null has no union slot — its BSON element type is fixed 0x0A
+            bson_entry_header(name, 0x0A);
+        }
+        else if constexpr (V == value_t::number_integer)
+        {
+            const auto n = static_cast<std::int64_t>(u.number_integer);
+            if ((std::numeric_limits<std::int32_t>::min)() <= n && n <= (std::numeric_limits<std::int32_t>::max)())
+            {
+                bson_entry_header(name, 0x10); // int32
+                append_little(static_cast<std::int32_t>(n));
+            }
+            else
+            {
+                bson_entry_header(name, 0x12); // int64
+                append_little(static_cast<std::int64_t>(n));
+            }
+        }
+        else if constexpr (V == value_t::number_unsigned)
+        {
+            const auto n = static_cast<std::uint64_t>(u.number_unsigned);
+            if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int32_t>::max)()))
+            {
+                bson_entry_header(name, 0x10); // int32
+                append_little(static_cast<std::int32_t>(n));
+            }
+            else if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)()))
+            {
+                bson_entry_header(name, 0x12); // int64
+                append_little(static_cast<std::int64_t>(n));
+            }
+            else
+            {
+                bson_entry_header(name, 0x11); // uint64
+                append_little(static_cast<std::uint64_t>(n));
+            }
+        }
+        else if constexpr (V == value_t::number_float)
+        {
+            bson_entry_header(name, kBsonCodes[slot_index<value_t::number_float>::value]);
+            append_little(u.number_float);
+        }
+        // discarded: nothing (library's default JSON_ASSERT in debug, silent in release)
+    }
+
+    // --- size pre-pass (mirrors calc_bson_*_size) --------------------------
+    static std::size_t calc_element_size(const std::string& name, const json& j)
+    {
+        basic_json_reflection val;
+        val.assign_from(j);
+        const value_t t = val.type();
+        switch (t)
+        {
+            case value_t::object:
+                return name.size() + 2ul + calc_object_size(*val.value().object);
+            case value_t::array:
+                return name.size() + 2ul + calc_array_size(*val.value().array);
+            case value_t::string:
+                return name.size() + 2ul + sizeof(std::int32_t) + val.value().string->size() + 1ul;
+            case value_t::binary:
+                return name.size() + 2ul + sizeof(std::int32_t) + 1ul + val.value().binary->size();
+            case value_t::boolean:
+                return name.size() + 2ul + 1ul;
+            case value_t::null:
+                return name.size() + 2ul;
+            case value_t::number_integer:
+            {
+                const auto n = static_cast<std::int64_t>(val.value().number_integer);
+                return name.size() + 2ul +
+                       ((std::numeric_limits<std::int32_t>::min)() <= n && n <= (std::numeric_limits<std::int32_t>::max)()
+                        ? sizeof(std::int32_t) : sizeof(std::int64_t));
+            }
+            case value_t::number_unsigned:
+            {
+                const auto n = static_cast<std::uint64_t>(val.value().number_unsigned);
+                return name.size() + 2ul +
+                       (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int32_t>::max)())
+                        ? sizeof(std::int32_t)
+                        : (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)())
+                           ? sizeof(std::int64_t) : sizeof(std::uint64_t)));
+            }
+            case value_t::number_float:
+                return name.size() + 2ul + sizeof(double);
+            case value_t::discarded:
+            default:
+                return 0ul;
+        }
+    }
+
+    static std::size_t calc_object_size(const json::object_t& obj)
+    {
+        std::size_t s = 0;
+        for (const auto& el : obj)
+        {
+            s += calc_element_size(el.first, el.second);
+        }
+        return sizeof(std::int32_t) + s + 1ul;
+    }
+
+    static std::size_t calc_array_size(const json::array_t& arr)
+    {
+        std::size_t s = 0;
+        std::size_t idx = 0;
+        for (const auto& el : arr)
+        {
+            s += calc_element_size(std::to_string(idx++), el);
+        }
+        return sizeof(std::int32_t) + s + 1ul;
+    }
+};
+
 } // namespace rjson
