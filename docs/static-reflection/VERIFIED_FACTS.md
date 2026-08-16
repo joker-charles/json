@@ -170,3 +170,25 @@
     switches the whole enum to string mapping (unannotated enumerators fall
     back to `identifier_of`); a fully unannotated enum keeps the integer
     path byte-for-byte.
+- **Binary byte-code tables (M4B)** (verified by `m4_binary.cpp` differential
+  vs the real library's `to_msgpack`/`to_ubjson`/`to_bson`, byte-identical):
+  - The per-format primary byte-code tables (`kMsgpackCodes`/`kUbjsonCodes`/
+    `kBsonCodes`) are generated from the reflection value_t enumerator set
+    via the slot-index machinery (0xFF marks a range-dependent code selected
+    inside the writer action — MessagePack fixnum/fixstr/fixarray/fixmap and
+    8/16/32 width forms, UBJSON 'i'/'U'/'I'/'l'/'L' narrowing, BSON
+    int32/int64/uint64 narrowing).
+  - UBJSON negative integers must go through the SIGNED ladder: the 'U'
+    (uint8) rung requires `0 <= n <= u8_max` — a plain `n <= u8_max` test
+    wrongly routes -129..-33 into 'U' (real regression caught by the probe).
+    Unsigned values above int64 max fall to 'H' high-precision (decimal dump
+    with a length prefix) — never let them overflow an int64 conversion.
+  - UBJSON floats are NOT compacted: `number_float_t` is double, so the
+    prefix is always 'D' + float64 (unlike CBOR/MSGPACK's compact float32).
+  - BSON element header size is `1 + name.size() + 1` (type byte + name +
+    nul) — NOT `sizeof(int32) + ...`; the embedded int32 length fields are
+    separate (documents, strings, arrays, binaries) and BSON numbers are
+    little-endian. Top-level non-object throws (type_error 317 replicated).
+  - MessagePack binary with a subtype uses ext/fixext (0xC7-0xC9, 0xD4-0xD8)
+    with the subtype byte between the header and the payload; without a
+    subtype it is bin8/16/32 (0xC4-0xC6).

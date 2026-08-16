@@ -57,6 +57,9 @@ g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Iinclude \
   -o /tmp/per_r tests/static-reflection/probe_enum_reflection.cpp && /tmp/per_r
 g++-16 -std=c++26 -O1 -Iinclude \
   -o /tmp/per_b tests/static-reflection/probe_enum_reflection.cpp && /tmp/per_b
+# M4B binary byte-code tables: msgpack/ubjson(no-opt)/bson differential + ASan
+g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Iinclude \
+  -o /tmp/m4b tests/static-reflection/m4_binary.cpp && /tmp/m4b
 ```
 
 The full fixture list lives in `tests/static-reflection/`; each file documents

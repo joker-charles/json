@@ -94,7 +94,7 @@ bool is_ptr = std::is_pointer_v<M>;                       // 存储类别
 
 ### 2.3 ★★ 序列化/反序列化的类型分发矩阵
 
-`serializer::dump`（9 个 case）、`binary_writer`、`binary_reader` 的核心都是类型分发。M3 已在 `reflection_json.hpp` 中用反射驱动实现 JSON 文本 dump 与 CBOR 写出：值为分发用 **`template for(kValueTInfos)` + 每枚举 NTTP 动作（`dump_one<V>`/`cbor_one<V>`）**，替换手写 `switch (type)`；各二进制格式类型字节表（CBOR/MessagePack/UBJSON/BSON 各自给 `value_t` 一个字节码）同理可各化为一张 consteval 码表。这正是 skill「Reflection-driven serialization」里"反射驱动 wire codec"的正规用法。**尚未覆盖**：二进制读入、MessagePack/UBJSON/BSON 写出。
+`serializer::dump`（9 个 case）、`binary_writer`、`binary_reader` 的核心都是类型分发。M3 已在 `reflection_json.hpp` 中用反射驱动实现 JSON 文本 dump 与 CBOR 写出：值为分发用 **`template for(kValueTInfos)` + 每枚举 NTTP 动作（`dump_one<V>`/`cbor_one<V>`）**，替换手写 `switch (type)`；各二进制格式类型字节表（CBOR/MessagePack/UBJSON/BSON 各自给 `value_t` 一个字节码）同理可各化为一张 consteval 码表。这正是 skill「Reflection-driven serialization」里"反射驱动 wire codec"的正规用法。**已覆盖（M3 + M4B）**：CBOR（`reflection_cbor_serializer`）、MSGPACK/UBJSON（基础模式）/BSON（`reflection_msgpack_serializer`/`reflection_ubjson_serializer`/`reflection_bson_serializer`，主字节码来自反射生成的 `kMsgpackCodes`/`kUbjsonCodes`/`kBsonCodes` 表，值相关分级在每枚举动作内）——差分测试 `m3_binary.cpp`/`m4_binary.cpp` 与真库逐字节一致。**尚未覆盖**：二进制读入、UBJSON 优化模式（`'#'`/`'$'` 前缀）与 BJData。
 
 ### 2.4 ★★ `is_*` 类型判定与断言去重
 

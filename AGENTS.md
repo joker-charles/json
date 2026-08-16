@@ -33,8 +33,13 @@ is wired into `detail::{to,from}_json` as reflection-gated catch-alls
 bidirectionally with zero user code, replacing the NLOHMANN_DEFINE_TYPE_*
 macro family (Scenario B of EVALUATION.md); **M6**: enumerator-level
 `json_name` annotations replace NLOHMANN_JSON_SERIALIZE_ENUM (compile-time
-enumerator tables; unannotated enums keep the integer path, zero drift).
-Design: `docs/static-reflection/M5_REFLECTION_TO_JSON.md`; verified facts:
+enumerator tables; unannotated enums keep the integer path, zero drift);
+**M4B**: the remaining binary formats of the value_t -> byte-code tables
+milestone — reflection-driven MSGPACK / UBJSON (no-optimization mode) / BSON
+writers in `reflection_json.hpp` (primary codes from the reflection-generated
+`kMsgpackCodes`/`kUbjsonCodes`/`kBsonCodes` tables, differential-tested
+byte-identical by `m4_binary.cpp`). Design:
+`docs/static-reflection/M5_REFLECTION_TO_JSON.md`; verified facts:
 `docs/static-reflection/VERIFIED_FACTS.md`.
 
 ## 2. Safety boundaries (non-negotiable)
