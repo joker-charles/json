@@ -23,6 +23,9 @@
 # the committed measurement snapshots live under docs/static-reflection/data/)
 /.tmp/
 
+# agent workspace memory (session notes, not repo content)
+/.workbuddy/
+
 # fuzzers
 /tests/corpus_*
 /tests/parse_*_fuzzer
