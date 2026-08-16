@@ -51,12 +51,14 @@
 #include <algorithm>   // reverse
 #include <array>
 #include <cmath>       // isfinite, isinf, isnan, abs
+#include <compare>     // partial_ordering (value_t ordering table)
+#include <cstddef>     // ptrdiff_t (erase index arithmetic)
 #include <cstdint>
 #include <cstdio>      // snprintf
 #include <cstdlib>     // abort
 #include <cstring>     // memcpy
 #include <limits>      // numeric_limits
-#include <stdexcept>   // runtime_error (BSON top-level object check)
+#include <stdexcept>   // runtime_error, out_of_range (BSON check, at/erase bounds)
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -222,6 +224,160 @@ template<> struct slot_index<value_t::number_float>
 // range-based `template for` can iterate it (transient-vector rule).
 constexpr auto kValueTInfos =
     std::define_static_array(std::meta::enumerators_of(^^value_t));
+
+// ---------------------------------------------------------------------------
+// value_t name & ordering tables (reflection-generated; route a — identifier-
+// keyed consteval functions over the enumerator set, the repro_m1.cpp pattern
+// landed in the real header). These stand in for the library's hand-written
+// value_t.hpp order[] (weights) and json.hpp type_name() switch (display
+// names) inside THIS library: type ordering and type names are generated
+// from the enumerator set, so a new value_t enumerator shows up in the tables
+// automatically. The 10->8 partial mapping (null/discarded have no union
+// slot) is unchanged — discarded simply has no comparable weight.
+// ---------------------------------------------------------------------------
+namespace refl_detail
+{
+// identifier of the I-th value_t enumerator (transient-vector rule: subscript
+// the call directly, never bind the vector to a local constexpr)
+consteval std::string_view value_t_id_at(std::size_t i)
+{
+    return std::meta::identifier_of(std::meta::enumerators_of(^^value_t)[i]);
+}
+
+// display name with json.hpp type_name() semantics: the three number types
+// are all reported as "number"; every other type is its own identifier.
+consteval std::string_view value_t_display_name(std::string_view id)
+{
+    if (id == "number_integer" || id == "number_unsigned" || id == "number_float")
+    {
+        return "number";
+    }
+    return id;
+}
+
+// Python-like sort weight mirroring value_t.hpp order[]:
+//   null=0, boolean=1, number_*=2, object=3, array=4, string=5, binary=6,
+//   discarded is NOT comparable -> sentinel -1 (unordered).
+consteval int value_t_sort_weight(std::string_view id)
+{
+    if (id == "null")
+    {
+        return 0;
+    }
+    if (id == "boolean")
+    {
+        return 1;
+    }
+    if (id == "number_integer" || id == "number_unsigned" || id == "number_float")
+    {
+        return 2;
+    }
+    if (id == "object")
+    {
+        return 3;
+    }
+    if (id == "array")
+    {
+        return 4;
+    }
+    if (id == "string")
+    {
+        return 5;
+    }
+    if (id == "binary")
+    {
+        return 6;
+    }
+    return -1; // discarded
+}
+
+template<std::size_t... I>
+consteval auto value_t_names_impl(std::index_sequence<I...>)
+{
+    return std::array<std::string_view, sizeof...(I)> { value_t_id_at(I)... };
+}
+template<std::size_t... I>
+consteval auto value_t_type_names_impl(std::index_sequence<I...>)
+{
+    return std::array<std::string_view, sizeof...(I)> { value_t_display_name(value_t_id_at(I))... };
+}
+template<std::size_t... I>
+consteval auto value_t_weights_impl(std::index_sequence<I...>)
+{
+    return std::array<int, sizeof...(I)> { value_t_sort_weight(value_t_id_at(I))... };
+}
+} // namespace refl_detail
+
+// three parallel tables over the enumerator set, in enumeration order
+constexpr auto kValueTNames     = refl_detail::value_t_names_impl(
+    std::make_index_sequence<kValueTInfos.size()> {});
+constexpr auto kValueTTypeNames = refl_detail::value_t_type_names_impl(
+    std::make_index_sequence<kValueTInfos.size()> {});
+constexpr auto kValueTWeights   = refl_detail::value_t_weights_impl(
+    std::make_index_sequence<kValueTInfos.size()> {});
+
+// the tables must cover all enumerators — a value_t added without making it
+// into the tables is a compile error, never a silent ordering/name drift
+static_assert(kValueTNames.size() == 10 && kValueTTypeNames.size() == 10 &&
+              kValueTWeights.size() == 10,
+              "value_t name/weight tables must cover all 10 enumerators");
+// weights pinned to the hand-written value_t.hpp order[] (index = enumeration
+// order: null=0, object=1, array=2, string=3, boolean=4, number_integer=5,
+// number_unsigned=6, number_float=7, binary=8, discarded=9)
+static_assert(kValueTWeights[0] == 0 &&   // null
+              kValueTWeights[1] == 3 &&   // object
+              kValueTWeights[2] == 4 &&   // array
+              kValueTWeights[3] == 5 &&   // string
+              kValueTWeights[4] == 1 &&   // boolean
+              kValueTWeights[5] == 2 &&   // number_integer
+              kValueTWeights[6] == 2 &&   // number_unsigned
+              kValueTWeights[7] == 2 &&   // number_float
+              kValueTWeights[8] == 6 &&   // binary
+              kValueTWeights[9] == -1,    // discarded -> unordered
+              "value_t weights must match value_t.hpp order[]");
+// display names pinned to json.hpp type_name()
+static_assert(kValueTTypeNames[0] == "null" &&
+              kValueTTypeNames[1] == "object" &&
+              kValueTTypeNames[2] == "array" &&
+              kValueTTypeNames[3] == "string" &&
+              kValueTTypeNames[4] == "boolean" &&
+              kValueTTypeNames[5] == "number" &&
+              kValueTTypeNames[6] == "number" &&
+              kValueTTypeNames[7] == "number" &&
+              kValueTTypeNames[8] == "binary" &&
+              kValueTTypeNames[9] == "discarded",
+              "value_t display names must match json.hpp type_name()");
+
+namespace refl_detail
+{
+// weight of a value_t (-1 = discarded, unordered); table-driven
+[[nodiscard]] constexpr int value_t_weight(const value_t t) noexcept
+{
+    const auto idx = static_cast<std::size_t>(t);
+    return idx < kValueTWeights.size() ? kValueTWeights[idx] : -1;
+}
+
+// type ordering, replacing the hand-written value_t.hpp order[] comparison:
+// equal weights are equivalent; discarded (weight -1) is unordered — the
+// same partial_ordering semantics as value_t::operator<=>.
+[[nodiscard]] constexpr std::partial_ordering value_t_order(const value_t lhs,
+                                                             const value_t rhs) noexcept
+{
+    const int lw = value_t_weight(lhs);
+    const int rw = value_t_weight(rhs);
+    if (lw < 0 || rw < 0)
+    {
+        return std::partial_ordering::unordered;
+    }
+    return lw <=> rw;
+}
+
+// same semantics as value_t::operator< (is_lt): discarded is never less
+[[nodiscard]] constexpr bool value_t_less(const value_t lhs, const value_t rhs) noexcept
+{
+    return value_t_order(lhs, rhs) == std::partial_ordering::less;
+}
+} // namespace refl_detail
 
 // Per-enumerator construct/destroy actions, selected by tag dispatch to keep
 // GCC 16's `if constexpr` false-branch problem out of the picture.
@@ -520,6 +676,432 @@ struct basic_json_reflection
         }
         return false;
     }
+
+    // ---- M4D: per-enumerator clear action (table-driven over the
+    // enumerator set, same shape as construct_one/destroy_one) ----
+    template<value_t V>
+    void clear_one()
+    {
+        if constexpr (V == value_t::number_integer)
+        {
+            m_value.number_integer = 0;
+        }
+        else if constexpr (V == value_t::number_unsigned)
+        {
+            m_value.number_unsigned = 0;
+        }
+        else if constexpr (V == value_t::number_float)
+        {
+            m_value.number_float = 0.0;
+        }
+        else if constexpr (V == value_t::boolean)
+        {
+            m_value.boolean = false;
+        }
+        else if constexpr (V == value_t::string)
+        {
+            m_value.string->clear();
+        }
+        else if constexpr (V == value_t::binary)
+        {
+            m_value.binary->clear();
+        }
+        else if constexpr (V == value_t::array)
+        {
+            m_value.array->clear();
+        }
+        else if constexpr (V == value_t::object)
+        {
+            m_value.object->clear();
+        }
+        // null / discarded: nothing to clear (library's default: break)
+    }
+
+    // ---- M4D: comparison cores (replicate the library's
+    // JSON_IMPLEMENT_OPERATOR semantics; the non-legacy
+    // JSON_USE_LEGACY_DISCARDED_VALUE_COMPARISON mode — the default — is the
+    // one replicated here) ----
+    // true if the pair is unordered: NaN number vs any number, or any discarded
+    static bool compares_unordered(const basic_json_reflection& lhs,
+                                   const basic_json_reflection& rhs) noexcept
+    {
+        if ((lhs.is_number_float() && std::isnan(lhs.m_value.number_float) && rhs.is_number())
+                || (rhs.is_number_float() && std::isnan(rhs.m_value.number_float) && lhs.is_number()))
+        {
+            return true;
+        }
+        return lhs.is_discarded() || rhs.is_discarded();
+    }
+
+    static bool equal_core(const basic_json_reflection& lhs,
+                           const basic_json_reflection& rhs) noexcept
+    {
+        const value_t l = lhs.m_type;
+        const value_t r = rhs.m_type;
+        if (l == r)
+        {
+            switch (l)
+            {
+                case value_t::array:
+                    return *lhs.m_value.array == *rhs.m_value.array;
+                case value_t::object:
+                    return *lhs.m_value.object == *rhs.m_value.object;
+                case value_t::null:
+                    return true;
+                case value_t::string:
+                    return *lhs.m_value.string == *rhs.m_value.string;
+                case value_t::boolean:
+                    return lhs.m_value.boolean == rhs.m_value.boolean;
+                case value_t::number_integer:
+                    return lhs.m_value.number_integer == rhs.m_value.number_integer;
+                case value_t::number_unsigned:
+                    return lhs.m_value.number_unsigned == rhs.m_value.number_unsigned;
+                case value_t::number_float:
+                    return lhs.m_value.number_float == rhs.m_value.number_float; // *NOPAD* float-equal is intended
+                case value_t::binary:
+                    return *lhs.m_value.binary == *rhs.m_value.binary;
+                case value_t::discarded:
+                default:
+                    return false;
+            }
+        }
+        if (l == value_t::number_integer && r == value_t::number_float)
+        {
+            return static_cast<json::number_float_t>(lhs.m_value.number_integer) == rhs.m_value.number_float;
+        }
+        if (l == value_t::number_float && r == value_t::number_integer)
+        {
+            return lhs.m_value.number_float == static_cast<json::number_float_t>(rhs.m_value.number_integer);
+        }
+        if (l == value_t::number_unsigned && r == value_t::number_float)
+        {
+            return static_cast<json::number_float_t>(lhs.m_value.number_unsigned) == rhs.m_value.number_float;
+        }
+        if (l == value_t::number_float && r == value_t::number_unsigned)
+        {
+            return lhs.m_value.number_float == static_cast<json::number_float_t>(rhs.m_value.number_unsigned);
+        }
+        if (l == value_t::number_unsigned && r == value_t::number_integer)
+        {
+            // negative signed < any unsigned: preserve the ordering relationship
+            return (rhs.m_value.number_integer < 0)
+                   ? (static_cast<json::number_integer_t>(1) == static_cast<json::number_integer_t>(-1))
+                   : (lhs.m_value.number_unsigned == static_cast<json::number_unsigned_t>(rhs.m_value.number_integer));
+        }
+        if (l == value_t::number_integer && r == value_t::number_unsigned)
+        {
+            return (lhs.m_value.number_integer < 0)
+                   ? (static_cast<json::number_integer_t>(-1) == static_cast<json::number_integer_t>(1))
+                   : (static_cast<json::number_unsigned_t>(lhs.m_value.number_integer) == rhs.m_value.number_unsigned);
+        }
+        return false; // default_result for ==
+    }
+
+    static bool less_core(const basic_json_reflection& lhs,
+                          const basic_json_reflection& rhs) noexcept
+    {
+        const value_t l = lhs.m_type;
+        const value_t r = rhs.m_type;
+        if (l == r)
+        {
+            switch (l)
+            {
+                case value_t::array:
+                    return *lhs.m_value.array < *rhs.m_value.array;
+                case value_t::object:
+                    return *lhs.m_value.object < *rhs.m_value.object;
+                case value_t::null:
+                    return false;
+                case value_t::string:
+                    return *lhs.m_value.string < *rhs.m_value.string;
+                case value_t::boolean:
+                    return lhs.m_value.boolean < rhs.m_value.boolean;
+                case value_t::number_integer:
+                    return lhs.m_value.number_integer < rhs.m_value.number_integer;
+                case value_t::number_unsigned:
+                    return lhs.m_value.number_unsigned < rhs.m_value.number_unsigned;
+                case value_t::number_float:
+                    return lhs.m_value.number_float < rhs.m_value.number_float;
+                case value_t::binary:
+                    return *lhs.m_value.binary < *rhs.m_value.binary;
+                case value_t::discarded:
+                default:
+                    return false;
+            }
+        }
+        if (l == value_t::number_integer && r == value_t::number_float)
+        {
+            return static_cast<json::number_float_t>(lhs.m_value.number_integer) < rhs.m_value.number_float;
+        }
+        if (l == value_t::number_float && r == value_t::number_integer)
+        {
+            return lhs.m_value.number_float < static_cast<json::number_float_t>(rhs.m_value.number_integer);
+        }
+        if (l == value_t::number_unsigned && r == value_t::number_float)
+        {
+            return static_cast<json::number_float_t>(lhs.m_value.number_unsigned) < rhs.m_value.number_float;
+        }
+        if (l == value_t::number_float && r == value_t::number_unsigned)
+        {
+            return lhs.m_value.number_float < static_cast<json::number_float_t>(rhs.m_value.number_unsigned);
+        }
+        if (l == value_t::number_unsigned && r == value_t::number_integer)
+        {
+            return (rhs.m_value.number_integer < 0)
+                   ? (static_cast<json::number_integer_t>(1) < static_cast<json::number_integer_t>(-1))
+                   : (lhs.m_value.number_unsigned < static_cast<json::number_unsigned_t>(rhs.m_value.number_integer));
+        }
+        if (l == value_t::number_integer && r == value_t::number_unsigned)
+        {
+            return (lhs.m_value.number_integer < 0)
+                   ? (static_cast<json::number_integer_t>(-1) < static_cast<json::number_integer_t>(1))
+                   : (static_cast<json::number_unsigned_t>(lhs.m_value.number_integer) < rhs.m_value.number_unsigned);
+        }
+        if (compares_unordered(lhs, rhs))
+        {
+            return false;
+        }
+        return refl_detail::value_t_less(l, r); // reflection-generated ordering
+    }
+
+  public:
+    // ---- M4D: completed tagged-union API surface ----
+
+    // --- type name (reflection-generated display table; replaces the
+    // hand-written type_name() switch) ---
+    [[nodiscard]] const char* type_name() const noexcept
+    {
+        const auto idx = static_cast<std::size_t>(m_type);
+        return idx < kValueTTypeNames.size() ? kValueTTypeNames[idx].data() : "invalid";
+    }
+
+    // --- size / empty (library semantics: containers report their element
+    // count, null is empty, every other type counts as a single element) ---
+    [[nodiscard]] std::size_t size() const noexcept
+    {
+        if (is_null())
+        {
+            return 0;
+        }
+        if (is_array())
+        {
+            return m_value.array->size();
+        }
+        if (is_object())
+        {
+            return m_value.object->size();
+        }
+        return 1; // string/boolean/numbers/binary/discarded
+    }
+
+    [[nodiscard]] bool empty() const noexcept
+    {
+        if (is_null())
+        {
+            return true;
+        }
+        if (is_array())
+        {
+            return m_value.array->empty();
+        }
+        if (is_object())
+        {
+            return m_value.object->empty();
+        }
+        return false; // string/boolean/numbers/binary/discarded
+    }
+
+    // --- element access with bounds checking (at) ---
+    [[nodiscard]] json& at(const std::size_t idx)
+    {
+        if (!is_array())
+        {
+            throw std::runtime_error(std::string("cannot use at() with ") + type_name());
+        }
+        return m_value.array->at(idx); // throws std::out_of_range out of bounds
+    }
+
+    [[nodiscard]] const json& at(const std::size_t idx) const
+    {
+        if (!is_array())
+        {
+            throw std::runtime_error(std::string("cannot use at() with ") + type_name());
+        }
+        return m_value.array->at(idx);
+    }
+
+    [[nodiscard]] json& at(const json::object_t::key_type& key)
+    {
+        if (!is_object())
+        {
+            throw std::runtime_error(std::string("cannot use at() with ") + type_name());
+        }
+        const auto it = m_value.object->find(key);
+        if (it == m_value.object->end())
+        {
+            throw std::out_of_range("key '" + key + "' not found");
+        }
+        return it->second;
+    }
+
+    [[nodiscard]] const json& at(const json::object_t::key_type& key) const
+    {
+        if (!is_object())
+        {
+            throw std::runtime_error(std::string("cannot use at() with ") + type_name());
+        }
+        const auto it = m_value.object->find(key);
+        if (it == m_value.object->end())
+        {
+            throw std::out_of_range("key '" + key + "' not found");
+        }
+        return it->second;
+    }
+
+    // --- erase (key form for objects, index form for arrays; the iterator
+    // forms await the iterators milestone) ---
+    std::size_t erase(const json::object_t::key_type& key)
+    {
+        if (!is_object())
+        {
+            throw std::runtime_error(std::string("cannot use erase() with ") + type_name());
+        }
+        return m_value.object->erase(key);
+    }
+
+    void erase(const std::size_t idx)
+    {
+        if (!is_array())
+        {
+            throw std::runtime_error(std::string("cannot use erase() with ") + type_name());
+        }
+        if (idx >= size())
+        {
+            throw std::out_of_range("array index " + std::to_string(idx) + " is out of range");
+        }
+        m_value.array->erase(m_value.array->begin() + static_cast<std::ptrdiff_t>(idx));
+    }
+
+    // --- clear (table-driven: per-enumerator action over the enumerator set,
+    // so a new value_t shows up here exactly like in construct/destroy) ---
+    void clear() noexcept
+    {
+        template for (constexpr auto r : kValueTInfos)
+        {
+            constexpr value_t V = static_cast<value_t>([: r :]);
+            if (m_type == V)
+            {
+                clear_one<V>();
+            }
+        }
+    }
+
+    // --- swap ---
+    void swap(basic_json_reflection& other) noexcept
+    {
+        // the real json_value has only trivial members, so swapping the union
+        // is a bitwise exchange — the same operation the real library's swap
+        // performs on its own json_value
+        std::swap(m_type, other.m_type);
+        std::swap(m_value, other.m_value);
+    }
+
+    friend void swap(basic_json_reflection& left, basic_json_reflection& right) noexcept
+    {
+        left.swap(right);
+    }
+
+    void swap(json::array_t& other)
+    {
+        if (!is_array())
+        {
+            throw std::runtime_error(std::string("cannot use swap(array_t&) with ") + type_name());
+        }
+        using std::swap;
+        swap(*m_value.array, other);
+    }
+
+    void swap(json::object_t& other)
+    {
+        if (!is_object())
+        {
+            throw std::runtime_error(std::string("cannot use swap(object_t&) with ") + type_name());
+        }
+        using std::swap;
+        swap(*m_value.object, other);
+    }
+
+    void swap(json::string_t& other)
+    {
+        if (!is_string())
+        {
+            throw std::runtime_error(std::string("cannot use swap(string_t&) with ") + type_name());
+        }
+        using std::swap;
+        swap(*m_value.string, other);
+    }
+
+    void swap(json::binary_t& other)
+    {
+        if (!is_binary())
+        {
+            throw std::runtime_error(std::string("cannot use swap(binary_t&) with ") + type_name());
+        }
+        using std::swap;
+        swap(*m_value.binary, other);
+    }
+
+    void swap(json::binary_t::container_type& other)
+    {
+        if (!is_binary())
+        {
+            throw std::runtime_error(std::string("cannot use swap(binary_t::container_type&) with ") + type_name());
+        }
+        using std::swap;
+        swap(*m_value.binary, other);
+    }
+
+    // --- lexicographical comparison operators (friend; replicate the
+    // library's observable semantics incl. NaN/discarded unordered, with the
+    // reflection-generated value_t weight table as the cross-type ordering) ---
+    friend bool operator==(const basic_json_reflection& lhs, const basic_json_reflection& rhs) noexcept
+    {
+        return equal_core(lhs, rhs);
+    }
+    friend bool operator!=(const basic_json_reflection& lhs, const basic_json_reflection& rhs) noexcept
+    {
+        return !(lhs == rhs);
+    }
+    friend bool operator<(const basic_json_reflection& lhs, const basic_json_reflection& rhs) noexcept
+    {
+        return less_core(lhs, rhs);
+    }
+    friend bool operator<=(const basic_json_reflection& lhs, const basic_json_reflection& rhs) noexcept
+    {
+        // the library passes inverse=true here, which only matters under
+        // JSON_USE_LEGACY_DISCARDED_VALUE_COMPARISON (not replicated)
+        if (compares_unordered(lhs, rhs))
+        {
+            return false;
+        }
+        return !(rhs < lhs);
+    }
+    friend bool operator>(const basic_json_reflection& lhs, const basic_json_reflection& rhs) noexcept
+    {
+        if (compares_unordered(lhs, rhs))
+        {
+            return false;
+        }
+        return !(lhs <= rhs);
+    }
+    friend bool operator>=(const basic_json_reflection& lhs, const basic_json_reflection& rhs) noexcept
+    {
+        if (compares_unordered(lhs, rhs))
+        {
+            return false;
+        }
+        return !(lhs < rhs);
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -687,14 +1269,11 @@ struct reflection_serializer
     {
         // match the library's default dump for integral floats / general
         char tmp[48];
-        if (std::isnan(f))
+        if (!std::isfinite(f))
         {
+            // the library dumps NaN AND +/-inf as "null" (dump_float,
+            // serializer.hpp: `if (!std::isfinite(x)) { write "null"; }`)
             out += "null";
-            return;
-        }
-        if (std::isinf(f))
-        {
-            out += f > 0 ? "1e+999" : "-1e+999";
             return;
         }
         if (std::signbit(f) && f == 0.0)
