@@ -92,11 +92,13 @@
 #include <array>      // array (compile-time key storage)
 #include <charconv>   // from_chars
 #include <cstdio>     // fprintf, abort (fixed-size from_json size mismatch)
+#include <forward_list> // is_library_dedicated_array (front_inserter from_json)
 #include <optional>   // is_optional (C++23 begin/end misclassification guard)
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <valarray>   // is_library_dedicated_array (resize from_json)
 #include <variant>    // is_variant, variant_alternative_t (M7)
 
 #include <nlohmann/adl_serializer.hpp>
@@ -349,6 +351,23 @@ decltype(std::begin(std::declval<const T&>())),
 decltype(std::end(std::declval<const T&>())),
          typename T::value_type>>
              : std::bool_constant < !is_object_like<T>::value && !is_optional<T>::value > {};
+
+// Types that are array_like but which the library has DEDICATED overloads for
+// (not the generic array path). The refl2 array branch must NOT intercept
+// them — it would mis-handle each one:
+//   * B::binary_t        -> would serialize as a number array, not
+//                           {"bytes":[...],"subtype":...}
+//   * std::forward_list  -> from_json has no size/operator[] (needs
+//                           front_inserter; the array branch's three-way
+//                           push_back/insert/fixed-size dispatch all miss)
+//   * std::valarray      -> from_json has no push_back/insert; the fixed-size
+//                           branch aborts on the default-constructed size 0
+// They route through the adl branch (the library's own overloads) instead.
+template<typename B, typename T>
+inline constexpr bool is_library_dedicated_array =
+    std::is_same<std::remove_cvref_t<T>, typename B::binary_t>::value
+    || nlohmann::detail::is_specialization_of<std::forward_list, std::remove_cvref_t<T>>::value
+    || nlohmann::detail::is_specialization_of<std::valarray, std::remove_cvref_t<T>>::value;
 
 // --- adl_serializer-based detection (the library's own customization
 // surface is adl_serializer<T, void> — json_serializer<T, void>) -----------
@@ -614,13 +633,20 @@ template<std::size_t N> struct priority_tag : priority_tag < N - 1 > {};
 template<> struct priority_tag<0> {};
 
 // Eligibility for the adl branch. Containers (array-like, except strings;
-// object-like) and non-string C arrays are ALWAYS handled elsewhere:
-// nlohmann's from_json detection over-accepts object/array-like types whose
-// element/value types are not really gettable (e.g. map<string, PlainStruct>
-// — get<pair<const string, PlainStruct>> looks viable to the tuple machinery
-// but breaks on instantiation), and its C-array to_json path breaks on
-// non-constructible elements. Element recursion is behavior-identical for
-// everything nlohmann handles and additionally covers plain reflected structs.
+// object-like) are handled by the refl2 array/object branches so plain
+// reflected structs can be element/value types: nlohmann's from_json detection
+// over-accepts object/array-like types whose element/value types are not
+// really gettable (e.g. map<string, PlainStruct> — get<pair<const string,
+// PlainStruct>> looks viable to the tuple machinery but breaks on
+// instantiation). Element recursion is behavior-identical for everything
+// nlohmann handles and additionally covers plain reflected structs.
+//
+// The array-like / C-array exclusions carve out the types nlohmann has
+// DEDICATED overloads for (is_library_dedicated_array: binary_t, forward_list,
+// valarray) and C arrays — those route through the adl branch (the library's
+// own overloads) because the generic refl2 array branch would mis-handle them
+// (binary_t as a number array, forward_list/valarray from_json). C arrays are
+// no longer excluded (they now reach the library's C-array overloads).
 //
 // The trailing exclusion is the CIRCULARITY fix: a catch-all-eligible type
 // whose adl_serializer is the primary template must NOT take the adl branch —
@@ -632,16 +658,16 @@ template<typename B, typename T>
 inline constexpr bool to_adl_branch_eligible_v =
     is_adl_serializable<B, T>::value
     && !is_object_like<T>::value
-    && !(is_array_like<T>::value && !is_string_like_to<B, T>::value)
-    && !(std::is_array<T>::value && !is_string_like_to<B, T>::value)
+    && !(is_array_like<T>::value && !is_string_like_to<B, T>::value
+         && !is_library_dedicated_array<B, T>)
     && !(to_json_eligible<B, T>::value && adl_serializer_is_primary<B, T>::value);
 
 template<typename B, typename T>
 inline constexpr bool from_adl_branch_eligible_v =
     is_adl_deserializable<B, T>::value
     && !is_object_like<T>::value
-    && !(is_array_like<T>::value && !is_string_like_from<B, T>::value)
-    && !(std::is_array<T>::value && !is_string_like_from<B, T>::value)
+    && !(is_array_like<T>::value && !is_string_like_from<B, T>::value
+         && !is_library_dedicated_array<B, T>)
     && !(from_json_eligible<B, T>::value && adl_serializer_is_primary<B, T>::value);
 
 template<bool U, typename T>
@@ -890,7 +916,7 @@ struct codec
     }
 
     template<typename B, typename T>
-    requires detail::is_array_like<T>::value
+    requires (detail::is_array_like<T>::value && !detail::is_library_dedicated_array<B, T>)
     static void serialize_one_impl(B& j, const T& v, detail::priority_tag<3>)
     {
         j = B::array();
@@ -1020,7 +1046,7 @@ struct codec
     }
 
     template<typename B, typename T>
-    requires detail::is_array_like<T>::value
+    requires (detail::is_array_like<T>::value && !detail::is_library_dedicated_array<B, T>)
     static void deserialize_one_impl(const B& j, T& v, detail::priority_tag<3>)
     {
         if constexpr (requires { v.push_back(typename T::value_type{}); })
