@@ -27,6 +27,16 @@
     indirectly-obtained type reports "not a complete class type". So the
     `json_value_mirror` route is a workaround, not a hard requirement; a
     consteval-helper design can reflect the real `json_value` directly.
+    **M4C: the mirror is gone** — `reflection_json.hpp` now HOLDS the spliced
+    real `json_value` as its storage carrier (it is usable directly because:
+    (1) the real union has NO user-declared destructor — trivial union, heap
+    release is `data::destroy`'s manual job; (2) union members default to
+    PUBLIC, so `u.object = new ...` direct member access compiles; (3)
+    `json_value() = default` + `{}` value-init zeroes the first member, no
+    allocation). The former "mirror avoids the real union's heap-allocation
+    constructor contract" rationale does not hold — `json_value()` never
+    allocates and `json_value(value_t)` is simply not used (construction is
+    manual, same as before).
   - `nonstatic_data_members_of` works on a union; `is_pointer_v<type_of(m)>`
     classifies storage category.
   - Reflection queries returning a `std::vector` are **transient**: subscript/

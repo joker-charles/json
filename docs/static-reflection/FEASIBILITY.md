@@ -202,7 +202,7 @@ bool is_ptr = std::is_pointer_v<M>;                       // 存储类别
 | `template for` **内联**里枚举同一类型 | ❌ `not a complete class type`（**GCC 16 关键陷阱**） |
 | splice 构造 / 读写成员 / 分配释放指针成员 | ✅ 全通过（`value_t` 带参构造、`number_integer`/`string`/`boolean` 读写） |
 
-**结论**：`json_value_mirror` 镜像 union 是**当时 `template for` 内联路径受限下的务实选择，不是硬性要求**。若用 **consteval helper 函数**（而非 `template for` 内联）做反射枚举，可直接驱动真实 `basic_json::json_value`——省掉镜像，也消除"镜像与真实布局漂移"风险（m2_diff 的差分负担随之消失）。§5 里程碑 3 的镜像路线可升级为"consteval 直接反射真实 union"。
+**结论**：`json_value_mirror` 镜像 union 是**当时 `template for` 内联路径受限下的务实选择，不是硬性要求**。若用 **consteval helper 函数**（而非 `template for` 内联）做反射枚举，可直接驱动真实 `basic_json::json_value`——省掉镜像，也消除"镜像与真实布局漂移"风险（m2_diff 的差分负担随之消失）。§5 里程碑 3 的镜像路线可升级为"consteval 直接反射真实 union"。**已升级（M4C）**：`reflection_json.hpp` 已删除镜像层，`basic_json_reflection` 直接持有 splice 出的真实 `json_value` 作为存储载体（真实 union 无用户析构、成员默认公有、`json_value() = default` + `{}` 零初始化不分配——三条新事实见 `VERIFIED_FACTS.md`）；m2_diff/m3_dump/m3_binary/m4_binary/m4b_bson_reader 全部差分测试重跑逐字节等价、ASan 无泄漏。
 
 ---
 
@@ -214,7 +214,7 @@ bool is_ptr = std::is_pointer_v<M>;                       // 存储类别
    验证：枚举计数/名称表、标识符键控权重表（对主库 `order[]` 语义）、值 splice、range `template for` + `define_static_array`。产物：编译期"名称/权重"表，可直接替换 `operator<=>` 手写 order 表。
 3. **M2 反射化 tagged union 分发 ✓**：前提已实证，产物已完成——
    - `tests/static-reflection/m2_table.cpp`：实证 `json_value` 私有、**直接命名** splice 不可引用（当时据此选镜像路线），生成 `value_t ⇄ 镜像成员 ⇄ 存储类别` 单源表；后续 `probe_real_json_value.cpp`（§4.5）证明经成员 `type_of` 间接获得 + consteval 枚举可行，镜像路线可升级为直接反射真实 union。
-   - `include/nlohmann/reflection_json.hpp`：独立 C++26 头，`basic_json_reflection` 用 `kStorage`（反射表）+ `slot_index<V>` + `template for` 遍历全部 `value_t` 枚举驱动默认构造/destroy/invariant，**新增 value_t 未接线即编译错误**（完整性保证）。
+   - `include/nlohmann/reflection_json.hpp`：独立 C++26 头，`basic_json_reflection` 用 `kStorage`（反射表）+ `slot_index<V>` + `template for` 遍历全部 `value_t` 枚举驱动默认构造/destroy/invariant，**新增 value_t 未接线即编译错误**（完整性保证）。**M4C 已升级**：存储载体从 `json_value_mirror` 换成 splice 出的真实 `json_value`（镜像层删除）。
    - `tests/static-reflection/m2_diff.cpp`：差分测试 vs 主库逐字节等价（含 `is_number_unsigned` 也计为 integer 的语义），ASan 下 `destroy` 无泄漏。**PASSED**。
 4. **M3 序列化表驱动 ✓**：`reflection_json.hpp` 新增两个反射驱动序列化器——
    - `reflection_serializer`：JSON 文本 dump。值分发由 `template for(kValueTInfos)` + NTTP `dump_one<V>` 驱动（无手写 switch on type），复刻对象/数组递归、字符串转义、数字格式、二进制结构、`<discarded>` 特殊输出。
