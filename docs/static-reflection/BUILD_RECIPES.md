@@ -60,6 +60,9 @@ g++-16 -std=c++26 -O1 -Iinclude \
 # M4B binary byte-code tables: msgpack/ubjson(no-opt)/bson differential + ASan
 g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Iinclude \
   -o /tmp/m4b tests/static-reflection/m4_binary.cpp && /tmp/m4b
+# M4B-2 BSON reader: read differential vs from_bson + negatives + ASan
+g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Isingle_include -Iinclude \
+  -o /tmp/m4b2 tests/static-reflection/m4b_bson_reader.cpp && /tmp/m4b2
 ```
 
 The full fixture list lives in `tests/static-reflection/`; each file documents

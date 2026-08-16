@@ -38,7 +38,11 @@ enumerator tables; unannotated enums keep the integer path, zero drift);
 milestone — reflection-driven MSGPACK / UBJSON (no-optimization mode) / BSON
 writers in `reflection_json.hpp` (primary codes from the reflection-generated
 `kMsgpackCodes`/`kUbjsonCodes`/`kBsonCodes` tables, differential-tested
-byte-identical by `m4_binary.cpp`). Design:
+byte-identical by `m4_binary.cpp`); **M4B-2**: the BSON READ direction —
+`reflection_bson_parser` dispatches element types through the
+reflection-generated `kBsonsLoad` reverse table (byte code -> {union slot,
+payload kind}), the mirror image of the writer, differential-tested
+byte-identical by `m4b_bson_reader.cpp`. Design:
 `docs/static-reflection/M5_REFLECTION_TO_JSON.md`; verified facts:
 `docs/static-reflection/VERIFIED_FACTS.md`.
 

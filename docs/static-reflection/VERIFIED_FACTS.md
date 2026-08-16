@@ -192,3 +192,29 @@
   - MessagePack binary with a subtype uses ext/fixext (0xC7-0xC9, 0xD4-0xD8)
     with the subtype byte between the header and the payload; without a
     subtype it is bin8/16/32 (0xC4-0xC6).
+- **BSON read direction (M4B-2)** (verified by `m4b_bson_reader.cpp`
+  differential vs the real library's `from_bson`, byte-identical on legal
+  input):
+  - The reverse table `kBsonsLoad` maps the raw element-type byte to
+    `{union slot, payload kind}` — one MORE dimension than the writer
+    tables, because BSON 0x10 (int32) and 0x12 (int64) both map to
+    `number_integer` but carry different payload widths. Table entries are
+    generated from 9 consteval specializations; unused bytes are invalid;
+    completeness is static_asserted (each entry's slot matches the writer's
+    `kBsonCodes` / `slot_index`).
+  - BSON framing: [int32 document size][elements][0x00]; an element is
+    [type byte][cstr name][0x00][payload]; strings carry [int32 len][len-1
+    bytes][0x00] (the declared length INCLUDES the terminator); binaries
+    [int32 len][1-byte subtype][len bytes]; array documents ignore their
+    keys (position-based, matching the library); the declared document size
+    must equal the bytes consumed. A minimal document {0x05,0,0,0,0} is
+    LEGAL (4-byte size + 1-byte terminator) — both sides parse it as {}.
+  - `byte_container_with_subtype` (json::binary_t) has NO iterator-pair
+    constructor — build the container first, then the wrapper.
+  - `enum class X : std::uint8_t` with `invalid = 0xFF` FIRST overflows at
+    the next enumerator (255 -> 256) — put 0xFF sentinels LAST.
+  - The reader's errors fail safely (false + diagnostic) but do NOT match
+    the library's parse_error codes — differential coverage is legal input
+    only (documented boundary).
+  - The reflection serializer's dump previously rendered -0.0 as "0.0";
+    fixed to match the library ("-0.0", std::signbit check).
