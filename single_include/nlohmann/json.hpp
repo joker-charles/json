@@ -5311,9 +5311,10 @@ concept integral_not_bool =
     std::is_integral_v<std::remove_cvref_t<T>> &&
     !std::is_same_v<std::remove_cvref_t<T>, bool>;
 
-template<typename T>
-concept boolean_like =
-    std::is_same_v<std::remove_cvref_t<T>, bool>;
+// NOTE: integral_not_bool has no safe use point and is deliberately NOT wired
+// into any overload (see M4_ASSESSMENT §5): replacing
+// is_compatible_integer_type<B::number_*, T> with a pure is_integral would
+// over-accept mismatched-signed / non-constructible integers (semantic drift).
 
 template<typename T>
 concept floating_point =
@@ -5379,6 +5380,13 @@ concept has_mapped_and_key =
 // constrained-placeholder form and the explicit `requires(X<T, B> ...)` form
 // in to_json.hpp. Verified minimal repro (g++-16, -std=c++20).
 // ---------------------------------------------------------------------------
+
+// boolean_like<T, B> — mirrors the to_json boolean overload's
+// `is_same<T, B::boolean_t>` exactly. Takes B because boolean_t is a library
+// type parameter (defaults to bool but is customizable), NOT hard-coded bool.
+template<typename T, typename B>
+concept boolean_like =
+    std::is_same_v<T, typename B::boolean_t>;
 
 // string_like<T, B> == is_compatible_string_type<B, T>
 template<typename T, typename B>
@@ -7953,12 +7961,20 @@ void to_json(BasicJsonType& j, const std::optional<T>& opt) noexcept
 }
 #endif
 
+#ifdef JSON_HAS_CPP_20
+template<typename BasicJsonType, concepts::boolean_like<BasicJsonType> T>
+inline void to_json(BasicJsonType& j, T b) noexcept
+{
+    external_constructor<value_t::boolean>::construct(j, b);
+}
+#else
 template<typename BasicJsonType, typename T,
          enable_if_t<std::is_same<T, typename BasicJsonType::boolean_t>::value, int> = 0>
 inline void to_json(BasicJsonType& j, T b) noexcept
 {
     external_constructor<value_t::boolean>::construct(j, b);
 }
+#endif
 
 template < typename BasicJsonType, typename BoolRef,
            enable_if_t <

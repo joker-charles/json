@@ -313,12 +313,20 @@ void to_json(BasicJsonType& j, const std::optional<T>& opt) noexcept
 }
 #endif
 
+#ifdef JSON_HAS_CPP_20
+template<typename BasicJsonType, concepts::boolean_like<BasicJsonType> T>
+inline void to_json(BasicJsonType& j, T b) noexcept
+{
+    external_constructor<value_t::boolean>::construct(j, b);
+}
+#else
 template<typename BasicJsonType, typename T,
          enable_if_t<std::is_same<T, typename BasicJsonType::boolean_t>::value, int> = 0>
 inline void to_json(BasicJsonType& j, T b) noexcept
 {
     external_constructor<value_t::boolean>::construct(j, b);
 }
+#endif
 
 template < typename BasicJsonType, typename BoolRef,
            enable_if_t <
