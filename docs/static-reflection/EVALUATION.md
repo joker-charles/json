@@ -62,6 +62,26 @@ challenge the numbers, not just the conclusions.
 
 ---
 
+## Contents
+
+- [0. The three evaluation questions](#0-the-three-evaluation-questions)
+- [1. Evaluation operation A: concepts vs enable_if (dual path)](#1-evaluation-operation-a-concepts-vs-enable_if-dual-path)
+  - [1.1 Setup — the baseline matters](#11-setup--the-baseline-matters)
+  - [1.2 Results (unit-serialization.cpp, one TU)](#12-results-unit-serializationcpp-one-tu)
+  - [1.3 Diagnostic evaluation (Q4)](#13-diagnostic-evaluation-q4)
+  - [1.4 Non-happy path: the alt_string regression (Q5)](#14-non-happy-path-the-alt_string-regression-q5)
+- [2. Evaluation operation B: reflection vs macros](#2-evaluation-operation-b-reflection-vs-macros)
+  - [2.1 Setup](#21-setup)
+  - [2.2 Results](#22-results)
+  - [2.3 The correction: private members ARE reflectable](#23-the-correction-private-members-are-reflectable)
+  - [2.4 Cost of the "reflect the real private union" switch (measured)](#24-cost-of-the-reflect-the-real-private-union-switch-measured)
+  - [2.5 The ADL-aware recursive codec: probe results](#25-the-adl-aware-recursive-codec-probe-results)
+- [3. Evaluation methodology takeaways](#3-evaluation-methodology-takeaways)
+- [4. Reproduce](#4-reproduce)
+- [5. Measurement log & corrections vs the previous version](#5-measurement-log--corrections-vs-the-previous-version)
+
+---
+
 ## 0. The three evaluation questions
 
 For each direction we asked the same four questions, and answered them with
