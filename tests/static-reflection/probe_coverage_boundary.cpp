@@ -5,8 +5,9 @@
 // and the std::optional dedicated branch (never array-like).
 //
 // Negative cases (compile-time) are documented in EVALUATION.md §2.1 and
-// verified separately: union / std::variant hit the clean priority-0
-// static_assert; map<exotic-key,int> errors in refl2's key_string;
+// verified separately: union / pointers hit the clean priority-0
+// static_assert (std::variant since M7 has a dedicated codec branch — see
+// probe_variant.cpp); map<exotic-key,int> errors in refl2's key_string;
 // vector<non-default-constructible> from_json errors via the element's
 // priority-0 static_assert; value_type-less incompatible ranges die deep in
 // nlohmann's range path (adl branch); the inheritance guards are clean
@@ -127,6 +128,19 @@ int main()
     json jp;
     refl2::codec<false>::to_json(jp, op);
     std::printf("optional<Plain> serialized: %s\n", jp.dump().c_str());
+
+    std::printf("\n=== runtime: std::variant (dedicated M7 branch) ===\n");
+    V v = 42;
+    json jv;
+    refl2::codec<false>::to_json(jv, v);
+    std::printf("variant<int,string> serialized: %s\n", jv.dump().c_str());
+    V v2 = std::string("hi");
+    json jv2;
+    refl2::codec<false>::to_json(jv2, v2);
+    std::printf("variant<int,string> (string alt) serialized: %s\n", jv2.dump().c_str());
+    json jv3 = {{"index", 1}, {"value", "back"}};
+    V v3 = jv3.template get<V>();
+    std::printf("variant round-trip: %s (index=%zu)\n", std::get<std::string>(v3).c_str(), v3.index());
 
     std::printf("\nPROBE COVERAGE DONE\n");
     return 0;
