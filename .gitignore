@@ -56,3 +56,4 @@ MODULE.bazel.lock
 
 # user-local CMake presets (machine-specific toolchain, not shared)
 /CMakeUserPresets.json
+.dsh/
