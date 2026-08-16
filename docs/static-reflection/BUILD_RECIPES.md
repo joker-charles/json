@@ -105,6 +105,66 @@ Note: `make pretty` formats **all** `include/`, `tests/`, and `docs/examples/`
 sources; review the diff and keep unrelated pre-existing files out of the
 commit (see da68ff71 for the cleanup of docs/examples/parser_callback_t.cpp).
 
+## Benchmark and evaluation reproduction
+
+The commands EVALUATION.md §4 used to inline, moved here as the authoritative
+copy (baseline worktree, the three-mode benchmark sweep, runtime throughput,
+and the evaluation probes). Each probe's header comment remains the
+authoritative build line for that file.
+
+```sh
+# concepts vs enable_if (compile time / .o size; min of 3 runs is the number)
+FLAGS="-Wno-deprecated -Wno-float-equal -Wno-deprecated-declarations
+       -DDOCTEST_CONFIG_SUPER_FAST_ASSERTS -DJSON_TEST_KEEP_MACROS
+       -DJSON_TEST_USING_MULTIPLE_HEADERS=1 -Itests/thirdparty/doctest
+       -Itests/thirdparty/fifo_map"
+git worktree add /tmp/json-baseline develop          # cdf52ae9
+/usr/bin/time -f "wall=%e s" g++-16 -O0 -std=c++26 -freflection $FLAGS \
+  -I/tmp/json-baseline/include -c tests/src/unit-serialization.cpp -o /tmp/b.o
+/usr/bin/time -f "wall=%e s" g++-16 -O0 -std=c++26 -freflection $FLAGS \
+  -Iinclude -c tests/src/unit-serialization.cpp -o /tmp/a.o
+
+# reflection vs macro — three modes (the checked-in benchmark TU, §2.2)
+# full §2.2 sweep (N x O-level x mode, min of 3, ~10 min):
+bash tests/static-reflection/bench_macro_vs_reflection.sh
+# quick smoke (single N, single run) + paste-ready §2.2 markdown tables:
+BENCH_N_SET="50" BENCH_RUNS=1 BENCH_MARKDOWN=1 \
+  bash tests/static-reflection/bench_macro_vs_reflection.sh
+# or the minimal per-mode builds:
+g++-16 -std=c++26 -freflection -O0 -DBENCH_N=50 -Iinclude \
+  -o /tmp/bm tests/static-reflection/bench_macro_vs_reflection.cpp      # macro
+g++-16 -std=c++26 -freflection -O0 -DBENCH_N=50 -DBENCH_REFLECTION -Iinclude \
+  -o /tmp/br tests/static-reflection/bench_macro_vs_reflection.cpp      # refl v1
+g++-16 -std=c++26 -freflection -O0 -DBENCH_N=50 -DBENCH_ADL_REFLECTION -Iinclude \
+  -o /tmp/br2 tests/static-reflection/bench_macro_vs_reflection.cpp     # refl2 v2
+size /tmp/bm /tmp/br /tmp/br2 && nm /tmp/bm /tmp/br /tmp/br2 | wc -l
+
+# runtime throughput — conversion layer (§2.2); three modes, -O2
+g++-16 -std=c++26 -freflection -O2 -Iinclude \
+  -o /tmp/brt tests/static-reflection/bench_runtime.cpp                    # macro
+g++-16 -std=c++26 -freflection -O2 -Iinclude -DBENCH_REFLECTION \
+  -o /tmp/brt1 tests/static-reflection/bench_runtime.cpp                   # refl v1
+g++-16 -std=c++26 -freflection -O2 -Iinclude -DBENCH_ADL_REFLECTION \
+  -o /tmp/brt2 tests/static-reflection/bench_runtime.cpp                   # refl2 v2
+# "old codec" baseline for the old-vs-optimized column: the pre-optimization
+# codec (extracted from commit 62290f3b, kept as refl2_codec_old.hpp +
+# bench_runtime_old.cpp so the "before" side is reproducible):
+g++-16 -std=c++26 -freflection -O2 -Iinclude -DBENCH_ADL_REFLECTION \
+  -o /tmp/brt_old tests/static-reflection/bench_runtime_old.cpp
+# driver (min/median of RUNS=7 binary runs per mode):
+bash tests/static-reflection/runtime_measure.sh
+
+# the ADL-aware recursive codec probe (§2.5): nested / ADL / private / parity
+g++-16 -std=c++26 -freflection -O0 -Iinclude \
+  -o /tmp/par tests/static-reflection/probe_adl_recursion.cpp && /tmp/par
+
+# real private json_value probe + differential (behavior parity + ASan)
+g++-16 -std=c++26 -freflection -O0 -Iinclude \
+  -o /tmp/prjv tests/static-reflection/probe_real_json_value.cpp && /tmp/prjv
+g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Isingle_include -Iinclude \
+  -o /tmp/d tests/static-reflection/m2_diff.cpp && /tmp/d
+```
+
 ## Repository test suite
 
 The main-library changes are exercised by the repository's doctest suite.

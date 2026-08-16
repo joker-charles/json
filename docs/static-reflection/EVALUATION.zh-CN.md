@@ -17,6 +17,35 @@
 > （例如在扁平/浅嵌套类型上 refl2 运行时绝不慢于宏、-O2 下尺寸一致；扩展的
 > 继承/optional/位域路径在 §2.2 有实测，塌缩程度不同）。
 
+## TL;DR
+
+两条现代化路线在目标标准下都划算：概念 ≈ 免费，反射在省代码 + 杜绝遗漏上胜过
+宏，唯一的真实代价在扩展（继承/optional）的 serialize 路径。下表把每个评估问题
+映射到实测答案。
+
+| Q | 问题 | 实测答案 |
+|---|---|---|
+| Q1 | 省代码吗 | 是——每类型省 1 行；库内置编解码器则一次性成本为 0（场景 B）；自己写则盈亏平衡 ≈25（v1）/≈466–672（v2）类型（场景 A） |
+| Q2 | 编译成本 | 概念 ≈0%；反射在扁平/复杂结构体上 +2~5% 墙钟，峰值内存更低 |
+| Q3 | 代码膨胀 | 概念 ≤0.6% `.o`；反射扁平路径 -O2 与宏**尺寸完全一致**；扩展路径 +1.9% text / +5.5% exe |
+| Q4 | 诊断 | 概念错误 +58% 更长但指出*为什么*；反射 v2 把"类型未处理"压成一条可操作的 `static_assert`（11 行 vs 238/376） |
+| Q5 | 非开心路径 | 全部通过（38 项）：私有嵌套类型在 consteval 上下文**可反射**（最有价值的发现）、ADL 定制优先、继承/optional/位域往返；概念参数顺序 bug 需要非默认模板参数 TU 才能暴露 |
+
+**三条核心结论**
+
+1. 完整现代化（概念双路径 + 反射就绪）在 `-std=c++26 -freflection` 下成本
+   **≈0–1%**；概念切片单独 ≈0%。
+2. 反射**在热路径上并不比宏更快**——它的价值在于省代码、结构上杜绝静默遗漏、
+   可操作的诊断。扁平类型 -O2 尺寸一致；扩展路径 serialize 慢 5–6%、
+   deserialize 快 20–37%。
+3. 绝对值随机器漂移——能长期成立的是**方法论与同一工具链内的比值**（见适用范围
+   与 §3）。
+
+> **可复现性。** 稳定、可精确复现的事实列在 §5（诊断计数 238/376、`.o` 尺寸、
+> 逐字节相同的可执行文件）；§1 的早期原始运行**未**保留、不可重新推导。
+
+---
+
 **核心发现**（快速参考——测量与细节见 §1/§2）：
 - **概念是免费的。** 完整现代化（概念 + 反射就绪）在目标标准下成本 ≈0–1%
   墙钟 / ≤0.6% `.o`；概念切片单独 ≈0%。
@@ -47,6 +76,7 @@
 
 ## 目录
 
+- [TL;DR](#tldr)
 - [0. 三个评估问题](#0-三个评估问题)
 - [1. 评估操作 A：概念 vs enable_if（双路径）](#1-评估操作-a概念-vs-enable_if双路径)
   - [1.1 设置 —— 基线很重要](#11-设置--基线很重要)
@@ -386,6 +416,10 @@ refl2 可序列化的 T（可反射结构、容器、嵌套 json 等）序列化
   覆盖了普通反射结构体的容器。
 
 ### 2.2 结果
+
+> 本节的某些数字在多次修订中被重新测量并修正——-O2 墙钟时间受负载影响，扩展路径
+> 的论断由 `bench_extended.cpp` 的发现界定了范围。请对照 §5 的"未能复现并被修正的
+> 论断"一起读。
 
 同一会话内重新测量（三种模式、同一编译单元、同一 `-std=c++26 -freflection`；
 编译时间：-O0 取 3 次最小值、-O2 取 7 次中位数；原始数据已入库，见 §5）。
@@ -739,61 +773,12 @@ v2 的分发在本地完成，因此不支持的类型的错误是一条可操�
 
 ## 4. 复现
 
-```sh
-# 概念 vs enable_if（编译时间 / .o 大小；取 3 次运行的最小值才是数字）
-FLAGS="-Wno-deprecated -Wno-float-equal -Wno-deprecated-declarations
-       -DDOCTEST_CONFIG_SUPER_FAST_ASSERTS -DJSON_TEST_KEEP_MACROS
-       -DJSON_TEST_USING_MULTIPLE_HEADERS=1 -Itests/thirdparty/doctest
-       -Itests/thirdparty/fifo_map"
-git worktree add /tmp/json-baseline develop          # cdf52ae9
-/usr/bin/time -f "wall=%e s" g++-16 -O0 -std=c++26 -freflection $FLAGS \
-  -I/tmp/json-baseline/include -c tests/src/unit-serialization.cpp -o /tmp/b.o
-/usr/bin/time -f "wall=%e s" g++-16 -O0 -std=c++26 -freflection $FLAGS \
-  -Iinclude -c tests/src/unit-serialization.cpp -o /tmp/a.o
+所有复现命令——基线 worktree、三模式基准扫描、运行时吞吐、以及各探针的构建行——
+都放在 [`BUILD_RECIPES.md`](./BUILD_RECIPES.md#benchmark-and-evaluation-reproduction)
+作为权威副本。`tests/static-reflection/` 里每个探针的头部也记录了自己的构建行。
 
-# 反射 vs 宏 —— 三种模式（已入库的基准编译单元，见 §2.2）
-# 完整的 §2.2 扫描（N x 优化级别 x 模式，取 3 次最小值，约 10 分钟）：
-bash tests/static-reflection/bench_macro_vs_reflection.sh
-# 快速冒烟（单个 N、单次运行）+ 可直接粘贴的 §2.2 markdown 表格：
-BENCH_N_SET="50" BENCH_RUNS=1 BENCH_MARKDOWN=1 \
-  bash tests/static-reflection/bench_macro_vs_reflection.sh
-# 或者最简的逐模式构建：
-g++-16 -std=c++26 -freflection -O0 -DBENCH_N=50 -Iinclude \
-  -o /tmp/bm tests/static-reflection/bench_macro_vs_reflection.cpp      # macro
-g++-16 -std=c++26 -freflection -O0 -DBENCH_N=50 -DBENCH_REFLECTION -Iinclude \
-  -o /tmp/br tests/static-reflection/bench_macro_vs_reflection.cpp      # refl v1
-g++-16 -std=c++26 -freflection -O0 -DBENCH_N=50 -DBENCH_ADL_REFLECTION -Iinclude \
-  -o /tmp/br2 tests/static-reflection/bench_macro_vs_reflection.cpp     # refl2 v2
-size /tmp/bm /tmp/br /tmp/br2 && nm /tmp/bm /tmp/br /tmp/br2 | wc -l
-
-# 运行时吞吐 —— 转换层（§2.2）；三种模式，-O2
-g++-16 -std=c++26 -freflection -O2 -Iinclude \
-  -o /tmp/brt tests/static-reflection/bench_runtime.cpp                    # macro
-g++-16 -std=c++26 -freflection -O2 -Iinclude -DBENCH_REFLECTION \
-  -o /tmp/brt1 tests/static-reflection/bench_runtime.cpp                   # refl v1
-g++-16 -std=c++26 -freflection -O2 -Iinclude -DBENCH_ADL_REFLECTION \
-  -o /tmp/brt2 tests/static-reflection/bench_runtime.cpp                   # refl2 v2
-# "旧 codec" 基线（旧-对-优化列）：优化前的 codec（从提交 62290f3b 提取，
-# 以 refl2_codec_old.hpp + bench_runtime_old.cpp 入库，保证 "before" 侧可复现）：
-g++-16 -std=c++26 -freflection -O2 -Iinclude -DBENCH_ADL_REFLECTION \
-  -o /tmp/brt_old tests/static-reflection/bench_runtime_old.cpp
-# 驱动（每个模式 RUNS=7 次二进制运行取 min/中位数）：
-bash tests/static-reflection/runtime_measure.sh
-
-# ADL 感知递归编解码器探针（§2.5）：嵌套 / ADL / 私有 / 对齐
-g++-16 -std=c++26 -freflection -O0 -Iinclude \
-  -o /tmp/par tests/static-reflection/probe_adl_recursion.cpp && /tmp/par
-
-# 真实私有 json_value 探针 + 差分（行为一致 + ASan）
-g++-16 -std=c++26 -freflection -O0 -Iinclude \
-  -o /tmp/prjv tests/static-reflection/probe_real_json_value.cpp && /tmp/prjv
-g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Isingle_include -Iinclude \
-  -o /tmp/d tests/static-reflection/m2_diff.cpp && /tmp/d
-```
-
-所有探针都在 `tests/static-reflection/`；每个文件的头部都记录了自己的构建方式。
-上面的数字是在分支所在机器上采集的（GCC 16.1.0、x86-64、无 ccache）；绝对数值会随
-硬件变化，**比值和方法论才是重点**。
+数字在分支所在机器上采集（GCC 16.1.0、x86-64、无 ccache）；绝对数值随硬件变化，
+**比值和方法论才是重点**。
 
 ## 5. 测量日志与相对上一版的修正
 

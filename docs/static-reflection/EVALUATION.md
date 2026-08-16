@@ -22,6 +22,39 @@
 > -O2; the extended inheritance/optional/bit-field paths are measured in
 > §2.2 and do not collapse quite as far).
 
+## TL;DR
+
+Both modernization directions pay for themselves at the target standard:
+concepts are ≈free, and reflection beats the macro on code saved + omission
+safety, with its only real cost on the extended (inheritance/optional)
+serialize path. Details below; the table maps each evaluation question to its
+measured answer.
+
+| Q | Question | Measured answer |
+|---|---|---|
+| Q1 | Save code? | Yes — 1 line/type; 0 one-time cost if the library ships the codec (scenario B); break-even ≈25 (v1) / ≈466–672 (v2) types if you write it (scenario A) |
+| Q2 | Compile cost? | concepts ≈0%; reflection +2~5% wall on flat/complex structs, lower peak RSS |
+| Q3 | Code bloat? | concepts ≤0.6% `.o`; reflection flat path **size-identical to macro at -O2**; extended paths +1.9% text / +5.5% exe |
+| Q4 | Diagnostics? | concepts errors are +58% longer but name *why*; reflection v2 collapses "type not handled" into one actionable `static_assert` (11 lines vs 238/376) |
+| Q5 | Non-happy paths? | All pass (38 checks): private nested types ARE reflectable in a consteval context (the single most valuable finding), ADL customization wins, inheritance/optional/bit-fields round-trip; a non-default template-param TU is required to expose the concepts parameter-order bug |
+
+**Three headline conclusions**
+
+1. Full modernization (concepts dual path + reflection-ready) costs **≈0–1%**
+   at `-std=c++26 -freflection`; the concepts slice alone ≈0%.
+2. Reflection is **not faster than the macro on the hot path** — its value is
+   saved code, structurally impossible silent omission, and actionable
+   diagnostics. Flat types are size-identical at -O2; extended paths are
+   5–6% slower to serialize but 20–37% faster to deserialize.
+3. Absolute numbers drift with the machine — the durable findings are the
+   **methodology and same-toolchain ratios** (see Applicability and §3).
+
+> **Reproducibility.** The stable, exactly-reproduced facts are listed in §5
+> (diagnostic counts 238/376, `.o` sizes, byte-identical executables); the §1
+> early raw runs were *not* preserved and are not re-derivable.
+
+---
+
 **Key findings** (quick reference — measurements and caveats in §1/§2):
 - **Concepts are free.** The full modernization (concepts + reflection-
   ready) costs ≈0–1% wall / ≤0.6% `.o` at the target standard; the
@@ -64,6 +97,7 @@ challenge the numbers, not just the conclusions.
 
 ## Contents
 
+- [TL;DR](#tldr)
 - [0. The three evaluation questions](#0-the-three-evaluation-questions)
 - [1. Evaluation operation A: concepts vs enable_if (dual path)](#1-evaluation-operation-a-concepts-vs-enable_if-dual-path)
   - [1.1 Setup — the baseline matters](#11-setup--the-baseline-matters)
@@ -453,6 +487,11 @@ probe):
   handles, and it additionally covers containers of plain reflected structs.
 
 ### 2.2 Results
+
+> Some numbers here were re-measured and corrected across revisions — the -O2
+> wall times are load-sensitive, and the extended-path claims are scoped by
+> the `bench_extended.cpp` findings. Read §5 "Claims that did not reproduce"
+> alongside this section.
 
 Re-measured in one session (three modes, same TU, same `-std=c++26
 -freflection`; compile times: -O0 min of 3, -O2 median of 7; raw runs
@@ -878,63 +917,15 @@ library's 238–376-line error cascade.
 
 ## 4. Reproduce
 
-```sh
-# concepts vs enable_if (compile time / .o size; min of 3 runs is the number)
-FLAGS="-Wno-deprecated -Wno-float-equal -Wno-deprecated-declarations
-       -DDOCTEST_CONFIG_SUPER_FAST_ASSERTS -DJSON_TEST_KEEP_MACROS
-       -DJSON_TEST_USING_MULTIPLE_HEADERS=1 -Itests/thirdparty/doctest
-       -Itests/thirdparty/fifo_map"
-git worktree add /tmp/json-baseline develop          # cdf52ae9
-/usr/bin/time -f "wall=%e s" g++-16 -O0 -std=c++26 -freflection $FLAGS \
-  -I/tmp/json-baseline/include -c tests/src/unit-serialization.cpp -o /tmp/b.o
-/usr/bin/time -f "wall=%e s" g++-16 -O0 -std=c++26 -freflection $FLAGS \
-  -Iinclude -c tests/src/unit-serialization.cpp -o /tmp/a.o
+All reproduction commands — the baseline worktree, the three-mode benchmark
+sweep, runtime throughput, and the probe build lines — live in
+[`BUILD_RECIPES.md`](./BUILD_RECIPES.md#benchmark-and-evaluation-reproduction)
+as the authoritative copy. Every probe in `tests/static-reflection/` also
+documents its own build line in its header comment.
 
-# reflection vs macro — three modes (the checked-in benchmark TU, §2.2)
-# full §2.2 sweep (N x O-level x mode, min of 3, ~10 min):
-bash tests/static-reflection/bench_macro_vs_reflection.sh
-# quick smoke (single N, single run) + paste-ready §2.2 markdown tables:
-BENCH_N_SET="50" BENCH_RUNS=1 BENCH_MARKDOWN=1 \
-  bash tests/static-reflection/bench_macro_vs_reflection.sh
-# or the minimal per-mode builds:
-g++-16 -std=c++26 -freflection -O0 -DBENCH_N=50 -Iinclude \
-  -o /tmp/bm tests/static-reflection/bench_macro_vs_reflection.cpp      # macro
-g++-16 -std=c++26 -freflection -O0 -DBENCH_N=50 -DBENCH_REFLECTION -Iinclude \
-  -o /tmp/br tests/static-reflection/bench_macro_vs_reflection.cpp      # refl v1
-g++-16 -std=c++26 -freflection -O0 -DBENCH_N=50 -DBENCH_ADL_REFLECTION -Iinclude \
-  -o /tmp/br2 tests/static-reflection/bench_macro_vs_reflection.cpp     # refl2 v2
-size /tmp/bm /tmp/br /tmp/br2 && nm /tmp/bm /tmp/br /tmp/br2 | wc -l
-
-# runtime throughput — conversion layer (§2.2); three modes, -O2
-g++-16 -std=c++26 -freflection -O2 -Iinclude \
-  -o /tmp/brt tests/static-reflection/bench_runtime.cpp                    # macro
-g++-16 -std=c++26 -freflection -O2 -Iinclude -DBENCH_REFLECTION \
-  -o /tmp/brt1 tests/static-reflection/bench_runtime.cpp                   # refl v1
-g++-16 -std=c++26 -freflection -O2 -Iinclude -DBENCH_ADL_REFLECTION \
-  -o /tmp/brt2 tests/static-reflection/bench_runtime.cpp                   # refl2 v2
-# "old codec" baseline for the old-vs-optimized column: the pre-optimization
-# codec (extracted from commit 62290f3b, kept as refl2_codec_old.hpp +
-# bench_runtime_old.cpp so the "before" side is reproducible):
-g++-16 -std=c++26 -freflection -O2 -Iinclude -DBENCH_ADL_REFLECTION \
-  -o /tmp/brt_old tests/static-reflection/bench_runtime_old.cpp
-# driver (min/median of RUNS=7 binary runs per mode):
-bash tests/static-reflection/runtime_measure.sh
-
-# the ADL-aware recursive codec probe (§2.5): nested / ADL / private / parity
-g++-16 -std=c++26 -freflection -O0 -Iinclude \
-  -o /tmp/par tests/static-reflection/probe_adl_recursion.cpp && /tmp/par
-
-# real private json_value probe + differential (behavior parity + ASan)
-g++-16 -std=c++26 -freflection -O0 -Iinclude \
-  -o /tmp/prjv tests/static-reflection/probe_real_json_value.cpp && /tmp/prjv
-g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Isingle_include -Iinclude \
-  -o /tmp/d tests/static-reflection/m2_diff.cpp && /tmp/d
-```
-
-All probes live in `tests/static-reflection/`; each file's header documents its
-build line. Numbers above were captured on the branch's machine (GCC 16.1.0,
-x86-64, no ccache); absolute values vary by hardware, **ratios and
-methodology are the point**.
+Numbers were captured on the branch's machine (GCC 16.1.0, x86-64, no
+ccache); absolute values vary by hardware, **ratios and methodology are the
+point**.
 
 ## 5. Measurement log & corrections vs the previous version
 
