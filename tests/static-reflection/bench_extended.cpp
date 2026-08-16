@@ -37,7 +37,7 @@
 #include <nlohmann/json.hpp>
 
 #ifdef BENCH_ADL_REFLECTION
-    #include "refl2_codec.hpp"
+    #include <nlohmann/reflection_to_json.hpp>
 #endif
 
 using json = nlohmann::json;
@@ -46,32 +46,32 @@ using json = nlohmann::json;
 // Types
 // ---------------------------------------------------------------------------
 #ifdef BENCH_ADL_REFLECTION
-    #define DEFINE_INHERITED() struct Base2 \
+#define DEFINE_INHERITED() struct Base2 \
     { \
         std::string base_name; \
         int base_id{}; \
     }; \
     struct Mid2 : Base2 { std::string mid; }; \
     struct DerivedPerson : Mid2 { int own{}; };
-    #define DEFINE_ADDRESS() struct Address \
+#define DEFINE_ADDRESS() struct Address \
     { \
         std::string street; \
         std::string city; \
         int zip{}; \
     };
-    #define DEFINE_OPTIONAL() struct OptionalPerson \
+#define DEFINE_OPTIONAL() struct OptionalPerson \
     { \
         std::string name; \
         std::optional<Address> home; \
     };
-    #define DEFINE_BITFIELD() struct BitFieldStruct \
+#define DEFINE_BITFIELD() struct BitFieldStruct \
     { \
         int a : 3; \
         int b : 5; \
         int c{}; \
     };
 #else
-    #define DEFINE_INHERITED() struct Base2 \
+#define DEFINE_INHERITED() struct Base2 \
     { \
         std::string base_name; \
         int base_id{}; \
@@ -82,20 +82,20 @@ using json = nlohmann::json;
         NLOHMANN_DEFINE_TYPE_INTRUSIVE(DerivedPerson, base_name, base_id, mid, own) \
         int own{}; \
     };
-    #define DEFINE_ADDRESS() struct Address \
+#define DEFINE_ADDRESS() struct Address \
     { \
         NLOHMANN_DEFINE_TYPE_INTRUSIVE(Address, street, city, zip) \
         std::string street; \
         std::string city; \
         int zip{}; \
     };
-    #define DEFINE_OPTIONAL() struct OptionalPerson \
+#define DEFINE_OPTIONAL() struct OptionalPerson \
     { \
         NLOHMANN_DEFINE_TYPE_INTRUSIVE(OptionalPerson, name, home) \
         std::string name; \
         std::optional<Address> home; \
     };
-    #define DEFINE_BITFIELD() struct BitFieldStruct \
+#define DEFINE_BITFIELD() struct BitFieldStruct \
     { \
         int a : 3; \
         int b : 5; \
@@ -126,18 +126,24 @@ DEFINE_BITFIELD()
 // Mode
 // ---------------------------------------------------------------------------
 #ifdef BENCH_ADL_REFLECTION
-    using Mode = refl2::codec<false>;
-    #define MODE_LABEL "refl2"
+using Mode = refl2::codec<false>;
+#define MODE_LABEL "refl2"
 #else
-    struct mode_macro
+struct mode_macro
+{
+    template<typename B, typename T>
+    static void to_json(B& j, const T& v)
     {
-        template<typename B, typename T>
-        static void to_json(B& j, const T& v) { nlohmann::to_json(j, v); }
-        template<typename B, typename T>
-        static void from_json(const B& j, T& v) { nlohmann::from_json(j, v); }
-    };
-    using Mode = mode_macro;
-    #define MODE_LABEL "macro"
+        nlohmann::to_json(j, v);
+    }
+    template<typename B, typename T>
+    static void from_json(const B& j, T& v)
+    {
+        nlohmann::from_json(j, v);
+    }
+};
+using Mode = mode_macro;
+#define MODE_LABEL "macro"
 #endif
 
 // ---------------------------------------------------------------------------
@@ -248,37 +254,46 @@ int main(int argc, char** argv)
                 MODE_LABEL, BENCH_ITER, BENCH_RUNS, seed);
 
     bench_all("inherited", dp,
-              [](DerivedPerson& v, std::size_t i)
-              {
-                  v.base_id += static_cast<int>(i % 5);
-                  v.mid.push_back(static_cast<char>('a' + (i % 26)));
-                  v.own += static_cast<int>(i % 7);
-              },
-              [](const DerivedPerson& v) { return v.own + v.base_id + v.mid.size(); });
+              [](DerivedPerson & v, std::size_t i)
+    {
+        v.base_id += static_cast<int>(i % 5);
+        v.mid.push_back(static_cast<char>('a' + (i % 26)));
+        v.own += static_cast<int>(i % 7);
+    },
+    [](const DerivedPerson & v)
+    {
+        return v.own + v.base_id + v.mid.size();
+    });
 
     bench_all("optional", op,
-              [](OptionalPerson& v, std::size_t i)
-              {
-                  v.name.push_back(static_cast<char>('a' + (i % 26)));
-                  if (i % 2 == 0)
-                  {
-                      v.home.emplace(Address{"1 St", "Town", static_cast<int>(i % 1000)});
-                  }
-                  else
-                  {
-                      v.home.reset();
-                  }
-              },
-              [](const OptionalPerson& v) { return v.name.size() + (v.home ? 1 : 0); });
+              [](OptionalPerson & v, std::size_t i)
+    {
+        v.name.push_back(static_cast<char>('a' + (i % 26)));
+        if (i % 2 == 0)
+        {
+            v.home.emplace(Address{"1 St", "Town", static_cast<int>(i % 1000)});
+        }
+        else
+        {
+            v.home.reset();
+        }
+    },
+    [](const OptionalPerson & v)
+    {
+        return v.name.size() + (v.home ? 1 : 0);
+    });
 
     bench_all("bitfield", bf,
-              [](BitFieldStruct& v, std::size_t i)
-              {
-                  v.a = static_cast<int>(i % 7);
-                  v.b = static_cast<int>(i % 31);
-                  v.c += static_cast<int>(i % 3);
-              },
-              [](const BitFieldStruct& v) { return v.a + v.b + v.c; });
+              [](BitFieldStruct & v, std::size_t i)
+    {
+        v.a = static_cast<int>(i % 7);
+        v.b = static_cast<int>(i % 31);
+        v.c += static_cast<int>(i % 3);
+    },
+    [](const BitFieldStruct & v)
+    {
+        return v.a + v.b + v.c;
+    });
 
     std::printf("  sink=%zu\n", g_sink);
     return 0;

@@ -39,13 +39,13 @@ using json = nlohmann::json;
 // Types — conditional definitions per mode (same pattern as the compile bench)
 // ---------------------------------------------------------------------------
 #ifdef BENCH_ADL_REFLECTION
-    #define DEFINE_ADDRESS() struct Address \
+#define DEFINE_ADDRESS() struct Address \
     { \
         std::string street; \
         std::string city; \
         int zip{}; \
     };
-    #define DEFINE_FLAT() struct FlatPerson \
+#define DEFINE_FLAT() struct FlatPerson \
     { \
         std::string name; \
         int age{}; \
@@ -53,7 +53,7 @@ using json = nlohmann::json;
         std::vector<std::string> tags; \
         bool active{}; \
     };
-    #define DEFINE_NESTED() struct NestedPerson \
+#define DEFINE_NESTED() struct NestedPerson \
     { \
         std::string name; \
         int age{}; \
@@ -61,9 +61,9 @@ using json = nlohmann::json;
         std::vector<Address> history; \
     };
 #elif defined(BENCH_REFLECTION)
-    // v1: plain structs, flat only (v1 cannot serialize nested types)
-    #define DEFINE_ADDRESS()
-    #define DEFINE_FLAT() struct FlatPerson \
+// v1: plain structs, flat only (v1 cannot serialize nested types)
+#define DEFINE_ADDRESS()
+#define DEFINE_FLAT() struct FlatPerson \
     { \
         std::string name; \
         int age{}; \
@@ -71,16 +71,16 @@ using json = nlohmann::json;
         std::vector<std::string> tags; \
         bool active{}; \
     };
-    #define DEFINE_NESTED()
+#define DEFINE_NESTED()
 #else
-    #define DEFINE_ADDRESS() struct Address \
+#define DEFINE_ADDRESS() struct Address \
     { \
         NLOHMANN_DEFINE_TYPE_INTRUSIVE(Address, street, city, zip) \
         std::string street; \
         std::string city; \
         int zip{}; \
     };
-    #define DEFINE_FLAT() struct FlatPerson \
+#define DEFINE_FLAT() struct FlatPerson \
     { \
         NLOHMANN_DEFINE_TYPE_INTRUSIVE(FlatPerson, name, age, height, tags, active) \
         std::string name; \
@@ -89,7 +89,7 @@ using json = nlohmann::json;
         std::vector<std::string> tags; \
         bool active{}; \
     };
-    #define DEFINE_NESTED() struct NestedPerson \
+#define DEFINE_NESTED() struct NestedPerson \
     { \
         NLOHMANN_DEFINE_TYPE_INTRUSIVE(NestedPerson, name, age, home, history) \
         std::string name; \
@@ -110,65 +110,65 @@ DEFINE_NESTED()
 // The mode: a uniform static to_json/from_json interface
 // ---------------------------------------------------------------------------
 #ifdef BENCH_ADL_REFLECTION
-    #include "refl2_codec.hpp"
-    using Mode = refl2::codec<false>;
-    #define MODE_LABEL "refl2 v2"
+#include <nlohmann/reflection_to_json.hpp>
+using Mode = refl2::codec<false>;
+#define MODE_LABEL "refl2 v2"
 #elif defined(BENCH_REFLECTION)
-    // the v1 naive serializer (EVALUATION.md §2.1) — flat structs only
-    namespace v1
+// the v1 naive serializer (EVALUATION.md §2.1) — flat structs only
+namespace v1
+{
+template<typename BasicJsonType, typename T>
+void to_json(BasicJsonType& j, const T& v)
+{
+    j = BasicJsonType::object();
+    template for (constexpr auto m : std::define_static_array(
+                      std::meta::nonstatic_data_members_of(^^T, std::meta::access_context::unprivileged())))
     {
-    template<typename BasicJsonType, typename T>
-    void to_json(BasicJsonType& j, const T& v)
-    {
-        j = BasicJsonType::object();
-        template for (constexpr auto m : std::define_static_array(
-            std::meta::nonstatic_data_members_of(^^T, std::meta::access_context::unprivileged())))
-        {
-            j[std::string(std::meta::identifier_of(m))] = v.[:m:];
-        }
+        j[std::string(std::meta::identifier_of(m))] = v.[:m:];
     }
-    template<typename BasicJsonType, typename T>
-    void from_json(const BasicJsonType& j, T& v)
+}
+template<typename BasicJsonType, typename T>
+void from_json(const BasicJsonType& j, T& v)
+{
+    template for (constexpr auto m : std::define_static_array(
+                      std::meta::nonstatic_data_members_of(^^T, std::meta::access_context::unprivileged())))
     {
-        template for (constexpr auto m : std::define_static_array(
-            std::meta::nonstatic_data_members_of(^^T, std::meta::access_context::unprivileged())))
-        {
-            using M = typename [: std::meta::type_of(m) :];
-            v.[:m:] = j.at(std::string(std::meta::identifier_of(m))).template get<M>();
-        }
+        using M = typename [: std::meta::type_of(m) :];
+        v.[:m:] = j.at(std::string(std::meta::identifier_of(m))).template get<M>();
     }
-    } // namespace v1
-    struct mode_v1
+}
+} // namespace v1
+struct mode_v1
+{
+    template<typename B, typename T>
+    static void to_json(B& j, const T& v)
     {
-        template<typename B, typename T>
-        static void to_json(B& j, const T& v)
-        {
-            v1::to_json(j, v);
-        }
-        template<typename B, typename T>
-        static void from_json(const B& j, T& v)
-        {
-            v1::from_json(j, v);
-        }
-    };
-    using Mode = mode_v1;
-    #define MODE_LABEL "refl v1"
+        v1::to_json(j, v);
+    }
+    template<typename B, typename T>
+    static void from_json(const B& j, T& v)
+    {
+        v1::from_json(j, v);
+    }
+};
+using Mode = mode_v1;
+#define MODE_LABEL "refl v1"
 #else
-    struct mode_macro
+struct mode_macro
+{
+    template<typename B, typename T>
+    static void to_json(B& j, const T& v)
     {
-        template<typename B, typename T>
-        static void to_json(B& j, const T& v)
-        {
-            nlohmann::to_json(j, v);
-        }
-        template<typename B, typename T>
-        static void from_json(const B& j, T& v)
-        {
-            nlohmann::from_json(j, v);
-        }
-    };
-    using Mode = mode_macro;
-    #define MODE_LABEL "macro"
+        nlohmann::to_json(j, v);
+    }
+    template<typename B, typename T>
+    static void from_json(const B& j, T& v)
+    {
+        nlohmann::from_json(j, v);
+    }
+};
+using Mode = mode_macro;
+#define MODE_LABEL "macro"
 #endif
 
 // ---------------------------------------------------------------------------
@@ -221,15 +221,15 @@ static double median_ns_per_op(Fn&& one_op)
 static std::size_t flat_fp(const json& j)
 {
     return j.at("name").get_ref<const std::string&>().size()
-         + static_cast<std::size_t>(j.at("age").get<int>())
-         + j.at("tags").size();
+           + static_cast<std::size_t>(j.at("age").get<int>())
+           + j.at("tags").size();
 }
 static std::size_t nested_fp(const json& j)
 {
     return j.at("name").get_ref<const std::string&>().size()
-         + static_cast<std::size_t>(j.at("age").get<int>())
-         + j.at("history").size()
-         + static_cast<std::size_t>(j.at("home").at("zip").get<int>());
+           + static_cast<std::size_t>(j.at("age").get<int>())
+           + j.at("history").size()
+           + static_cast<std::size_t>(j.at("home").at("zip").get<int>());
 }
 
 template<typename T, typename Fp>
@@ -306,7 +306,8 @@ int main(int argc, char** argv)
     nested.name = "nested_" + std::to_string(seed);
     nested.age = seed % 80;
     nested.home = {"1 Main St " + std::to_string(seed % 100), "Springfield", 10000 + seed % 9000};
-    nested.history = {
+    nested.history =
+    {
         {"2 Old Rd", "Shelbyville", 11111},
         {"3 New Ave", "Capital City", 22222}
     };

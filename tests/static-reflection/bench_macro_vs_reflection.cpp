@@ -59,7 +59,7 @@ void to_json(BasicJsonType& j, const T& v)
 {
     j = BasicJsonType::object();
     template for (constexpr auto m : std::define_static_array(
-        std::meta::nonstatic_data_members_of(^^T, std::meta::access_context::unprivileged())))
+                      std::meta::nonstatic_data_members_of(^^T, std::meta::access_context::unprivileged())))
     {
         j[std::string(std::meta::identifier_of(m))] = v.[:m:];
     }
@@ -69,7 +69,7 @@ template<typename BasicJsonType, typename T>
 void from_json(const BasicJsonType& j, T& v)
 {
     template for (constexpr auto m : std::define_static_array(
-        std::meta::nonstatic_data_members_of(^^T, std::meta::access_context::unprivileged())))
+                      std::meta::nonstatic_data_members_of(^^T, std::meta::access_context::unprivileged())))
     {
         using M = typename [: std::meta::type_of(m) :];
         v.[:m:] = j.at(std::string(std::meta::identifier_of(m))).template get<M>();
@@ -84,7 +84,7 @@ void from_json(const BasicJsonType& j, T& v)
 // and bench_runtime.cpp); dispatch, pitfalls and coverage are documented
 // there and in EVALUATION.md §2.1/§2.5.
 #ifdef BENCH_ADL_REFLECTION
-    #include "refl2_codec.hpp"
+    #include <nlohmann/reflection_to_json.hpp>
 #endif
 
 // ---------------------------------------------------------------------------
@@ -100,15 +100,15 @@ void from_json(const BasicJsonType& j, T& v)
     bool active;
 
 #ifdef BENCH_REFLECTION
-    #define DEFINE_PERSON(i) struct person_##i \
+#define DEFINE_PERSON(i) struct person_##i \
     { \
         PERSON_FIELDS \
     };
 #else
-    // intrusive: the NLOHMANN_DEFINE_TYPE_INTRUSIVE call lives INSIDE the class
-    // body (it defines friend to_json/from_json); per-type user cost = 1 struct
-    // line + 1 macro line (the field lines are common to both modes)
-    #define DEFINE_PERSON(i) struct person_##i \
+// intrusive: the NLOHMANN_DEFINE_TYPE_INTRUSIVE call lives INSIDE the class
+// body (it defines friend to_json/from_json); per-type user cost = 1 struct
+// line + 1 macro line (the field lines are common to both modes)
+#define DEFINE_PERSON(i) struct person_##i \
     { \
         NLOHMANN_DEFINE_TYPE_INTRUSIVE(person_##i, name, age, height, tags, active) \
         PERSON_FIELDS \
@@ -341,7 +341,7 @@ PERSON(99)
 static std::size_t g_total = 0;
 
 #if defined(BENCH_ADL_REFLECTION)
-    #define USE(i) do \
+#define USE(i) do \
     { \
         person_##i p{}; \
         json j; \
@@ -350,7 +350,7 @@ static std::size_t g_total = 0;
         refl2::codec<false>::from_json(j, p); \
     } while (0);
 #elif defined(BENCH_REFLECTION)
-    #define USE(i) do \
+#define USE(i) do \
     { \
         person_##i p{}; \
         json j; \
@@ -359,7 +359,7 @@ static std::size_t g_total = 0;
         refl::from_json(j, p); \
     } while (0);
 #else
-    #define USE(i) do \
+#define USE(i) do \
     { \
         person_##i p{}; \
         json j; \

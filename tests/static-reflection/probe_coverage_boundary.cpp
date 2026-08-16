@@ -25,23 +25,37 @@
 #include <variant>
 #include <vector>
 #include <nlohmann/json.hpp>
-#include "refl2_codec.hpp"
+#include <nlohmann/reflection_to_json.hpp>
 #include <meta>
 
 using json = nlohmann::json;
 
 // (1) inheritance: public base with members
-struct Base { std::string base_name; int base_id{}; };
-struct Derived : Base { std::string own; };
+struct Base
+{
+    std::string base_name;
+    int base_id{};
+};
+struct Derived : Base
+{
+    std::string own;
+};
 
 // (2) union
-union U { int i; double d; };
+union U
+{
+    int i;
+    double d;
+};
 
 // (3) std::variant
 using V = std::variant<int, std::string>;
 
 // (4) optional<plain struct> / optional<int>
-struct Plain { int x{}; };
+struct Plain
+{
+    int x{};
+};
 using OptPlain = std::optional<Plain>;
 using OptInt   = std::optional<int>;
 
@@ -49,22 +63,38 @@ using OptInt   = std::optional<int>;
 using Ptr = int*;
 
 // (6) range with begin/end but NO value_type, with a public member
-struct RangeNoVT { int a{}; int* begin() { return nullptr; } int* end() { return nullptr; } };
+struct RangeNoVT
+{
+    int a{};
+    int* begin()
+    {
+        return nullptr;
+    } int* end()
+    {
+        return nullptr;
+    }
+};
 
 // (7) map with a non-string/non-arithmetic key
-struct Key { int k{}; };
+struct Key
+{
+    int k{};
+};
 using MapKey = std::map<Key, int>;
 
 // (8) non-default-constructible element
-struct NoDefault { NoDefault(int) {} };
+struct NoDefault
+{
+    NoDefault(int) {}
+};
 using VecNoDefault = std::vector<NoDefault>;
 
 #define SHOW(name, T) \
     std::printf("%-24s adl_elig=%d refl=%d arr=%d obj=%d\n", name, \
-        (int)refl2::detail::adl_branch_eligible_v<json, T>, \
-        (int)refl2::detail::is_reflectable_struct<false, T>::value, \
-        (int)refl2::detail::is_array_like<T>::value, \
-        (int)refl2::detail::is_object_like<T>::value)
+                (int)refl2::detail::to_adl_branch_eligible_v<json, T>, \
+                (int)refl2::detail::is_reflectable_struct<false, T>::value, \
+                (int)refl2::detail::is_array_like<T>::value, \
+                (int)refl2::detail::is_object_like<T>::value)
 
 int main()
 {
@@ -81,7 +111,9 @@ int main()
 
     std::printf("\n=== runtime: inheritance (base members now serialized) ===\n");
     Derived d;
-    d.base_name = "base"; d.base_id = 7; d.own = "own";
+    d.base_name = "base";
+    d.base_id = 7;
+    d.own = "own";
     json j;
     refl2::codec<false>::to_json(j, d);
     std::printf("Derived serialized: %s\n", j.dump().c_str());

@@ -40,7 +40,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include "refl2_codec.hpp"
+#include <nlohmann/reflection_to_json.hpp>
 
 #include <meta>
 #include <optional>
@@ -98,7 +98,7 @@ struct Celsius
 namespace nlohmann
 {
 template<>
-struct adl_serializer<Celsius, json>
+struct adl_serializer<Celsius, void>
 {
     static void to_json(json& j, const Celsius& c)
     {
@@ -147,25 +147,65 @@ class OnlyPrivate
 };
 
 // (F) inheritance
-struct Base2 { std::string base_name; int base_id{}; };
-struct Mid2 : Base2 { std::string mid; };
-struct Derived2 : Mid2 { std::string own; };
-struct PrivBase2 { int hidden{}; };
+struct Base2
+{
+    std::string base_name;
+    int base_id{};
+};
+struct Mid2 : Base2
+{
+    std::string mid;
+};
+struct Derived2 : Mid2
+{
+    std::string own;
+};
+struct PrivBase2
+{
+    int hidden{};
+};
 struct DerivedPriv : Base2, private PrivBase2
 {
     // private base => not an aggregate (C++17); ctor needed
     DerivedPriv(std::string bn, int bid, int h) : Base2{std::move(bn), bid}, PrivBase2{h} {}
     int own{};
 };
-struct Collide1 { int x{}; };
-struct Collide2 { int x{}; };
-struct Dia2 : Collide1, Collide2 { int y{}; };
-struct VBase { int vb{}; };
-struct V1 : virtual VBase { int x1{}; };
-struct V2 : virtual VBase { int x2{}; };
-struct DiaV : V1, V2 { int y{}; };
+struct Collide1
+{
+    int x{};
+};
+struct Collide2
+{
+    int x{};
+};
+struct Dia2 : Collide1, Collide2
+{
+    int y{};
+};
+struct VBase
+{
+    int vb{};
+};
+struct V1 : virtual VBase
+{
+    int x1{};
+};
+struct V2 : virtual VBase
+{
+    int x2{};
+};
+struct DiaV : V1, V2
+{
+    int y{};
+};
 struct IncompleteT; // forward-declared, never defined
-struct BF { int a : 3; int : 2; int b : 5; int c{}; };
+struct BF
+{
+    int a : 3;
+    int : 2;
+    int b : 5;
+    int c{};
+};
 
 // member-count facts used by the [0] classification checks
 template<typename T>
@@ -186,7 +226,7 @@ void to_json(json& j, const T& v)
 {
     j = json::object();
     template for (constexpr auto m : std::define_static_array(
-        std::meta::nonstatic_data_members_of(^^T, std::meta::access_context::unprivileged())))
+                      std::meta::nonstatic_data_members_of(^^T, std::meta::access_context::unprivileged())))
     {
         j[std::string(std::meta::identifier_of(m))] = v.[:m:];
     }
@@ -226,24 +266,26 @@ int main()
     // ---- trait-level facts ------------------------------------------------
     std::printf("[0] dispatch classification (compile-time)\n");
     check("scalar / string stay on the adl branch",
-          refl2::detail::adl_branch_eligible_v<json, int> &&
-          refl2::detail::adl_branch_eligible_v<json, std::string> &&
-          refl2::detail::adl_branch_eligible_v<json, mine::Date> &&
-          refl2::detail::adl_branch_eligible_v<json, Celsius>);
+          refl2::detail::to_adl_branch_eligible_v<json, int> &&
+          refl2::detail::to_adl_branch_eligible_v<json, std::string> &&
+          refl2::detail::to_adl_branch_eligible_v<json, mine::Date> &&
+          refl2::detail::to_adl_branch_eligible_v<json, Celsius>);
     check("array/object containers go to element recursion (never adl)",
-          !refl2::detail::adl_branch_eligible_v<json, std::vector<std::string>> &&
-          !refl2::detail::adl_branch_eligible_v<json, std::vector<mine::Date>> &&
-          !refl2::detail::adl_branch_eligible_v<json, std::vector<Address>> &&
-          !refl2::detail::adl_branch_eligible_v<json, std::map<std::string, Address>>);
+          !refl2::detail::to_adl_branch_eligible_v<json, std::vector<std::string>> &&
+          !refl2::detail::to_adl_branch_eligible_v<json, std::vector<mine::Date>> &&
+          !refl2::detail::to_adl_branch_eligible_v<json, std::vector<Address>> &&
+          !refl2::detail::to_adl_branch_eligible_v<json, std::map<std::string, Address>>);
     check("C arrays: char[N] stays on the string path, plain C array -> invalid",
-          refl2::detail::adl_branch_eligible_v<json, char[5]> &&
-          !refl2::detail::adl_branch_eligible_v<json, Address[2]> &&
+          refl2::detail::to_adl_branch_eligible_v<json, char[5]> &&
+          !refl2::detail::to_adl_branch_eligible_v<json, Address[2]> &&
           !refl2::detail::is_reflectable_struct<false, Address[2]>::value);
-    check("plain struct / container-of-plain -> NOT adl-serializable",
-          !refl2::detail::is_adl_serializable<json, Address>::value &&
-          !refl2::detail::is_adl_serializable<json, std::vector<Address>>::value &&
-          !refl2::detail::is_adl_serializable<json, std::map<std::string, Address>>::value &&
-          !refl2::detail::is_adl_deserializable<json, std::vector<Address>>::value);
+    check("plain struct: adl-viable via the catch-all, but excluded from the adl branch",
+          refl2::detail::is_adl_serializable<json, Address>::value &&
+          refl2::detail::is_adl_deserializable<json, Address>::value &&
+          !refl2::detail::to_adl_branch_eligible_v<json, Address> &&
+          !refl2::detail::from_adl_branch_eligible_v<json, Address> &&
+          !refl2::detail::to_adl_branch_eligible_v<json, std::vector<Address>> &&
+          !refl2::detail::to_adl_branch_eligible_v<json, std::map<std::string, Address>>);
     check("nested json value is adl-viable via the string_like trap, but the",
           refl2::detail::is_adl_serializable<json, json>::value && refl2::detail::is_nested_json<json, json>::value);
     check("  json branch (priority 5) preempts it", true);
@@ -290,7 +332,7 @@ int main()
           jc.dump() == R"({"celsius":21.5})");
 
     Event ev{"launch", {2026, 8, 15}, {{2026, 8, 14}, {2026, 8, 16}},
-             {{"3 New Ave", "Capital City", 22222}}, json{{"launchpad", "39A"}}};
+        {{"3 New Ave", "Capital City", 22222}}, json{{"launchpad", "39A"}}};
     json je;
     codec_public::to_json(je, ev);
     const std::string want_e =
@@ -316,7 +358,7 @@ int main()
     // declaration order is owner[0], balance[1], secret_id_[2]
     {
         constexpr auto secret_m = std::meta::nonstatic_data_members_of(
-            ^^Account, std::meta::access_context::unchecked())[2];
+                                      ^^Account, std::meta::access_context::unchecked())[2];
         acct.[:secret_m:] = 99;
     }
 
@@ -342,10 +384,10 @@ int main()
           !refl2::detail::is_array_like<std::optional<Address>>::value);
     {
         json ja1, ja2, jn1, jn2;
-        codec_public::to_json(ja1, std::optional<int>{5});
-        codec_public::to_json(ja2, std::optional<int>{});
-        nlohmann::to_json(jn1, std::optional<int>{5});
-        nlohmann::to_json(jn2, std::optional<int>{});
+        codec_public::to_json(ja1, std::optional<int> {5});
+        codec_public::to_json(ja2, std::optional<int> {});
+        nlohmann::to_json(jn1, std::optional<int> {5});
+        nlohmann::to_json(jn2, std::optional<int> {});
         check("optional<int>: 5 / null, byte-equal to native nlohmann",
               ja1.dump() == "5" && ja2.dump() == "null" && ja1 == jn1 && ja2 == jn2);
         std::optional<int> out;
@@ -364,7 +406,7 @@ int main()
         check("optional<Address>: from_json round-trip",
               oa2.has_value() && oa2->city == "Town" && oa2->zip == 33333);
         json jnull;
-        codec_public::to_json(jnull, std::optional<Address>{});
+        codec_public::to_json(jnull, std::optional<Address> {});
         check("optional<Address>: empty -> null", jnull.is_null());
         std::optional<Address> oa3{Address{"x", "y", 1}};
         codec_public::from_json(jnull, oa3);
@@ -413,7 +455,10 @@ int main()
           !refl2::detail::is_array_like<BF>::value &&
           refl2::detail::member_count_v<false, BF> == 3);
     {
-        BF bf{}; bf.a = 3; bf.b = 5; bf.c = 9;
+        BF bf{};
+        bf.a = 3;
+        bf.b = 5;
+        bf.c = 9;
         json jbf;
         codec_public::to_json(jbf, bf);
         check("named bit-fields serialize; unnamed bit-field skipped",
