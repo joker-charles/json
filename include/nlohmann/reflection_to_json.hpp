@@ -127,9 +127,21 @@ struct json_name
     // ("does not have structural type"), a const char* member makes
     // meta::extract fail ("reflect_constant failed"), and string literals can
     // never be template arguments. A char array is structural AND extractable
-    // (verified). Keys longer than the array are a compile error (the string
-    // literal does not fit) — effectively the documented key-length limit.
-    char value[64];
+    // (verified). The consteval constructor turns an over-long key into a
+    // clear static_assert instead of the opaque aggregate "initializer-string
+    // for char[64] too long" error (verified: it does not break structuralness
+    // or meta::extract). Keys longer than 63 chars are the documented limit.
+    char value[64]{};
+
+    template<std::size_t N>
+    consteval json_name(const char (&s)[N])
+    {
+        static_assert(N <= 64, "refl2::json_name key too long (max 63 chars, incl. NUL)");
+        for (std::size_t i = 0; i < N; ++i)
+        {
+            value[i] = s[i];
+        }
+    }
 };
 struct json_ignore {};
 struct json_default {};
@@ -1013,12 +1025,27 @@ struct codec
     {
         if constexpr (requires { v.push_back(typename T::value_type{}); })
         {
+            // sequential containers (vector, list, deque): append
             v.clear();
             for (auto&& e : j)
             {
                 typename T::value_type elem{};
                 deserialize_one(e, elem);
                 v.push_back(std::move(elem));
+            }
+        }
+        else if constexpr (requires { v.insert(typename T::value_type{}); })
+        {
+            // insert-based associative containers (set, multiset,
+            // unordered_set): no push_back AND no operator[] — must not fall
+            // into the fixed-size index-assign branch below (set has no
+            // operator[]; that branch used to be a hard compile error).
+            v.clear();
+            for (auto&& e : j)
+            {
+                typename T::value_type elem{};
+                deserialize_one(e, elem);
+                v.insert(std::move(elem));
             }
         }
         else

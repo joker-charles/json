@@ -5504,11 +5504,15 @@ concept array_like =
 //   meta traits, both already included before it.
 //
 // COVERAGE BOUNDARY (falls to the priority-0 static_assert):
-//   unions; std::variant (variant_size/variant_alternative integration is a
-//   future extension); pointers / self-referential types; non-default-
+//   unions; pointers / self-referential types; non-default-
 //   constructible types on the from_json side (the T& form requires an
-//   existing object; has_non_default_from_json is not provided); C arrays
-//   (char[N] still serializes as a string via the existing overloads).
+//   existing object; has_non_default_from_json is not provided) — and
+//   std::variant ALTERNATIVES must be default-constructible on the
+//   from_json side (emplace<I>()); C arrays (char[N] still serializes as
+//   a string via the existing overloads).
+//   std::variant itself IS supported (M7): the dedicated codec branch
+//   serializes the active alternative as {"index": N, "value": <alt>}.
+//   See docs/static-reflection/M7_VARIANT.md.
 
 
 
@@ -5524,6 +5528,7 @@ concept array_like =
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <variant>    // is_variant, variant_alternative_t (M7)
 
 // #include <nlohmann/adl_serializer.hpp>
 
@@ -5557,9 +5562,21 @@ struct json_name
     // ("does not have structural type"), a const char* member makes
     // meta::extract fail ("reflect_constant failed"), and string literals can
     // never be template arguments. A char array is structural AND extractable
-    // (verified). Keys longer than the array are a compile error (the string
-    // literal does not fit) — effectively the documented key-length limit.
-    char value[64];
+    // (verified). The consteval constructor turns an over-long key into a
+    // clear static_assert instead of the opaque aggregate "initializer-string
+    // for char[64] too long" error (verified: it does not break structuralness
+    // or meta::extract). Keys longer than 63 chars are the documented limit.
+    char value[64] {};
+
+    template<std::size_t N>
+    consteval json_name(const char (&s)[N])
+    {
+        static_assert(N <= 64, "refl2::json_name key too long (max 63 chars, incl. NUL)");
+        for (std::size_t i = 0; i < N; ++i)
+        {
+            value[i] = s[i];
+        }
+    }
 };
 struct json_ignore {};
 struct json_default {};
@@ -5744,6 +5761,11 @@ struct is_string_like_from
 // serialize as "[5]" instead of "5"/null (verified before this guard).
 template<typename T> struct is_optional : std::false_type {};
 template<typename T> struct is_optional<std::optional<T>> : std::true_type {};
+
+// std::variant (M7): the dedicated codec branch serializes the active
+// alternative as {"index": N, "value": <alternative>} (oneof semantics).
+template<typename T> struct is_variant : std::false_type {};
+template<typename... Ts> struct is_variant<std::variant<Ts...>> : std::true_type {};
 
 template<typename B, typename T>
 struct is_nested_json : std::is_same<std::remove_cvref_t<T>, B> {};
@@ -5989,7 +6011,7 @@ struct to_json_eligible
         && !std::is_same<std::remove_cvref_t<T>, std::experimental::filesystem::path>::value
 #endif
         && !has_user_to_json<B, T>::value       // non-circular ADL probe
-        && is_reflectable_struct<false, T>::value;
+        && (is_reflectable_struct<false, T>::value || is_variant<T>::value);
 };
 
 template<typename B, typename T>
@@ -6016,7 +6038,7 @@ struct from_json_eligible
 #endif
         && !is_optional<T>::value
         && !has_user_from_json<B, T>::value     // non-circular ADL probe
-        && is_reflectable_struct<false, T>::value;
+        && (is_reflectable_struct<false, T>::value || is_variant<T>::value);
 };
 
 // ---------------------------------------------------------------------------
@@ -6254,9 +6276,31 @@ struct codec
     // ---- to_json side -----------------------------------------------------
     template<typename B, typename T>
     requires detail::is_nested_json<B, T>::value
-    static void serialize_one_impl(B& j, const T& v, detail::priority_tag<6>)
+    static void serialize_one_impl(B& j, const T& v, detail::priority_tag<7>)
     {
         j = v; // native value nesting; MUST precede adl (string_like trap)
+    }
+
+    template<typename B, typename T>
+    requires detail::is_variant<T>::value
+    static void serialize_one_impl(B& j, const T& v, detail::priority_tag<6>)
+    {
+        // oneof wire format: {"index": <active alternative index>,
+        // "value": <active alternative serialized>}; std::monostate carries
+        // no payload and serializes as null
+        j = B::object();
+        j["index"] = v.index();
+        std::visit([&](const auto & alt)
+        {
+            if constexpr (std::is_same_v<std::remove_cvref_t<decltype(alt)>, std::monostate>)
+            {
+                j["value"] = nullptr;
+            }
+            else
+            {
+                serialize_one(j["value"], alt);
+            }
+        }, v);
     }
 
     template<typename B, typename T>
@@ -6333,23 +6377,59 @@ struct codec
                       "customization, not a reflectable struct, and not an "
                       "array/object-like container. Define a to_json for the "
                       "type (or specialize nlohmann::adl_serializer). "
-                      "Unions and std::variant are not supported (variant "
-                      "would need variant_size/variant_alternative "
-                      "integration), nor are pointers/self-referential types.");
+                      "Unions are not supported, nor are "
+                      "pointers/self-referential types.");
     }
 
     template<typename B, typename T>
     static void serialize_one(B& j, const T& v)
     {
-        serialize_one_impl(j, v, detail::priority_tag<6> {});
+        serialize_one_impl(j, v, detail::priority_tag<7> {});
     }
 
     // ---- from_json side (symmetric) --------------------------------------
     template<typename B, typename T>
     requires detail::is_nested_json<B, T>::value
-    static void deserialize_one_impl(const B& j, T& v, detail::priority_tag<6>)
+    static void deserialize_one_impl(const B& j, T& v, detail::priority_tag<7>)
     {
         v = j;
+    }
+
+    template<typename B, typename T>
+    requires detail::is_variant<T>::value
+    static void deserialize_one_impl(const B& j, T& v, detail::priority_tag<6>)
+    {
+        // runtime index dispatch over the alternatives (index_sequence fold);
+        // each alternative must be default-constructible (emplace<I>())
+        const std::size_t idx = j.at("index").template get<std::size_t>();
+        deserialize_variant_impl<B, T>(j, v, idx, std::make_index_sequence<std::variant_size_v<T>> {});
+    }
+
+    template<typename B, typename T, std::size_t... I>
+    static void deserialize_variant_impl(const B& j, T& v, const std::size_t idx,
+                                         std::index_sequence<I...>)
+    {
+        bool handled = false;
+        (..., (idx == I ? (handled = true, emplace_and_deserialize<B, T, I>(j, v)) : void()));
+        if (!handled)
+        {
+            JSON_THROW(nlohmann::detail::type_error::create(
+                           302, nlohmann::detail::concat("cannot parse variant: index ",
+                                   std::to_string(idx), " out of range (0..",
+                                   std::to_string(std::variant_size_v<T> - 1), ")"),
+                           &j));
+        }
+    }
+
+    template<typename B, typename T, std::size_t I>
+    static void emplace_and_deserialize(const B& j, T& v)
+    {
+        using Alt = std::variant_alternative_t<I, T>;
+        v.template emplace<I>();
+        if constexpr (!std::is_same_v<Alt, std::monostate>)
+        {
+            deserialize_one(j.at("value"), std::get<I>(v));
+        }
     }
 
     template<typename B, typename T>
@@ -6380,12 +6460,27 @@ struct codec
     {
         if constexpr (requires { v.push_back(typename T::value_type{}); })
         {
+            // sequential containers (vector, list, deque): append
             v.clear();
             for (auto&& e : j)
             {
                 typename T::value_type elem{};
                 deserialize_one(e, elem);
                 v.push_back(std::move(elem));
+            }
+        }
+        else if constexpr (requires { v.insert(typename T::value_type{}); })
+        {
+            // insert-based associative containers (set, multiset,
+            // unordered_set): no push_back AND no operator[] — must not fall
+            // into the fixed-size index-assign branch below (set has no
+            // operator[]; that branch used to be a hard compile error).
+            v.clear();
+            for (auto&& e : j)
+            {
+                typename T::value_type elem{};
+                deserialize_one(e, elem);
+                v.insert(std::move(elem));
             }
         }
         else
@@ -6449,17 +6544,16 @@ struct codec
                       "customization, not a reflectable struct, and not an "
                       "array/object-like container. Define a from_json for the "
                       "type (or specialize nlohmann::adl_serializer). "
-                      "Unions and std::variant are not supported (variant "
-                      "would need variant_size/variant_alternative "
-                      "integration), nor are pointers/self-referential types, "
-                      "nor non-default-constructible types (the T& form needs "
+                      "Unions are not supported, nor are "
+                      "pointers/self-referential types, nor "
+                      "non-default-constructible types (the T& form needs "
                       "an existing object).");
     }
 
     template<typename B, typename T>
     static void deserialize_one(const B& j, T& v)
     {
-        deserialize_one_impl(j, v, detail::priority_tag<6> {});
+        deserialize_one_impl(j, v, detail::priority_tag<7> {});
     }
 
     // ---- reflected struct: member loop with pre-built static keys ---------
