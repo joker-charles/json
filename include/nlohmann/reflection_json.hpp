@@ -37,6 +37,15 @@
 //   * default-construct/destroy are dispatched by a `template for` over ALL
 //                  value_t enumerators, so adding a value_t without wiring it
 //                  is a COMPILE ERROR, never a silent drift.
+//
+// Binary formats (M3 + M4B + M4B-2): the value_t -> byte-code mapping of
+// every format is a reflection-generated consteval table (kMsgpackCodes /
+// kUbjsonCodes / kBsonCodes); writers dispatch by `template for` over
+// kValueTInfos with per-enumerator actions, readers (currently only BSON,
+// reflection_bson_parser) dispatch through the reverse kBsonsLoad table
+// (byte code -> {union slot, payload kind}). Byte-level behavior is
+// differential-tested byte-identical against the library (m3_binary.cpp /
+// m4_binary.cpp / m4b_bson_reader.cpp).
 
 #pragma once
 
@@ -714,6 +723,11 @@ struct reflection_serializer
             out += f > 0 ? "1e+999" : "-1e+999";
             return;
         }
+        if (std::signbit(f) && f == 0.0)
+        {
+            out += "-0.0"; // the library dumps negative zero as "-0.0"
+            return;
+        }
         if (f == static_cast<long long>(f) && std::abs(f) < 1e17)
         {
             // integral value -> "N.N0" like the library (e.g. 3.0 -> "3.0")
@@ -1087,6 +1101,58 @@ consteval auto codes_impl(std::index_sequence<I...>)
 {
     return std::array<std::uint8_t, sizeof...(I)> { CodeOf<kSlotValueT[I]>::value... };
 }
+
+// --- BSON LOAD table (read direction): byte code -> {union slot, payload kind}
+// The writer table (bson_code, above) maps value_t -> primary byte code; the
+// reader needs one more dimension — 0x10 (int32) and 0x12 (int64) map to the
+// SAME value_t (number_integer) but carry different payload widths — so the
+// reverse table entries carry a payload kind, not just a value_t. Generated
+// from 9 consteval specializations (one per BSON element type), indexed by
+// the raw byte code; unused codes are invalid.
+enum class bson_payload_kind : std::uint8_t
+{
+    double_fixed,   // 8-byte LE double
+    string_len,     // int32 len + bytes + 0x00
+    object_doc,     // nested document -> object
+    array_doc,      // nested document -> array
+    binary_len,     // int32 len + 1-byte subtype + bytes
+    boolean_byte,   // 1 byte
+    null_fixed,     // no payload
+    int32_le,       // 4-byte LE signed
+    int64_le,       // 8-byte LE signed
+    uint64_le,      // 8-byte LE unsigned
+    invalid = 0xFF  // must come LAST — enumerators increment from here
+};
+
+struct bson_load_entry
+{
+    std::uint8_t slot;  // union slot index 0..7, or 0xFF when the type has no slot (null)
+    std::uint8_t kind;  // bson_payload_kind
+};
+
+template<std::uint8_t Code> struct bson_load_code
+{
+    static constexpr bson_load_entry value = {0xFF, static_cast<std::uint8_t>(bson_payload_kind::invalid)};
+};
+template<> struct bson_load_code<0x01> { static constexpr bson_load_entry value = {slot_index<value_t::number_float>::value, static_cast<std::uint8_t>(bson_payload_kind::double_fixed)}; };
+template<> struct bson_load_code<0x02> { static constexpr bson_load_entry value = {slot_index<value_t::string>::value, static_cast<std::uint8_t>(bson_payload_kind::string_len)}; };
+template<> struct bson_load_code<0x03> { static constexpr bson_load_entry value = {slot_index<value_t::object>::value, static_cast<std::uint8_t>(bson_payload_kind::object_doc)}; };
+template<> struct bson_load_code<0x04> { static constexpr bson_load_entry value = {slot_index<value_t::array>::value, static_cast<std::uint8_t>(bson_payload_kind::array_doc)}; };
+template<> struct bson_load_code<0x05> { static constexpr bson_load_entry value = {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(bson_payload_kind::binary_len)}; };
+template<> struct bson_load_code<0x08> { static constexpr bson_load_entry value = {slot_index<value_t::boolean>::value, static_cast<std::uint8_t>(bson_payload_kind::boolean_byte)}; };
+template<> struct bson_load_code<0x0A> { static constexpr bson_load_entry value = {0xFF, static_cast<std::uint8_t>(bson_payload_kind::null_fixed)}; }; // null: no union slot
+template<> struct bson_load_code<0x10> { static constexpr bson_load_entry value = {slot_index<value_t::number_integer>::value, static_cast<std::uint8_t>(bson_payload_kind::int32_le)}; };
+template<> struct bson_load_code<0x12> { static constexpr bson_load_entry value = {slot_index<value_t::number_integer>::value, static_cast<std::uint8_t>(bson_payload_kind::int64_le)}; };
+template<> struct bson_load_code<0x11> { static constexpr bson_load_entry value = {slot_index<value_t::number_unsigned>::value, static_cast<std::uint8_t>(bson_payload_kind::uint64_le)}; };
+
+template<std::size_t... I>
+consteval auto load_table_impl(std::index_sequence<I...>)
+{
+    return std::array<bson_load_entry, sizeof...(I)>
+    {
+        bson_load_code<static_cast<std::uint8_t>(I)>::value...
+    };
+}
 } // namespace refl_detail
 
 // primary-code tables, one per binary format (indexed by union slot, 0..7)
@@ -1097,10 +1163,46 @@ constexpr auto kUbjsonCodes =
 constexpr auto kBsonCodes =
     refl_detail::codes_impl<refl_detail::bson_code>(std::make_index_sequence<8> {});
 
+// reverse BSON table: raw element-type byte -> load entry (read direction)
+constexpr auto kBsonsLoad =
+    refl_detail::load_table_impl(std::make_index_sequence<256> {});
+
 // the tables cover exactly the 8 union slots; null/discarded have no slot
 static_assert(kMsgpackCodes.size() == 8 && kUbjsonCodes.size() == 8 && kBsonCodes.size() == 8,
               "binary byte-code tables must cover every json_value member");
 static_assert(kUbjsonCodes[slot_index<value_t::null>::has ? 0 : 0] == kUbjsonCodes[0], "");
+
+// BSON load-table completeness: each of the 9 element types has a legal entry,
+// and the union slots match the writer table / the value_t enumeration —
+// adding a value_t or changing a BSON element type is a compile error, never
+// a silent parse drift.
+static_assert(kBsonsLoad.size() == 256, "BSON load table must cover the whole byte range");
+static_assert(kBsonsLoad[0x01].slot == slot_index<value_t::number_float>::value &&
+              kBsonsLoad[0x01].kind == static_cast<std::uint8_t>(refl_detail::bson_payload_kind::double_fixed) &&
+              kBsonCodes[slot_index<value_t::number_float>::value] == 0x01, "BSON double entry");
+static_assert(kBsonsLoad[0x02].slot == slot_index<value_t::string>::value &&
+              kBsonsLoad[0x02].kind == static_cast<std::uint8_t>(refl_detail::bson_payload_kind::string_len) &&
+              kBsonCodes[slot_index<value_t::string>::value] == 0x02, "BSON string entry");
+static_assert(kBsonsLoad[0x03].slot == slot_index<value_t::object>::value &&
+              kBsonsLoad[0x03].kind == static_cast<std::uint8_t>(refl_detail::bson_payload_kind::object_doc) &&
+              kBsonCodes[slot_index<value_t::object>::value] == 0x03, "BSON object entry");
+static_assert(kBsonsLoad[0x04].slot == slot_index<value_t::array>::value &&
+              kBsonsLoad[0x04].kind == static_cast<std::uint8_t>(refl_detail::bson_payload_kind::array_doc) &&
+              kBsonCodes[slot_index<value_t::array>::value] == 0x04, "BSON array entry");
+static_assert(kBsonsLoad[0x05].slot == slot_index<value_t::binary>::value &&
+              kBsonsLoad[0x05].kind == static_cast<std::uint8_t>(refl_detail::bson_payload_kind::binary_len) &&
+              kBsonCodes[slot_index<value_t::binary>::value] == 0x05, "BSON binary entry");
+static_assert(kBsonsLoad[0x08].slot == slot_index<value_t::boolean>::value &&
+              kBsonsLoad[0x08].kind == static_cast<std::uint8_t>(refl_detail::bson_payload_kind::boolean_byte) &&
+              kBsonCodes[slot_index<value_t::boolean>::value] == 0x08, "BSON boolean entry");
+static_assert(kBsonsLoad[0x0A].kind == static_cast<std::uint8_t>(refl_detail::bson_payload_kind::null_fixed),
+              "BSON null entry"); // null has no union slot, so no slot check
+static_assert(kBsonsLoad[0x10].slot == slot_index<value_t::number_integer>::value &&
+              kBsonsLoad[0x10].kind == static_cast<std::uint8_t>(refl_detail::bson_payload_kind::int32_le), "BSON int32 entry");
+static_assert(kBsonsLoad[0x12].slot == slot_index<value_t::number_integer>::value &&
+              kBsonsLoad[0x12].kind == static_cast<std::uint8_t>(refl_detail::bson_payload_kind::int64_le), "BSON int64 entry");
+static_assert(kBsonsLoad[0x11].slot == slot_index<value_t::number_unsigned>::value &&
+              kBsonsLoad[0x11].kind == static_cast<std::uint8_t>(refl_detail::bson_payload_kind::uint64_le), "BSON uint64 entry");
 
 // ---------------------------------------------------------------------------
 // Reflection-driven MessagePack writer.
@@ -1883,6 +1985,286 @@ struct reflection_bson_serializer
             s += calc_element_size(std::to_string(idx++), el);
         }
         return sizeof(std::int32_t) + s + 1ul;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Reflection-driven BSON reader.
+//
+// Mirror image of reflection_bson_serializer: bytes -> basic_json_reflection.
+// The element-type dispatch comes from the reflection-generated kBsonsLoad
+// table (byte code -> {union slot, payload kind}); the payload kind selects
+// the reading action. Document framing (int32 size, 0x00 terminator, cstr
+// names, length prefixes) and error handling are plain mechanics — the
+// reflection contribution is the routing table plus its compile-time
+// completeness guarantee, exactly as on the writer side.
+//
+// Semantics mirror nlohmann's from_bson (verified against
+// detail/input/binary_reader.hpp): top-level value must be an object;
+// strings carry [int32 len][len-1 bytes][0x00]; binaries [int32 len][1-byte
+// subtype][len bytes]; arrays are documents whose keys are ignored
+// (position-based, matching the library); the declared document size must
+// equal the bytes consumed. Errors return false + a diagnostic (this study
+// library has no exception machinery); differential testing covers legal
+// input only — malformed input is guaranteed to fail safely, not to match
+// the library's exact error codes.
+// ---------------------------------------------------------------------------
+struct reflection_bson_parser
+{
+    std::string err;
+
+    explicit reflection_bson_parser(const std::vector<std::uint8_t>& in)
+        : data(in)
+    {}
+
+    bool parse(basic_json_reflection& out)
+    {
+        pos = 0;
+        json top;
+        if (!parse_document(false, top))
+        {
+            return false;
+        }
+        if (!top.is_object())
+        {
+            err = "to deserialize from BSON, top-level type must be object";
+            return false;
+        }
+        out.assign_from(top);
+        return true;
+    }
+
+    const std::string& error() const
+    {
+        return err;
+    }
+
+  private:
+    const std::vector<std::uint8_t>& data;
+    std::size_t pos = 0;
+
+    bool fail(const char* what)
+    {
+        if (err.empty())
+        {
+            err = what;
+        }
+        return false;
+    }
+
+    bool at_end() const
+    {
+        return pos >= data.size();
+    }
+
+    bool take(std::uint8_t& b)
+    {
+        if (at_end())
+        {
+            return fail("unexpected end of input");
+        }
+        b = data[pos++];
+        return true;
+    }
+
+    // little-endian fixed-width read (same semantics as the library's get_number)
+    template<typename T>
+    bool read_le(T& out)
+    {
+        if (data.size() - pos < sizeof(T))
+        {
+            return fail("truncated number");
+        }
+        T v{};
+        for (std::size_t i = 0; i < sizeof(T); ++i)
+        {
+            v |= static_cast<T>(data[pos + i]) << (8 * i);
+        }
+        pos += sizeof(T);
+        out = v;
+        return true;
+    }
+
+    bool read_cstr(std::string& out)
+    {
+        const std::size_t start = pos;
+        while (true)
+        {
+            if (at_end())
+            {
+                return fail("unterminated cstring");
+            }
+            if (data[pos++] == 0x00)
+            {
+                break;
+            }
+        }
+        out.assign(reinterpret_cast<const char*>(data.data()) + start, pos - start - 1);
+        return true;
+    }
+
+    // [int32 document_size][elements...][0x00]; element = [type][name][0x00][value]
+    bool parse_document(const bool is_array, json& out)
+    {
+        const std::size_t doc_start = pos;
+        std::int32_t doc_size{};
+        if (!read_le(doc_size) || doc_size < 0)
+        {
+            return fail("invalid document size");
+        }
+
+        json::array_t arr;
+        json::object_t obj;
+        while (true)
+        {
+            std::uint8_t code{};
+            if (!take(code))
+            {
+                return fail("unexpected end of document");
+            }
+            if (code == 0x00)
+            {
+                break; // document terminator
+            }
+            std::string name;
+            if (!read_cstr(name))
+            {
+                return false;
+            }
+            json val;
+            if (!parse_element(code, val))
+            {
+                return false;
+            }
+            if (is_array)
+            {
+                arr.push_back(std::move(val)); // BSON array keys are ignored (position-based)
+            }
+            else
+            {
+                obj.emplace(std::move(name), std::move(val));
+            }
+        }
+
+        if (static_cast<std::size_t>(doc_size) != pos - doc_start)
+        {
+            return fail("document size does not match bytes read");
+        }
+
+        if (is_array)
+        {
+            out = std::move(arr);
+        }
+        else
+        {
+            out = std::move(obj);
+        }
+        return true;
+    }
+
+    // payload dispatch: routing comes from the reflection-generated kBsonsLoad
+    // table; each case below is the reading mechanism for one payload kind.
+    bool parse_element(const std::uint8_t code, json& out)
+    {
+        const refl_detail::bson_load_entry entry = kBsonsLoad[code];
+        switch (static_cast<refl_detail::bson_payload_kind>(entry.kind))
+        {
+            case refl_detail::bson_payload_kind::double_fixed:
+            {
+                // little-endian double via byte assembly (no shift on double)
+                if (data.size() - pos < sizeof(double))
+                {
+                    return fail("truncated number");
+                }
+                std::uint64_t bits = 0;
+                for (std::size_t i = 0; i < sizeof(double); ++i)
+                {
+                    bits |= static_cast<std::uint64_t>(data[pos + i]) << (8 * i);
+                }
+                pos += sizeof(double);
+                double v{};
+                std::memcpy(&v, &bits, sizeof(double));
+                out = v;
+                return true;
+            }
+            case refl_detail::bson_payload_kind::string_len:
+            {
+                std::int32_t len{};
+                if (!read_le(len) || len < 1)
+                {
+                    return fail("invalid string length");
+                }
+                const auto n = static_cast<std::size_t>(len);
+                if (data.size() - pos < n)
+                {
+                    return fail("truncated string");
+                }
+                std::string s(reinterpret_cast<const char*>(data.data()) + pos, n - 1);
+                pos += n;
+                out = std::move(s);
+                return true;
+            }
+            case refl_detail::bson_payload_kind::object_doc:
+                return parse_document(false, out);
+            case refl_detail::bson_payload_kind::array_doc:
+                return parse_document(true, out);
+            case refl_detail::bson_payload_kind::binary_len:
+            {
+                std::int32_t len{};
+                if (!read_le(len) || len < 0)
+                {
+                    return fail("invalid binary length");
+                }
+                std::uint8_t subtype{};
+                if (!take(subtype))
+                {
+                    return false;
+                }
+                const auto n = static_cast<std::size_t>(len);
+                if (data.size() - pos < n)
+                {
+                    return fail("truncated binary");
+                }
+                // byte_container_with_subtype has no iterator-pair ctor —
+                // build the container first, then the binary wrapper
+                std::vector<std::uint8_t> raw(data.begin() + pos, data.begin() + pos + n);
+                json::binary_t bin(std::move(raw));
+                bin.set_subtype(subtype);
+                pos += n;
+                out = std::move(bin);
+                return true;
+            }
+            case refl_detail::bson_payload_kind::boolean_byte:
+            {
+                std::uint8_t b{};
+                return take(b) && (out = (b != 0), true);
+            }
+            case refl_detail::bson_payload_kind::null_fixed:
+                out = nullptr;
+                return true;
+            case refl_detail::bson_payload_kind::int32_le:
+            {
+                std::int32_t v{};
+                return read_le(v) && (out = static_cast<json::number_integer_t>(v), true);
+            }
+            case refl_detail::bson_payload_kind::int64_le:
+            {
+                std::int64_t v{};
+                return read_le(v) && (out = v, true);
+            }
+            case refl_detail::bson_payload_kind::uint64_le:
+            {
+                std::uint64_t v{};
+                return read_le(v) && (out = v, true);
+            }
+            default:
+            {
+                char hex[5];
+                std::snprintf(hex, sizeof hex, "0x%02X", code);
+                err = std::string("unsupported BSON element type ") + hex;
+                return false;
+            }
+        }
     }
 };
 
