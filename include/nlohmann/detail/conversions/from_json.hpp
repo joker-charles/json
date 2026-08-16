@@ -34,6 +34,16 @@
     #include <nlohmann/detail/concepts/concepts.hpp>
 #endif
 
+// C++26 static reflection (P2996): reflection-driven generic from_json for
+// user-defined types. Active only when the compiler provides reflection
+// (g++-16 -std=c++26 -freflection defines __cpp_impl_reflection /
+// __cpp_lib_reflection); otherwise this include is inert and the C++11
+// contract is untouched. The catch-all overload below must be declared
+// before from_json_fn (it is) so the CPO's unqualified lookup finds it.
+#if defined(__cpp_impl_reflection) && defined(__cpp_lib_reflection)
+    #include <nlohmann/reflection_to_json.hpp>
+#endif
+
 // include after macro_scope.hpp
 #ifdef JSON_HAS_CPP_17
     #include <optional> // optional
