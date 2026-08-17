@@ -68,6 +68,12 @@ struct Person
     std::map<std::string, Address> book;
 };
 
+// C array member: must route through the library's C-array overloads (b32f811c)
+struct CArrayHolder
+{
+    Address arr[2];
+};
+
 // (B) user-customized types
 namespace mine
 {
@@ -275,9 +281,10 @@ int main()
           !refl2::detail::to_adl_branch_eligible_v<json, std::vector<mine::Date>> &&
           !refl2::detail::to_adl_branch_eligible_v<json, std::vector<Address>> &&
           !refl2::detail::to_adl_branch_eligible_v<json, std::map<std::string, Address>>);
-    check("C arrays: char[N] stays on the string path, plain C array -> invalid",
+    check("C arrays: char[N] stays on the string path, plain C array -> adl/library C-array overload",
           refl2::detail::to_adl_branch_eligible_v<json, char[5]> &&
-          !refl2::detail::to_adl_branch_eligible_v<json, Address[2]> &&
+          refl2::detail::to_adl_branch_eligible_v<json, Address[2]> &&
+          refl2::detail::from_adl_branch_eligible_v<json, Address[2]> &&
           !refl2::detail::is_reflectable_struct<false, Address[2]>::value);
     check("plain struct: adl-viable via the catch-all, but excluded from the adl branch",
           refl2::detail::is_adl_serializable<json, Address>::value &&
@@ -411,6 +418,21 @@ int main()
         std::optional<Address> oa3{Address{"x", "y", 1}};
         codec_public::from_json(jnull, oa3);
         check("optional<Address>: null -> nullopt", !oa3.has_value());
+    }
+
+    // ---- (H) C arrays: library overloads via the adl branch ---------------
+    std::printf("\n[H] C arrays: library overloads via the adl branch\n");
+    {
+        CArrayHolder h{{{"A", "CityA", 1}, {"B", "CityB", 2}}};
+        json jh;
+        codec_public::to_json(jh, h);
+        check("C array member -> array of objects",
+              jh.dump() == R"({"arr":[{"city":"CityA","street":"A","zip":1},{"city":"CityB","street":"B","zip":2}]})");
+        CArrayHolder h2{};
+        codec_public::from_json(jh, h2);
+        check("C array member round-trip",
+              h2.arr[0].street == "A" && h2.arr[0].city == "CityA" && h2.arr[0].zip == 1 &&
+              h2.arr[1].street == "B" && h2.arr[1].city == "CityB" && h2.arr[1].zip == 2);
     }
 
     // ---- (F) inheritance: base-class members are serialized ---------------
