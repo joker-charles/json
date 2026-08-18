@@ -5543,9 +5543,9 @@ concept array_like =
     #define JSON_HAS_CPP_26_REFLECTION 1
 #endif
 
+#include <cstdio>     // fprintf, abort (fixed-size from_json size mismatch)
 #include <array>      // array (compile-time key storage)
 #include <charconv>   // from_chars
-#include <cstdio>     // fprintf, abort (fixed-size from_json size mismatch)
 #include <forward_list> // is_library_dedicated_array (front_inserter from_json)
 #include <optional>   // is_optional (C++23 begin/end misclassification guard)
 #include <string>
@@ -5554,6 +5554,8 @@ concept array_like =
 #include <utility>
 #include <valarray>   // is_library_dedicated_array (resize from_json)
 #include <variant>    // is_variant, variant_alternative_t (M7)
+#include <vector>     // vector (enum string tables)
+#include <meta>  // NOLINT(build/include_order) - C++26 reflection header, not in cpplint's header lists
 
 // #include <nlohmann/adl_serializer.hpp>
 
@@ -5563,8 +5565,6 @@ concept array_like =
 // is_detected_exact
 // #include <nlohmann/detail/meta/type_traits.hpp>
 // is_compatible_*, is_specialization_of, ...
-
-#include <meta>
 
 namespace refl2
 {

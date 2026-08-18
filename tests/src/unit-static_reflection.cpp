@@ -31,27 +31,27 @@ using nlohmann::json;
 // --- annotation-driven reflection side ---
 namespace reflect
 {
-struct [[=refl2::json_serializable{}]] Point
+struct [[ = refl2::json_serializable {}]] Point
 {
     double x;
     double y;
 };
-struct [[=refl2::json_serializable{}]] WithNames
+struct [[ = refl2::json_serializable {}]] WithNames
 {
-    int x [[=refl2::json_name{"display"}]];
+    int x [[ = refl2::json_name{"display"}]];
     int y;
 };
-struct [[=refl2::json_serializable{}]] WithDefault
+struct [[ = refl2::json_serializable {}]] WithDefault
 {
     int a;
-    int d [[=refl2::json_default{}]];
+    int d [[ = refl2::json_default{}]];
 };
-struct [[=refl2::json_serializable{}]] Partial
+struct [[ = refl2::json_serializable {}]] Partial
 {
     int keep;
-    int skip [[=refl2::json_ignore{}]];
+    int skip [[ = refl2::json_ignore{}]];
 };
-struct [[=refl2::json_serializable{}]] Outer
+struct [[ = refl2::json_serializable {}]] Outer
 {
     int id;
     Point p;
@@ -87,8 +87,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(WithDefault, a, d)
 // M6: annotated enum <-> NLOHMANN_JSON_SERIALIZE_ENUM baseline
 enum class Color
 {
-    red [[=refl2::json_name{"RED"}]],
-    green [[=refl2::json_name{"GREEN"}]]
+    red [[ = refl2::json_name{"RED"}]],
+    green [[ = refl2::json_name{"GREEN"}]]
 };
 enum class MacroColor
 {
