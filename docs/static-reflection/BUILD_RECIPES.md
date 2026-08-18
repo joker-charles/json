@@ -192,3 +192,24 @@ cmake --build build-test --target test-udt_cpp11 test-serialization_cpp11 \
 
 `tests/src/unit-concepts_dual.cpp` (mentions `JSON_HAS_CPP_20`) registers
 both `_cpp11` and `_cpp20` targets and proves the dual path is behavior-preserving.
+
+### Static-reflection doctest target (`test-static_reflection_cpp26`)
+
+`tests/src/unit-static_reflection.cpp` ports the opt-in gate coverage into the
+upstream doctest suite (per-type `[[=refl2::json_serializable{}]]` annotation,
+byte-identical macro-path comparison, M6 enum mapping, M7 variant whitelist).
+It is C++26-only (P2996):
+
+- `tests/CMakeLists.txt` excludes it from the default-standard glob (no
+  C++11/14/17/20/23 targets) and registers it explicitly with
+  `CXX_STANDARDS 26`; `-freflection` is added **only** to that target via
+  `json_test_set_test_options` (never globally).
+- `compiler_supports_cpp_26` is defined only for GCC ≥ 16, so default builds
+  on other compilers never see the target. On g++-16 it is built and run with
+  the ordinary suite:
+  ```sh
+  cmake --build build-test --target test-static_reflection_cpp26 -j2
+  ./build-test/tests/test-static_reflection_cpp26
+  ```
+- For a full C++26 sweep of the whole doctest suite, configure with
+  `-DJSON_TestStandards=26` (the `cxx26-reflect-tests` preset).
