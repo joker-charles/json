@@ -55,7 +55,15 @@ adds the `'#'` count / `'$'` type optimized modes (use_type requires
 use_count), the BJData dialect (all numbers/prefixes little-endian, the
 `'u'`/`'m'`/`'M'` width rungs, the bjdx `'$'`-exclusion list, draft3's `'B'`
 binary marker) and the JData ndarray encoding, differential-tested
-byte-identical by `m4e_ubjson_opt.cpp` (630 checks, ASan clean); **M7**:
+byte-identical by `m4e_ubjson_opt.cpp` (630 checks, ASan clean); **M4B-3**:
+the CBOR / MessagePack / UBJSON / BJData READ directions —
+`reflection_cbor_parser` / `reflection_msgpack_parser` /
+`reflection_ubjson_parser` dispatch through the `kCborLoads` /
+`kMsgpackLoads` / `kUbjsonLoads` reverse tables, covering duplicate-key
+last-wins, CBOR store-tag full uint64 subtypes, indefinite/nested strings,
+UBJSON optimized containers, BJData ndarray decode, and library-lexer
+high-precision numbers — differential-tested byte-identical by
+`m4f_binary_readers.cpp` (671 checks, ASan clean); **M7**:
 top-level `std::variant` support in the refl2 codec (`reflection_to_json.hpp`)
 — the oneof wire format `{"index":N,"value":...}`, member recursion, and the
 interaction with the M5 exclusion set/circularity defenses (a `json`
@@ -84,6 +92,7 @@ Design:
 `docs/static-reflection/M5_REFLECTION_TO_JSON.md` (M5/M6),
 `docs/static-reflection/M4D_API_SURFACE.md` (M4D),
 `docs/static-reflection/M4E_UBJSON_OPT.md` (M4E),
+`docs/static-reflection/M4B3_BINARY_READERS.md` (M4B-3),
 `docs/static-reflection/M7_VARIANT.md` (M7),
 `docs/static-reflection/M4D2_ITERATORS.md` (M4D-2); verified facts:
 `docs/static-reflection/VERIFIED_FACTS.md`.
