@@ -19,11 +19,14 @@
 
 ### 2.1 当前实现依赖私有内部结构
 
-`reflection_json.hpp` 用 `access_context::unchecked()` 反射并直接 splice 私有 `basic_json::json_value`。这在实验分支可行，但上游不可能接受这种“绕过访问控制”的稳定依赖。
+`reflection_json.hpp` 用 `access_context::unchecked()` 反射并直接 splice 私有 `basic_json::json_value`。这是**库实现者视角**下的正当用法：P2996 的 `unchecked()` 本来就允许库自身获取私有成员；普通开发者应使用 `unprivileged()`，这是两件不同的事。
 
-**对策**：
-- 首选：反射 codec 完全构建在公开 API（`basic_json` 的 `is_*` / `get` / `operator[]`）之上，慢一点但安全；
-- 次选：如果必须复用内部存储，向上游提议一个最小、明确的 `detail` 内部接口/friend，而不是反射私有成员。
+`basic_json::json_value` 不是正式契约，但 git 行历史显示该 union 定义自 2020-05-17（`internal_binary_t` → `binary_t` 重命名）以来已超过 6 年未变动。因此可以把它当作**事实上稳定**的内部布局来跟随：即使未来改动，同步更新反射代码即可，预期不会频繁变更。
+
+**上游 PR 时的策略**：
+- 保留库内部对 `basic_json::json_value` 的 `unchecked()` 反射，不主动改成公开 API 慢路径；
+- 在 PR 中明确说明该内部依赖的稳定性依据（6 年未变 + 库内实现者视角）；
+- 如果上游维护者仍不接受这种内部依赖，再退到“最小 `detail` 接口/friend”方案，而不是默认放弃私有反射。
 
 ### 2.2 自动 catch-all 会改变用户代码行为
 
@@ -74,7 +77,7 @@
   #define JSON_HAS_CPP_26_REFLECTION 1
   #endif
   ```
-- 重写存储访问：去掉对私有 `json_value` 的反射 splice，改用公开 API 或新增的受控内部接口。
+- 存储访问策略：作为库内部实现，继续使用 `unchecked()` 反射 `basic_json::json_value`；若上游维护者不接受该内部依赖，再退到受控 `detail` 接口/friend。
 - 默认行为不变：没有宏时，编译结果与现在的主库完全一致。
 
 ### Phase 4：按上游质量补齐测试与文档
@@ -118,5 +121,5 @@
 ## 5. 现实预期
 
 - **最可能合入**：concepts 现代化、可选扩展头文件、文档/测试基础设施。
-- **不太可能合入**：用反射重写核心 tagged-union、自动 catch-all、依赖私有成员反射的代码。
+- **不太可能合入**：用反射重写核心 tagged-union、默认自动 catch-all、未经维护者确认就把私有布局当公共契约的代码。
 - **建议**：把“合入主库”当作长期目标，当前先把实验分支整理成“可评审的上游质量 PR 候选”，即使最终不合入，也能极大提高分支的可维护性。
