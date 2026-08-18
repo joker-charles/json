@@ -93,6 +93,7 @@ Design:
 `docs/static-reflection/M4D_API_SURFACE.md` (M4D),
 `docs/static-reflection/M4E_UBJSON_OPT.md` (M4E),
 `docs/static-reflection/M4B3_BINARY_READERS.md` (M4B-3),
+`docs/static-reflection/UPSTREAM_INTEGRATION_PLAN.md` (upstream integration strategy),
 `docs/static-reflection/M7_VARIANT.md` (M7),
 `docs/static-reflection/M4D2_ITERATORS.md` (M4D-2); verified facts:
 `docs/static-reflection/VERIFIED_FACTS.md`.
