@@ -37,10 +37,11 @@
 // C++26 static reflection (P2996): reflection-driven generic from_json for
 // user-defined types. Active only when the compiler provides reflection
 // (g++-16 -std=c++26 -freflection defines __cpp_impl_reflection /
-// __cpp_lib_reflection); otherwise this include is inert and the C++11
-// contract is untouched. The catch-all overload below must be declared
-// before from_json_fn (it is) so the CPO's unqualified lookup finds it.
-#if defined(__cpp_impl_reflection) && defined(__cpp_lib_reflection)
+// __cpp_lib_reflection) AND the user opts in with JSON_USE_REFLECTION
+// (UPSTREAM_INTEGRATION_PLAN.md §2.2); otherwise this include is inert and
+// the C++11 contract is untouched. The catch-all overload below must be
+// declared before from_json_fn (it is) so the CPO's unqualified lookup finds it.
+#if defined(__cpp_impl_reflection) && defined(__cpp_lib_reflection) && defined(JSON_USE_REFLECTION)
     #include <nlohmann/reflection_to_json.hpp>
 #endif
 
@@ -176,11 +177,12 @@ inline void from_json(const BasicJsonType& j, typename BasicJsonType::number_int
 }
 
 #if !JSON_DISABLE_ENUM_SERIALIZATION
-#if defined(__cpp_impl_reflection) && defined(__cpp_lib_reflection)
+#ifdef JSON_HAS_CPP_26_REFLECTION
 // C++26 static reflection (M6): an enum whose enumerators carry
 // [[=refl2::json_name{"..."}]] annotations maps from strings (replacing
 // NLOHMANN_JSON_SERIALIZE_ENUM); an unannotated enum keeps the integer path
-// byte-for-byte (zero drift).
+// byte-for-byte (zero drift). JSON_HAS_CPP_26_REFLECTION is defined by
+// reflection_to_json.hpp, i.e. only when the opt-in macro is on.
 template<typename BasicJsonType, concepts::enum_type EnumType>
 inline void from_json(const BasicJsonType& j, EnumType& e)
 {
