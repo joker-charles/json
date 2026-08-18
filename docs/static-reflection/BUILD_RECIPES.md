@@ -33,6 +33,18 @@
   single header under `-Isingle_include`. Reflection/concepts work targets the
   split `-Iinclude` layout (the `#ifdef JSON_HAS_CPP_20` branches only compile
   there).
+- **Per-type opt-in gate (`JSON_USE_REFLECTION`, UPSTREAM_INTEGRATION_PLAN.md
+  §2.2)**: since the reflection catch-all is a behavior change, it compiles
+  only when the user defines `JSON_USE_REFLECTION` (the compiler must still
+  provide P2996: g++-16 `-std=c++26 -freflection`). Both the include chain
+  (`{to,from}_json.hpp`) and `reflection_to_json.hpp` itself enforce it — a
+  direct include without the macro fails with a clear `#error`. Every
+  reflection fixture defines the macro at the top of its file (before any
+  `#include`), so the build lines below need no extra `-D`; additionally,
+  each struct expected to serialize through the catch-all carries the
+  type-level annotation `[[=refl2::json_serializable{}]]` (annotation AFTER
+  the `struct` keyword; unannotated reflectable structs keep the main
+  library's behavior — compile error).
 
 ## Fixture build lines
 

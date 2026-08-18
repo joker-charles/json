@@ -32,10 +32,31 @@
 
 当前反射路径作为 `detail::{to,from}_json` 的 catch-all，会让“任意可反射 struct”自动获得序列化能力。这在上游是**行为变更**，很可能被拒绝。
 
-**对策**：必须做成 opt-in：
-- 默认关闭；
-- 用户显式定义宏（如 `JSON_USE_REFLECTION`）或显式特化/启用 trait 才生效；
-- 开启后仍要与 `NLOHMANN_DEFINE_TYPE_*` 宏路径零漂移。
+**对策（已定案）**：双层 opt-in，探针 `.tmp/type_optin_probe.cpp` 实机验证于
+g++-16 16.1.0（`-std=c++26 -freflection`）：
+
+- **类型级注解（per-type opt-in）**：只有被标注的类走反射路径——
+  ```cpp
+  struct [[=refl2::json_serializable{}]] Point { double x; double y; };
+  ```
+  资格检测与现有成员级 `has_annotation`（reflection_to_json.hpp）完全同构：
+  `annotations_of(^^T)` + `meta::remove_cvref` + `meta::is_same_type`
+  （查询域，无 splice，consteval 函数参数可用）。未标注的可反射 struct
+  与主库现状完全一致（无 `to_json` → 编译错误），即使反射构建中也零行为变化。
+  语法注意：注解必须放在 `struct` 关键字**之后**（`struct [[=expr]] S`；
+  `[[=expr]] struct S` 会被忽略并告警）。
+  备选机制（同探针验证可行）：tag 基类（`struct S : refl2::json_serializable`，
+  继承传递，空基类对 subobjects_of 遍历透明）、静态成员 marker
+  （`static constexpr refl2::json_serializable json_reflect{};`，静态成员不进入
+  subobjects 遍历，检测需 `remove_cvref` 剥离 `const`）。
+- **宏 gate（全局 opt-in）**：catch-all 仅在
+  `__cpp_impl_reflection && __cpp_lib_reflection && JSON_USE_REFLECTION`
+  下编译（feature macro `JSON_HAS_CPP_26_REFLECTION`，见 Phase 3）。
+  不定义宏时主库编译结果与现状完全一致（字节级）。
+- 开启后仍要与 `NLOHMANN_DEFINE_TYPE_*` 宏路径零漂移（差分测试约束不变）。
+- **决策点**：M7 的 `std::variant` 顶层支持是库类型白名单（用户无法给库类型
+  加注解）——建议保留在宏 gate 内作为文档化的扩展自带能力（宏默认关闭即零
+  行为变化），PR 时向维护者明确说明。
 
 ### 2.3 M4 结论：反射不能替代 type_traits
 
@@ -78,6 +99,8 @@
   #endif
   ```
 - 存储访问策略：作为库内部实现，继续使用 `unchecked()` 反射 `basic_json::json_value`；若上游维护者不接受该内部依赖，再退到受控 `detail` 接口/friend。
+- 每类型 opt-in：类上 `struct [[=refl2::json_serializable{}]] S` 类型级注解
+  （P3394R4，GCC 16 支持，见 §2.2），只有被标注的类参与反射路径。
 - 默认行为不变：没有宏时，编译结果与现在的主库完全一致。
 
 ### Phase 4：按上游质量补齐测试与文档

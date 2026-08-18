@@ -167,6 +167,24 @@
     lifetime"). Member keys travel as value-copied `std::array<char,64>`
     (a string_view into the extract temporary is not a constant expression
     and dangles).
+  - **Type-level annotations (P3394R4) ARE supported on g++-16** in the form
+    `struct [[=expr]] S` — the annotation must follow the `struct` keyword
+    (`[[=expr]] struct S` is ignored with a warning). `annotations_of(^^S)`
+    returns them and the annotation type matches query-domain
+    (`remove_cvref(type_of(ann))` + `is_same_type`, no splice). This
+    **corrects the earlier "member-level only — GCC 16 ignores type-level
+    annotations" claim** in reflection_to_json.hpp's header comment.
+    Verified by `.tmp/type_optin_probe.cpp` (2026-08): `annotations_of(^^S)`
+    size 1, annotation type readable.
+  - **Per-type opt-in marker candidates (all verified 2026-08 by the same
+    probe)**: (A) type-level annotation `struct [[=refl2::marker{}]] S`;
+    (B) tag base `struct S : refl2::json_serializable` — detected via
+    `subobjects_of`/`type_of`/`is_same_type`, and an empty base contributes
+    zero effective members so the codec's flatten walkers are unaffected;
+    (C) static data member `static constexpr refl2::marker json_reflect{};` —
+    detected via `static_data_members_of` (static members are NOT subobjects,
+    so the member walk is unaffected; `type_of` is cv-qualified `const
+    marker`, strip with the query-domain `remove_cvref(info)`).
   - `adl_serializer<T, B>` with an explicit second argument is a historical
     refl2 convention; the library's real customization surface is
     `adl_serializer<T, void>` (json_serializer<T, void>) — the codec now calls
