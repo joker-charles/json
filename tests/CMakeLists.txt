@@ -52,6 +52,12 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_
     unset(compiler_supports_cpp_20)
 endif()
 
+# GCC 16+ supports C++26 static reflection (P2996) via -std=c++26 -freflection;
+# the flag itself is added per-target (never globally) for unit-static_reflection
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 16.0)
+    set(compiler_supports_cpp_26 TRUE)
+endif()
+
 #############################################################################
 # test_main library with shared code to speed up build and common settings
 #############################################################################
@@ -151,6 +157,13 @@ message(STATUS "${msg}")
 
 # *DO* use json_test_set_test_options() above this line
 
+# static reflection test: -freflection only on its C++26 target (never in
+# global flags, see BUILD_RECIPES.md for the nested-project leak reason)
+json_test_set_test_options(test-static_reflection
+    CXX_STANDARDS 26
+    COMPILE_OPTIONS $<$<CXX_COMPILER_ID:GNU>:-freflection>
+)
+
 json_test_should_build_32bit_test(json_32bit_test json_32bit_test_only "${JSON_32bitTest}")
 file(GLOB files CONFIGURE_DEPENDS src/unit-*.cpp)
 if(json_32bit_test_only)
@@ -158,10 +171,21 @@ if(json_32bit_test_only)
 elseif(NOT json_32bit_test)
     list(FILTER files EXCLUDE REGEX src/unit-32bit.cpp)
 endif()
+# unit-static_reflection.cpp is C++26-only (P2996): exclude it from the
+# default-standard glob so no C++11/14/17/20/23 targets are created; it is
+# registered explicitly below with CXX_STANDARDS 26.
+list(FILTER files EXCLUDE REGEX src/unit-static_reflection.cpp)
 
 foreach(file ${files})
     json_test_add_test_for(${file} MAIN test_main CXX_STANDARDS ${test_cxx_standards} ${test_force})
 endforeach()
+
+# C++26-only static reflection test (P2996): registered only when the compiler
+# supports C++26 (GCC 16+); the file references JSON_HAS_CPP_26 in its header
+# comment so the harness content check passes.
+json_test_add_test_for(src/unit-static_reflection.cpp
+    MAIN test_main CXX_STANDARDS 26 ${test_force}
+)
 
 if(json_32bit_test_only)
     # Skip all other tests in this file
