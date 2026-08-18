@@ -3,6 +3,7 @@
 // json_name consteval constructor turns it into a clear static_assert (rather
 // than the old opaque aggregate "initializer-string too long" error).
 // EXPECT-DIAG: key too long
+#define JSON_USE_REFLECTION 1  // opt-in gate (UPSTREAM_INTEGRATION_PLAN.md §2.2)
 #include <nlohmann/json.hpp>
 #include <nlohmann/reflection_to_json.hpp>
 
@@ -11,7 +12,7 @@ using json = nlohmann::json;
 struct S
 {
     // 64 'a's — one past the 63-char json_name key limit.
-    int a [[=refl2::json_name{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]];
+    int a [[ = refl2::json_name{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]];
 };
 
 int main()

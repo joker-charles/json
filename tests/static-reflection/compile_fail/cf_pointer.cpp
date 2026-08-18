@@ -2,6 +2,7 @@
 // the refl2 codec (self-referential / pointer types have no JSON mapping).
 // Compilation MUST fail with the priority-0 static_assert.
 // EXPECT-DIAG: pointers/self-referential
+#define JSON_USE_REFLECTION 1  // opt-in gate (UPSTREAM_INTEGRATION_PLAN.md §2.2)
 #include <nlohmann/json.hpp>
 #include <nlohmann/reflection_to_json.hpp>
 

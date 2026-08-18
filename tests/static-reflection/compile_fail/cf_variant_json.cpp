@@ -7,6 +7,7 @@
 // NOTE: this asserts a CURRENT limitation, not a permanent contract. If M7
 // later adds json-alternative support, update/remove this case.
 // EXPECT-DIAG: non-scalar type
+#define JSON_USE_REFLECTION 1  // opt-in gate (UPSTREAM_INTEGRATION_PLAN.md §2.2)
 #include <nlohmann/json.hpp>
 #include <nlohmann/reflection_to_json.hpp>
 #include <variant>

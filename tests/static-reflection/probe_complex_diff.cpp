@@ -14,6 +14,8 @@
 //
 // Build: g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Iinclude \
 //            -o /tmp/pcd tests/static-reflection/probe_complex_diff.cpp && /tmp/pcd
+// opt-in gate (UPSTREAM_INTEGRATION_PLAN.md §2.2)
+#define JSON_USE_REFLECTION 1
 #include <array>
 #include <cstdio>
 #include <deque>
@@ -32,7 +34,11 @@ using json = nlohmann::json;
 // ---------------------------------------------------------------------------
 // (1) deeply-nested recursive tree
 // ---------------------------------------------------------------------------
-struct MacroLeaf { int value; std::string label; };
+struct MacroLeaf
+{
+    int value;
+    std::string label;
+};
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(MacroLeaf, value, label)
 struct MacroNode
 {
@@ -45,8 +51,8 @@ struct MacroNode
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(MacroNode, id, name, leaf, leaves, children, by_name)
 
-struct ReflLeaf { int value; std::string label; };
-struct ReflNode
+struct [[ = refl2::json_serializable {}]] ReflLeaf { int value; std::string label; };
+struct [[ = refl2::json_serializable {}]] ReflNode
 {
     int id;
     std::string name;
@@ -59,14 +65,34 @@ struct ReflNode
 // ---------------------------------------------------------------------------
 // (2) multi-level inheritance
 // ---------------------------------------------------------------------------
-struct MacroBase { int a; std::string b; };
-struct MacroMid : MacroBase { double c; std::vector<int> d; };
-struct MacroDerived : MacroMid { bool e; };
+struct MacroBase
+{
+    int a;
+    std::string b;
+};
+struct MacroMid : MacroBase
+{
+    double c;
+    std::vector<int> d;
+};
+struct MacroDerived : MacroMid
+{
+    bool e;
+};
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(MacroDerived, a, b, c, d, e)
 
-struct ReflBase { int a; std::string b; };
-struct ReflMid : ReflBase { double c; std::vector<int> d; };
-struct ReflDerived : ReflMid { bool e; };
+struct ReflBase
+{
+    int a;
+    std::string b;
+};
+struct ReflMid : ReflBase
+{
+    double c;
+    std::vector<int> d;
+};
+struct [[ = refl2::json_serializable {}]] ReflDerived :
+ReflMid { bool e; };
 
 // ---------------------------------------------------------------------------
 // (3) mixed ordered containers
@@ -84,7 +110,7 @@ struct MacroMix
 };
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(MacroMix, vi, ld, ds, si, msi, arr, pr, tu)
 
-struct ReflMix
+struct [[ = refl2::json_serializable {}]] ReflMix
 {
     std::vector<int> vi;
     std::list<double> ld;
@@ -119,19 +145,25 @@ int main()
     // ---- (1) deeply-nested recursive tree --------------------------------
     {
         MacroNode mn{1, "root",
-                     {10, "l0"},
-                     {{11, "l1"}, {12, "l2"}},
-                     { {2, "c1", {20, "c1l"}, {}, {}, {}},
-                       {3, "c2", {30, "c2l"}, {{31, "x"}}, {},
-                        {{"k", {32, "v"}}}} },
-                     {{"a", {13, "la"}}, {"b", {14, "lb"}}}};
+            {10, "l0"},
+            {{11, "l1"}, {12, "l2"}},
+            {   {2, "c1", {20, "c1l"}, {}, {}, {}},
+                {
+                    3, "c2", {30, "c2l"}, {{31, "x"}}, {},
+                    {{"k", {32, "v"}}}
+                }
+            },
+            {{"a", {13, "la"}}, {"b", {14, "lb"}}}};
         ReflNode rn{1, "root",
-                    {10, "l0"},
-                    {{11, "l1"}, {12, "l2"}},
-                    { {2, "c1", {20, "c1l"}, {}, {}, {}},
-                      {3, "c2", {30, "c2l"}, {{31, "x"}}, {},
-                       {{"k", {32, "v"}}}} },
-                    {{"a", {13, "la"}}, {"b", {14, "lb"}}}};
+            {10, "l0"},
+            {{11, "l1"}, {12, "l2"}},
+            {   {2, "c1", {20, "c1l"}, {}, {}, {}},
+                {
+                    3, "c2", {30, "c2l"}, {{31, "x"}}, {},
+                    {{"k", {32, "v"}}}
+                }
+            },
+            {{"a", {13, "la"}}, {"b", {14, "lb"}}}};
         check_diff("deep tree to_json", json(mn), json(rn));
         check_diff("deep tree round-trip", json(json(mn).get<MacroNode>()),
                    json(json(rn).get<ReflNode>()));
@@ -150,9 +182,9 @@ int main()
     // ---- (3) mixed ordered containers ------------------------------------
     {
         MacroMix mm{{1, 2, 3}, {1.5, 2.5}, {"a", "b"}, {3, 1, 2},
-                    {{"x", 10}, {"y", 20}}, {{7, 8, 9}}, {1, "p"}, {1, 2.5, "t"}};
+            {{"x", 10}, {"y", 20}}, {{7, 8, 9}}, {1, "p"}, {1, 2.5, "t"}};
         ReflMix rm{{1, 2, 3}, {1.5, 2.5}, {"a", "b"}, {3, 1, 2},
-                   {{"x", 10}, {"y", 20}}, {{7, 8, 9}}, {1, "p"}, {1, 2.5, "t"}};
+            {{"x", 10}, {"y", 20}}, {{7, 8, 9}}, {1, "p"}, {1, 2.5, "t"}};
         check_diff("mixed containers to_json", json(mm), json(rm));
         check_diff("mixed containers round-trip", json(json(mm).get<MacroMix>()),
                    json(json(rm).get<ReflMix>()));

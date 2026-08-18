@@ -2,6 +2,7 @@
 // under the unprivileged codec would silently drop the base members, so the
 // refl2 codec rejects it. Compilation MUST fail with the dedicated static_assert.
 // EXPECT-DIAG: private base class
+#define JSON_USE_REFLECTION 1  // opt-in gate (UPSTREAM_INTEGRATION_PLAN.md §2.2)
 #include <nlohmann/json.hpp>
 #include <nlohmann/reflection_to_json.hpp>
 

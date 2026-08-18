@@ -23,6 +23,8 @@
 // Build:
 //   g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address \
 //       -Iinclude -o probe_variant probe_variant.cpp && ./probe_variant
+// opt-in gate (UPSTREAM_INTEGRATION_PLAN.md §2.2)
+#define JSON_USE_REFLECTION 1
 #include <cstdio>
 #include <map>
 #include <optional>
@@ -50,7 +52,7 @@ std::size_t checks = 0;
     } while (0)
 
 // (1) reflected struct alternative
-struct Point
+struct [[ = refl2::json_serializable {}]] Point
 {
     int x{};
     double y{};
@@ -65,7 +67,7 @@ using VM = std::variant<std::monostate, int>;
 using VV = std::variant<std::variant<int, std::string>, double>;
 
 // (4) nested positions
-struct Holder
+struct [[ = refl2::json_serializable {}]] Holder
 {
     V v;
 };
@@ -198,11 +200,11 @@ void check_custom_alternatives()
     CHECK(json(w1).dump() == "{\"index\":0,\"value\":{\"x\":2,\"y\":3.0}}", "alt struct");
     CHECK(json(w1).template get<W>() == w1, "alt struct round-trip");
 
-    W w2 = std::vector<int>{1, 2, 3};
+    W w2 = std::vector<int> {1, 2, 3};
     CHECK(json(w2).dump() == "{\"index\":1,\"value\":[1,2,3]}", "alt array");
     CHECK(json(w2).template get<W>() == w2, "alt array round-trip");
 
-    W w3 = std::map<std::string, int>{{"a", 1}};
+    W w3 = std::map<std::string, int> {{"a", 1}};
     CHECK(json(w3).dump() == "{\"index\":2,\"value\":{\"a\":1}}", "alt object");
     CHECK(json(w3).template get<W>() == w3, "alt object round-trip");
 }

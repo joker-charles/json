@@ -19,6 +19,11 @@
 //
 // Compile: g++-16 -std=c++26 -freflection -O0 -Itests/static-reflection -Iinclude \
 //            -o /tmp/pcb tests/static-reflection/probe_coverage_boundary.cpp && /tmp/pcb
+// Note: every user type here is exercised through refl2::codec<false> directly
+// (the codec's priority-1 branch checks is_reflectable_struct, NOT the
+// catch-all eligibility) or via std::variant (M7 whitelist exception), so no
+// [[=refl2::json_serializable{}]] type-level annotation is required.
+#define JSON_USE_REFLECTION 1  // opt-in gate (UPSTREAM_INTEGRATION_PLAN.md §2.2)
 #include <cstdio>
 #include <map>
 #include <optional>

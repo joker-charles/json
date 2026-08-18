@@ -19,6 +19,7 @@
 //            structs, macro<->annotation differential (4 pairs), round-trip,
 //            annotation negatives, private-member policy, nested
 //            customization precedence.
+#define JSON_USE_REFLECTION 1  // opt-in gate (UPSTREAM_INTEGRATION_PLAN.md §2.2)
 #include <cstdio>
 #include <map>
 #include <optional>
@@ -188,25 +189,25 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Partial, x) // only x listed
 
 namespace refl_side
 {
-struct Plain
+struct [[ = refl2::json_serializable {}]] Plain
 {
     int x{};
     int y{};
 };
 
-struct WithNames
+struct [[ = refl2::json_serializable {}]] WithNames
 {
     [[ = refl2::json_name{"display"}]] int a;
     [[ = refl2::json_name{"other"}]] int b;
 };
 
-struct WithDefault
+struct [[ = refl2::json_serializable {}]] WithDefault
 {
     int a;
     [[ = refl2::json_default{}]] int b;
 };
 
-struct Partial
+struct [[ = refl2::json_serializable {}]] Partial
 {
     int x{};
     [[ = refl2::json_ignore{}]] int y;
@@ -214,7 +215,7 @@ struct Partial
 } // namespace refl_side
 
 // nested customization: a reflected struct containing a customized member
-struct NestedCustom
+struct [[ = refl2::json_serializable {}]] NestedCustom
 {
     int id{};
     mine::FreeCustom fc;
@@ -224,16 +225,16 @@ struct NestedCustom
 // private members: codec<false> (the catch-all default) must NOT serialize
 // them; codec<true> (explicit opt-in) does. (A class with private data
 // members is not an aggregate — hence the constructor.)
-struct WithPrivate
+struct [[ = refl2::json_serializable {}]] WithPrivate
 {
     WithPrivate(int p, int s) : pub(p), secret(s) {}
     int pub{};
-  private:
+private:
     int secret{};
 };
 
 // optional member + bit-field member
-struct OptionalBits
+struct [[ = refl2::json_serializable {}]] OptionalBits
 {
     std::optional<int> o;
     int bf : 3;

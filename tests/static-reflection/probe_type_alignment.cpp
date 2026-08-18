@@ -14,6 +14,8 @@
 //
 // Build: g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Iinclude \
 //            -o /tmp/pta tests/static-reflection/probe_type_alignment.cpp && /tmp/pta
+// opt-in gate (UPSTREAM_INTEGRATION_PLAN.md §2.2)
+#define JSON_USE_REFLECTION 1
 #include <cstdio>
 #include <cstdint>
 #include <filesystem>
@@ -29,22 +31,25 @@
 
 using json = nlohmann::json;
 
-struct SBinary   { json::binary_t bin; };
-struct SCArray   { int a[3]; };
-struct SFList    { std::forward_list<int> l; };
-struct SValarray { std::valarray<double> v; };
-struct SPair     { std::pair<int, std::string> p; };
-struct STuple    { std::tuple<int, double> t; };
-struct SVBool    { std::vector<bool> v; };
-struct SBareBin  { std::vector<std::uint8_t> v; };   // upstream: number array, not binary
-struct SPath     { std::filesystem::path p; };
-struct SU8       { std::u8string s; };               // char8_t string -> string overload
+struct [[ = refl2::json_serializable {}]] SBinary   { json::binary_t bin; };
+struct [[ = refl2::json_serializable {}]] SCArray   { int a[3]; };
+struct [[ = refl2::json_serializable {}]] SFList    { std::forward_list<int> l; };
+struct [[ = refl2::json_serializable {}]] SValarray { std::valarray<double> v; };
+struct [[ = refl2::json_serializable {}]] SPair     { std::pair<int, std::string> p; };
+struct [[ = refl2::json_serializable {}]] STuple    { std::tuple<int, double> t; };
+struct [[ = refl2::json_serializable {}]] SVBool    { std::vector<bool> v; };
+struct [[ = refl2::json_serializable {}]] SBareBin  { std::vector<std::uint8_t> v; }; // upstream: number array, not binary
+struct [[ = refl2::json_serializable {}]] SPath     { std::filesystem::path p; };
+struct [[ = refl2::json_serializable {}]] SU8       { std::u8string s; };            // char8_t string -> string overload
 
 static int g_fail = 0;
 static void check(const char* what, bool ok)
 {
     std::printf("  %-46s %s\n", what, ok ? "PASS" : "FAIL");
-    if (!ok) { ++g_fail; }
+    if (!ok)
+    {
+        ++g_fail;
+    }
 }
 
 int main()
@@ -53,74 +58,97 @@ int main()
 
     // binary_t: the dedicated binary form (not a number array)
     {
-        SBinary s; s.bin = json::binary({1, 2, 255});
-        json j; refl2::codec<false>::to_json(j, s);
+        SBinary s;
+        s.bin = json::binary({1, 2, 255});
+        json j;
+        refl2::codec<false>::to_json(j, s);
         check("binary_t -> {\"bytes\":[...],\"subtype\":...}",
               j["bin"].is_binary() && j["bin"] == json::binary({1, 2, 255}));
-        SBinary s2; refl2::codec<false>::from_json(j, s2);
+        SBinary s2;
+        refl2::codec<false>::from_json(j, s2);
         check("binary_t round-trip", s2.bin == s.bin);
     }
 
     // C array: routes to the C-array overload (was a static_assert)
     {
         SCArray s{{1, 2, 3}};
-        json j; refl2::codec<false>::to_json(j, s);
+        json j;
+        refl2::codec<false>::to_json(j, s);
         check("C array -> [1,2,3]", j["a"] == json::array({1, 2, 3}));
-        SCArray s2{}; refl2::codec<false>::from_json(j, s2);
+        SCArray s2{};
+        refl2::codec<false>::from_json(j, s2);
         check("C array round-trip", s2.a[0] == 1 && s2.a[1] == 2 && s2.a[2] == 3);
     }
 
     // forward_list: front_inserter path (was a compile error on from_json)
     {
-        SFList s; s.l = {1, 2, 3};
-        json j; refl2::codec<false>::to_json(j, s);
+        SFList s;
+        s.l = {1, 2, 3};
+        json j;
+        refl2::codec<false>::to_json(j, s);
         check("forward_list -> [1,2,3]", j["l"] == json::array({1, 2, 3}));
-        SFList s2; refl2::codec<false>::from_json(j, s2);
+        SFList s2;
+        refl2::codec<false>::from_json(j, s2);
         check("forward_list round-trip", s2.l == s.l);
     }
 
     // valarray: resize path (was an abort on from_json)
     {
-        SValarray s; s.v = {1.5, 2.5, 3.5};
-        json j; refl2::codec<false>::to_json(j, s);
+        SValarray s;
+        s.v = {1.5, 2.5, 3.5};
+        json j;
+        refl2::codec<false>::to_json(j, s);
         check("valarray -> [1.5,2.5,3.5]", j["v"] == json::array({1.5, 2.5, 3.5}));
-        SValarray s2; refl2::codec<false>::from_json(j, s2);
+        SValarray s2;
+        refl2::codec<false>::from_json(j, s2);
         check("valarray round-trip",
               s2.v.size() == 3 && s2.v[0] == 1.5 && s2.v[1] == 2.5 && s2.v[2] == 3.5);
     }
 
     // pair / tuple: array form (upstream behavior), not a reflected object
     {
-        SPair s; s.p = {1, "x"};
-        json j; refl2::codec<false>::to_json(j, s);
+        SPair s;
+        s.p = {1, "x"};
+        json j;
+        refl2::codec<false>::to_json(j, s);
         check("pair -> [1,\"x\"]", j["p"] == json::array({1, "x"}));
-        STuple st; st.t = {1, 2.5};
-        json jt; refl2::codec<false>::to_json(jt, st);
+        STuple st;
+        st.t = {1, 2.5};
+        json jt;
+        refl2::codec<false>::to_json(jt, st);
         check("tuple -> [1,2.5]", jt["t"] == json::array({1, 2.5}));
     }
 
     // vector<bool> and bare vector<uint8_t>: number arrays (upstream behavior)
     {
-        SVBool s; s.v = {true, false, true};
-        json j; refl2::codec<false>::to_json(j, s);
+        SVBool s;
+        s.v = {true, false, true};
+        json j;
+        refl2::codec<false>::to_json(j, s);
         check("vector<bool> -> [true,false,true]", j["v"] == json::array({true, false, true}));
-        SBareBin sb; sb.v = {1, 2, 255};
-        json jb; refl2::codec<false>::to_json(jb, sb);
+        SBareBin sb;
+        sb.v = {1, 2, 255};
+        json jb;
+        refl2::codec<false>::to_json(jb, sb);
         check("bare vector<uint8_t> -> number array (not binary)",
               jb["v"] == json::array({1, 2, 255}));
     }
 
     // filesystem::path: string form
     {
-        SPath s; s.p = "/tmp/x";
-        json j; refl2::codec<false>::to_json(j, s);
+        SPath s;
+        s.p = "/tmp/x";
+        json j;
+        refl2::codec<false>::to_json(j, s);
         check("path -> string", j["p"] == "/tmp/x");
     }
 
     // u8string (char8_t string): the dedicated char8_t overload, not a number array
     {
-        SU8 s; s.s = u8"hi";
-        json j; refl2::codec<false>::to_json(j, s);
+        SU8 s;
+        s.s = u8"hi";
+        json j;
+        refl2::codec<false>::to_json(j, s);
         check("u8string -> \"hi\"", j["s"] == "hi");
     }
 

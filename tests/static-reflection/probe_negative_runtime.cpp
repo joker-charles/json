@@ -18,6 +18,7 @@
 // Build: g++-16 -std=c++26 -freflection -O0 -Iinclude \
 //            -o /tmp/pnr tests/static-reflection/probe_negative_runtime.cpp && /tmp/pnr
 // ASan: add -O1 -g -fsanitize=address.
+#define JSON_USE_REFLECTION 1  // opt-in gate (UPSTREAM_INTEGRATION_PLAN.md §2.2)
 #include <array>
 #include <cstdio>
 #include <set>
@@ -28,29 +29,35 @@
 
 using json = nlohmann::json;
 
-// (1) plain struct
-struct Point
+// (1) plain struct — exercised via json(...).get<Point>() (the reflection
+// catch-all from_json), hence the type-level opt-in annotation.
+struct [[ = refl2::json_serializable {}]] Point
 {
     double x;
     double y;
 };
 
-// (2) json_default member
-struct WithDefault
+// (2) json_default member — exercised via json::parse(...).get<WithDefault>()
+// (catch-all from_json), hence the annotation.
+struct [[ = refl2::json_serializable {}]] WithDefault
 {
     int a{};
-    double d [[=refl2::json_default{}]];
+    double d [[ = refl2::json_default{}]];
 };
 
 // (3) annotated enum (red has a json_name; green falls back to its identifier)
 enum class Color
 {
-    red [[=refl2::json_name{"RED"}]] = 1,
+    red [[ = refl2::json_name{"RED"}]] = 1,
     green = 2
 };
 
-// (4)(5) container members
-struct Containers
+// (4)(5) container members — exercised via `json j = c;` and
+// j.get<Containers>() (the catch-all), hence the annotation. The Color enum
+// (3) needs no annotation: enums route through the dedicated M6 enum
+// to_json/from_json overloads (JSON_HAS_CPP_26_REFLECTION), and PDeriv/PBase
+// (6) go through refl2::codec<true> directly.
+struct [[ = refl2::json_serializable {}]] Containers
 {
     std::set<int> s;
     std::array<double, 2> arr;
@@ -110,32 +117,36 @@ int main()
     check("struct missing key throws out_of_range.403",
           throws([] { Point p = json::object().get<Point>(); (void)p; }, 403));
     check("struct wrong member type throws type_error.302",
-          throws([] { Point p = json({{"x", "s"}, {"y", 2.0}}).get<Point>(); (void)p; }, 302));
+    throws([] { Point p = json({{"x", "s"}, {"y", 2.0}}).get<Point>(); (void)p; }, 302));
 
     // ---- (2) json_default -------------------------------------------------
     std::printf("\n[2] json_default: missing key falls back, explicit null throws\n");
     check("missing key falls back to T{} (a=1, d=0)",
-          [] {
-              WithDefault w = json::parse("{\"a\":1}").get<WithDefault>();
-              return w.a == 1 && w.d == 0.0;
-          }());
+          []
+    {
+        WithDefault w = json::parse("{\"a\":1}").get<WithDefault>();
+        return w.a == 1 && w.d == 0.0;
+    }());
     check("explicit null value throws type_error.302 (no fallback)",
-          throws([] {
-              WithDefault w = json::parse("{\"a\":1,\"d\":null}").get<WithDefault>(); (void)w;
-          }, 302));
+          throws([]
+    {
+        WithDefault w = json::parse("{\"a\":1,\"d\":null}").get<WithDefault>(); (void)w;
+    }, 302));
 
     // ---- (3) enum out-of-table -------------------------------------------
     std::printf("\n[3] annotated enum: out-of-table value -> first entry string\n");
     check("Color::green -> \"green\" (identifier fallback)",
-          [] {
-              json j = Color::green;
-              return j.is_string() && j == "green";
-          }());
+          []
+    {
+        json j = Color::green;
+        return j.is_string() && j == "green";
+    }());
     check("static_cast<Color>(99) -> \"RED\" (first entry on miss)",
-          [] {
-              json j = static_cast<Color>(99);
-              return j.is_string() && j == "RED";
-          }());
+          []
+    {
+        json j = static_cast<Color>(99);
+        return j.is_string() && j == "RED";
+    }());
 
     // ---- (4)(5) container members ----------------------------------------
     std::printf("\n[4][5] set / array struct members round-trip\n");

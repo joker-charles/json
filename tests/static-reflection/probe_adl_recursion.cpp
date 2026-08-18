@@ -32,6 +32,7 @@
 // Build: g++-16 -std=c++26 -freflection -O0 -Iinclude \
 //          -o /tmp/par tests/static-reflection/probe_adl_recursion.cpp && /tmp/par
 // ASan: add -O1 -g -fsanitize=address.
+#define JSON_USE_REFLECTION 1  // opt-in gate (UPSTREAM_INTEGRATION_PLAN.md §2.2)
 #include <charconv>   // from_chars
 #include <cstdio>
 #include <map>
@@ -52,7 +53,11 @@ using json = nlohmann::json;
 // ---------------------------------------------------------------------------
 
 // (A) plain structs: nested + containers-of-plain
-struct Address
+// Annotated: Address is the catch-all-viable plain struct probed by the [0]
+// trait checks (is_adl_serializable/is_adl_deserializable) and is the element
+// type of CArrayHolder::arr[2] — the library's C-array overloads recurse into
+// detail::to_json/from_json (the reflection catch-all) per element.
+struct [[ = refl2::json_serializable {}]] Address
 {
     std::string street;
     std::string city;

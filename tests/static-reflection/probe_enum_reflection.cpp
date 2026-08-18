@@ -11,6 +11,7 @@
 //
 // COMMON — unannotated enums (integer path) and macro-mapped enums, identical
 // in both builds. REFL — annotation-mapped enums (reflection only).
+#define JSON_USE_REFLECTION 1  // opt-in gate (UPSTREAM_INTEGRATION_PLAN.md §2.2)
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -91,7 +92,7 @@ enum class UnsignedR : unsigned
 };
 
 // annotated enum nested in a reflected struct (recursion through the M5 codec)
-struct WithEnum
+struct [[ = refl2::json_serializable {}]] WithEnum
 {
     int id{};
     ColorR color;
