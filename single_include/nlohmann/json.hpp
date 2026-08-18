@@ -5432,10 +5432,11 @@ concept array_like =
 // C++26 static reflection (P2996): reflection-driven generic from_json for
 // user-defined types. Active only when the compiler provides reflection
 // (g++-16 -std=c++26 -freflection defines __cpp_impl_reflection /
-// __cpp_lib_reflection); otherwise this include is inert and the C++11
-// contract is untouched. The catch-all overload below must be declared
-// before from_json_fn (it is) so the CPO's unqualified lookup finds it.
-#if defined(__cpp_impl_reflection) && defined(__cpp_lib_reflection)
+// __cpp_lib_reflection) AND the user opts in with JSON_USE_REFLECTION
+// (UPSTREAM_INTEGRATION_PLAN.md §2.2); otherwise this include is inert and
+// the C++11 contract is untouched. The catch-all overload below must be
+// declared before from_json_fn (it is) so the CPO's unqualified lookup finds it.
+#if defined(__cpp_impl_reflection) && defined(__cpp_lib_reflection) && defined(JSON_USE_REFLECTION)
 // #include <nlohmann/reflection_to_json.hpp>
 // reflection_to_json.hpp — P2996 static-reflection-driven serialization for
 // nlohmann::json user-defined types (the M5 milestone of the
@@ -5528,6 +5529,20 @@ concept array_like =
     #error "reflection_to_json.hpp requires C++26 static reflection (g++-16 -std=c++26 -freflection)"
 #endif
 
+// Opt-in gate (upstream integration, see UPSTREAM_INTEGRATION_PLAN.md §2.2):
+// the reflection catch-all is a behavior change, so it compiles only when the
+// user EXPLICITLY defines JSON_USE_REFLECTION. The include chain
+// ({to,from}_json.hpp) checks the same macro before including this header;
+// this #error makes a direct include honest instead of silently activating
+// the catch-all.
+#if !defined(JSON_USE_REFLECTION)
+    #error "reflection_to_json.hpp requires JSON_USE_REFLECTION to be defined (opt-in C++26 reflection extension)"
+#endif
+
+#ifndef JSON_HAS_CPP_26_REFLECTION
+    #define JSON_HAS_CPP_26_REFLECTION 1
+#endif
+
 #include <array>      // array (compile-time key storage)
 #include <charconv>   // from_chars
 #include <cstdio>     // fprintf, abort (fixed-size from_json size mismatch)
@@ -5555,8 +5570,12 @@ namespace refl2
 {
 
 // ---------------------------------------------------------------------------
-// Member annotations (P3394R4 value annotations, member-level only — GCC 16
-// ignores type-level annotations).
+// Member annotations (P3394R4 value annotations). Type-level annotations are
+// ALSO supported by GCC 16 in the `struct [[=expr]] S` form (annotation AFTER
+// the `struct` keyword; `[[=expr]] struct S` is ignored with a warning) —
+// verified 2026-08 by .tmp/type_optin_probe.cpp. The per-type opt-in marker
+// `[[=refl2::json_serializable{}]]` from the upstream integration plan
+// (UPSTREAM_INTEGRATION_PLAN.md §2.2) builds on that.
 //   json_name  — structural value annotation: [[=refl2::json_name{"key"}]],
 //                overrides the JSON key for this member (extract-read).
 //   json_ignore — marker: the member is excluded from both directions.
@@ -5590,6 +5609,13 @@ struct json_name
 };
 struct json_ignore {};
 struct json_default {};
+// Type-level opt-in marker (upstream integration, §2.2): a class annotated
+// [[=refl2::json_serializable{}]] opts INTO the reflection catch-all; every
+// unannotated reflectable struct keeps the main library's behavior (no
+// to_json -> compile error), so the extension changes nothing by default.
+// Placement: `struct [[=refl2::json_serializable{}]] S` — the annotation must
+// follow the `struct` keyword (GCC 16; verified by .tmp/type_optin_probe.cpp).
+struct json_serializable {};
 
 namespace detail
 {
@@ -6053,7 +6079,13 @@ struct to_json_eligible
         && !std::is_same<std::remove_cvref_t<T>, std::experimental::filesystem::path>::value
 #endif
         && !has_user_to_json<B, T>::value       // non-circular ADL probe
-        && (is_reflectable_struct<false, T>::value || is_variant<T>::value);
+        // per-type opt-in: only classes carrying the type-level
+        // [[=refl2::json_serializable{}]] annotation reach the catch-all;
+        // unannotated reflectable structs keep the main library's behavior.
+        // std::variant (M7) is a library-type whitelist exception — users
+        // cannot annotate library types.
+        && ((has_annotation<json_serializable>(^^T) && is_reflectable_struct<false, T>::value)
+            || is_variant<T>::value);
 };
 
 template<typename B, typename T>
@@ -6080,7 +6112,9 @@ struct from_json_eligible
 #endif
         && !is_optional<T>::value
         && !has_user_from_json<B, T>::value     // non-circular ADL probe
-        && (is_reflectable_struct<false, T>::value || is_variant<T>::value);
+        // per-type opt-in, same as to_json_eligible (see above)
+        && ((has_annotation<json_serializable>(^^T) && is_reflectable_struct<false, T>::value)
+            || is_variant<T>::value);
 };
 
 // ---------------------------------------------------------------------------
@@ -6913,11 +6947,12 @@ inline void from_json(const BasicJsonType& j, typename BasicJsonType::number_int
 }
 
 #if !JSON_DISABLE_ENUM_SERIALIZATION
-#if defined(__cpp_impl_reflection) && defined(__cpp_lib_reflection)
+#ifdef JSON_HAS_CPP_26_REFLECTION
 // C++26 static reflection (M6): an enum whose enumerators carry
 // [[=refl2::json_name{"..."}]] annotations maps from strings (replacing
 // NLOHMANN_JSON_SERIALIZE_ENUM); an unannotated enum keeps the integer path
-// byte-for-byte (zero drift).
+// byte-for-byte (zero drift). JSON_HAS_CPP_26_REFLECTION is defined by
+// reflection_to_json.hpp, i.e. only when the opt-in macro is on.
 template<typename BasicJsonType, concepts::enum_type EnumType>
 inline void from_json(const BasicJsonType& j, EnumType& e)
 {
@@ -7723,10 +7758,11 @@ class tuple_element<N, ::nlohmann::detail::iteration_proxy_value<IteratorType >>
 // C++26 static reflection (P2996): reflection-driven generic to_json for
 // user-defined types. Active only when the compiler provides reflection
 // (g++-16 -std=c++26 -freflection defines __cpp_impl_reflection /
-// __cpp_lib_reflection); otherwise this include is inert and the C++11
-// contract is untouched. The catch-all overload below must be declared
-// before to_json_fn (it is) so the CPO's unqualified lookup finds it.
-#if defined(__cpp_impl_reflection) && defined(__cpp_lib_reflection)
+// __cpp_lib_reflection) AND the user opts in with JSON_USE_REFLECTION
+// (UPSTREAM_INTEGRATION_PLAN.md §2.2); otherwise this include is inert and
+// the C++11 contract is untouched. The catch-all overload below must be
+// declared before to_json_fn (it is) so the CPO's unqualified lookup finds it.
+#if defined(__cpp_impl_reflection) && defined(__cpp_lib_reflection) && defined(JSON_USE_REFLECTION)
     // #include <nlohmann/reflection_to_json.hpp>
 
 #endif
@@ -8083,11 +8119,12 @@ inline void to_json(BasicJsonType& j, CompatibleNumberIntegerType val) noexcept
 }
 
 #if !JSON_DISABLE_ENUM_SERIALIZATION
-#if defined(__cpp_impl_reflection) && defined(__cpp_lib_reflection)
+#ifdef JSON_HAS_CPP_26_REFLECTION
 // C++26 static reflection (M6): an enum whose enumerators carry
 // [[=refl2::json_name{"..."}]] annotations maps to strings (replacing
 // NLOHMANN_JSON_SERIALIZE_ENUM); an unannotated enum keeps the integer path
-// byte-for-byte (zero drift).
+// byte-for-byte (zero drift). JSON_HAS_CPP_26_REFLECTION is defined by
+// reflection_to_json.hpp, i.e. only when the opt-in macro is on.
 template<typename BasicJsonType, concepts::enum_type EnumType>
 inline void to_json(BasicJsonType& j, EnumType e)
 {

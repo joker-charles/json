@@ -89,6 +89,20 @@
     #error "reflection_to_json.hpp requires C++26 static reflection (g++-16 -std=c++26 -freflection)"
 #endif
 
+// Opt-in gate (upstream integration, see UPSTREAM_INTEGRATION_PLAN.md §2.2):
+// the reflection catch-all is a behavior change, so it compiles only when the
+// user EXPLICITLY defines JSON_USE_REFLECTION. The include chain
+// ({to,from}_json.hpp) checks the same macro before including this header;
+// this #error makes a direct include honest instead of silently activating
+// the catch-all.
+#if !defined(JSON_USE_REFLECTION)
+    #error "reflection_to_json.hpp requires JSON_USE_REFLECTION to be defined (opt-in C++26 reflection extension)"
+#endif
+
+#ifndef JSON_HAS_CPP_26_REFLECTION
+    #define JSON_HAS_CPP_26_REFLECTION 1
+#endif
+
 #include <array>      // array (compile-time key storage)
 #include <charconv>   // from_chars
 #include <cstdio>     // fprintf, abort (fixed-size from_json size mismatch)
@@ -112,8 +126,12 @@ namespace refl2
 {
 
 // ---------------------------------------------------------------------------
-// Member annotations (P3394R4 value annotations, member-level only — GCC 16
-// ignores type-level annotations).
+// Member annotations (P3394R4 value annotations). Type-level annotations are
+// ALSO supported by GCC 16 in the `struct [[=expr]] S` form (annotation AFTER
+// the `struct` keyword; `[[=expr]] struct S` is ignored with a warning) —
+// verified 2026-08 by .tmp/type_optin_probe.cpp. The per-type opt-in marker
+// `[[=refl2::json_serializable{}]]` from the upstream integration plan
+// (UPSTREAM_INTEGRATION_PLAN.md §2.2) builds on that.
 //   json_name  — structural value annotation: [[=refl2::json_name{"key"}]],
 //                overrides the JSON key for this member (extract-read).
 //   json_ignore — marker: the member is excluded from both directions.
@@ -133,7 +151,7 @@ struct json_name
     // clear static_assert instead of the opaque aggregate "initializer-string
     // for char[64] too long" error (verified: it does not break structuralness
     // or meta::extract). Keys longer than 63 chars are the documented limit.
-    char value[64]{};
+    char value[64] {};
 
     template<std::size_t N>
     consteval json_name(const char (&s)[N])
@@ -147,6 +165,13 @@ struct json_name
 };
 struct json_ignore {};
 struct json_default {};
+// Type-level opt-in marker (upstream integration, §2.2): a class annotated
+// [[=refl2::json_serializable{}]] opts INTO the reflection catch-all; every
+// unannotated reflectable struct keeps the main library's behavior (no
+// to_json -> compile error), so the extension changes nothing by default.
+// Placement: `struct [[=refl2::json_serializable{}]] S` — the annotation must
+// follow the `struct` keyword (GCC 16; verified by .tmp/type_optin_probe.cpp).
+struct json_serializable {};
 
 namespace detail
 {
@@ -374,8 +399,8 @@ struct is_char8_string : std::false_type {};
 template<typename T>
 struct is_char8_string<T, std::void_t<typename T::value_type>>
     : std::bool_constant <
-    nlohmann::detail::is_specialization_of<std::basic_string, T>::value
-    && std::is_same_v<typename T::value_type, char8_t> > {};
+      nlohmann::detail::is_specialization_of<std::basic_string, T>::value
+      && std::is_same_v<typename T::value_type, char8_t> > {};
 
 template<typename B, typename T>
 inline constexpr bool is_library_dedicated_array =
@@ -610,7 +635,13 @@ struct to_json_eligible
         && !std::is_same<std::remove_cvref_t<T>, std::experimental::filesystem::path>::value
 #endif
         && !has_user_to_json<B, T>::value       // non-circular ADL probe
-        && (is_reflectable_struct<false, T>::value || is_variant<T>::value);
+        // per-type opt-in: only classes carrying the type-level
+        // [[=refl2::json_serializable{}]] annotation reach the catch-all;
+        // unannotated reflectable structs keep the main library's behavior.
+        // std::variant (M7) is a library-type whitelist exception — users
+        // cannot annotate library types.
+        && ((has_annotation<json_serializable>(^^T) && is_reflectable_struct<false, T>::value)
+            || is_variant<T>::value);
 };
 
 template<typename B, typename T>
@@ -637,7 +668,9 @@ struct from_json_eligible
 #endif
         && !is_optional<T>::value
         && !has_user_from_json<B, T>::value     // non-circular ADL probe
-        && (is_reflectable_struct<false, T>::value || is_variant<T>::value);
+        // per-type opt-in, same as to_json_eligible (see above)
+        && ((has_annotation<json_serializable>(^^T) && is_reflectable_struct<false, T>::value)
+            || is_variant<T>::value);
 };
 
 // ---------------------------------------------------------------------------
@@ -896,7 +929,7 @@ struct codec
         // no payload and serializes as null
         j = B::object();
         j["index"] = v.index();
-        std::visit([&](const auto& alt)
+        std::visit([&](const auto & alt)
         {
             if constexpr (std::is_same_v<std::remove_cvref_t<decltype(alt)>, std::monostate>)
             {
@@ -1021,8 +1054,8 @@ struct codec
         {
             JSON_THROW(nlohmann::detail::type_error::create(
                            302, nlohmann::detail::concat("cannot parse variant: index ",
-                                                         std::to_string(idx), " out of range (0..",
-                                                         std::to_string(std::variant_size_v<T> - 1), ")"),
+                                   std::to_string(idx), " out of range (0..",
+                                   std::to_string(std::variant_size_v<T> - 1), ")"),
                            &j));
         }
     }
