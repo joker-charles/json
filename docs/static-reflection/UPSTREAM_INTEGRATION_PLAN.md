@@ -103,6 +103,32 @@ g++-16 16.1.0（`-std=c++26 -freflection`）：
   （P3394R4，GCC 16 支持，见 §2.2），只有被标注的类参与反射路径。
 - 默认行为不变：没有宏时，编译结果与现在的主库完全一致。
 
+**命名空间与头文件拆分（已定路线：独立命名空间）**：
+- `refl2`（序列化 codec）与 `rjson`（二进制格式/反射 API 表面）**保持独立
+  命名空间**，不进 `NLOHMANN_JSON_NAMESPACE`；catch-all 重载必须留在
+  `nlohmann::detail`（参与重载决议），这一部分不变。
+- 两个入口头，对应 PR 拆分：
+  - `include/nlohmann/reflection.hpp` —— refl2 序列化扩展（PR 2 交付物）；
+  - `include/nlohmann/reflection_binary.hpp` —— rjson 二进制/API 扩展（PR 4）。
+- 内部按功能模块拆到 `include/nlohmann/reflection/` 子目录（一个文件一个可
+  独立 review 的单元）：`config.hpp`（gate/macro 定义点）、`annotations.hpp`
+  （refl2 注解类型）、`detail.hpp`（ADL probe/access/注解读取）、
+  `eligible.hpp`（to/from_json_eligible）、`codec.hpp`（序列化核心）、
+  `enum.hpp`（M6）、`variant.hpp`（M7）、`to_json_adapter.hpp` /
+  `from_json_adapter.hpp`（nlohmann::detail catch-all，唯一被主库
+  `{to,from}_json.hpp` gate include 的文件）；`binary/` 下按里程碑拆：
+  `value_t_tables.hpp`（kValueT*）、`byte_tables.hpp`（kMsgpackCodes 等 +
+  kBsonsLoad）、`msgpack.hpp` / `ubjson.hpp`（含 M4E 优化/BJData）/
+  `bson.hpp`（含 M4B-2 读）/ `readers.hpp`（M4B-3）、`api.hpp`（M4D API
+  表面 + M4D-2 迭代器，~1800 行按小节再拆，单文件 < ~600 行）。
+- include 依赖单向（config → annotations → detail → eligible → codec →
+  {enum, variant} → adapters；value_t_tables → byte_tables → writers/readers；
+  api 依赖 tables）。
+- 旧头 `reflection_to_json.hpp` / `reflection_json.hpp` 过渡为 thin wrapper
+  （只 include 新入口），稳定后删除。
+- **待确认点**：amalgamate 是否递归展开 `reflection/` 子目录进 single_include
+  ——若想单头不含扩展，需调 amalgamate 配置（向上游确认）。
+
 ### Phase 4：按上游质量补齐测试与文档
 
 - 把 `tests/static-reflection/m4f_binary_readers.cpp` 等有价值的差分测试迁移/补充为：
