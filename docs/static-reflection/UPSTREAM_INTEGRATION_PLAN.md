@@ -126,8 +126,14 @@ g++-16 16.1.0（`-std=c++26 -freflection`）：
   api 依赖 tables）。
 - 旧头 `reflection_to_json.hpp` / `reflection_json.hpp` 过渡为 thin wrapper
   （只 include 新入口），稳定后删除。
-- **待确认点**：amalgamate 是否递归展开 `reflection/` 子目录进 single_include
-  ——若想单头不含扩展，需调 amalgamate 配置（向上游确认）。
+- **amalgamate 已确认（无需改动）**：`amalgamate.py` 在 `include_paths`
+  （`["include"]`）里 `os.path.join(dir, file_path)` 递归解析——子目录头用
+  `#include <nlohmann/reflection/xxx.hpp>`（相对 include 根）即可展开，且
+  正则匹配 gate 内的 include（现状 reflection_to_json.hpp 已在 single_include）。
+  拆分后 refl2 链经 adapter 被主库 gate include → 进 single_include（总量
+  不变）；`reflection_binary.hpp`（rjson）不被主库 include → 天然不进
+  single_include，无需改 amalgamate 配置。若将来想让 rjson 也进单头，只需在
+  `config_json.json` 的 `sources` 加 `include/nlohmann/reflection_binary.hpp`。
 
 ### Phase 4：按上游质量补齐测试与文档
 
