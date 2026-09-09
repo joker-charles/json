@@ -11,12 +11,18 @@
 #include <array> // array
 #include <clocale> // localeconv
 #include <cstddef> // size_t
-#include <cstdio> // snprintf
+#include <cstdint> // uint8_t (escape_control_character)
 #include <cstdlib> // strtof, strtod, strtold, strtoll, strtoull
 #include <initializer_list> // initializer_list
 #include <string> // char_traits, string
 #include <utility> // move
 #include <vector> // vector
+
+// macro_scope.hpp must come BEFORE the JSON_HAS_CPP_17 test below: it defines
+// that macro, so a standalone include of this header in C++17+ mode would
+// otherwise select the C++11/14 strtoull fallback (and fail to compile, since
+// std::from_chars is never declared) — verified regression vs develop.
+#include <nlohmann/detail/macro_scope.hpp>
 #ifdef JSON_HAS_CPP_17
     #include <charconv> // from_chars
     #include <system_error> // errc
@@ -24,7 +30,6 @@
 
 #include <nlohmann/detail/input/input_adapters.hpp>
 #include <nlohmann/detail/input/position_t.hpp>
-#include <nlohmann/detail/macro_scope.hpp>
 #include <nlohmann/detail/meta/type_traits.hpp>
 
 NLOHMANN_JSON_NAMESPACE_BEGIN
@@ -992,8 +997,17 @@ class lexer : public lexer_base<BasicJsonType>
         char* end = nullptr; // NOLINT(misc-const-correctness,cppcoreguidelines-pro-type-vararg,hicpp-vararg)
         errno = 0;
         const auto x = std::strtoull(str, &end, 10);
-        value = static_cast<Number>(x);
-        return errno != ERANGE;
+        const auto narrowed = static_cast<Number>(x);
+        // Round-trip check: Number may be NARROWER than unsigned long long
+        // (custom basic_json number types). Without it an out-of-range token
+        // would be silently truncated instead of falling through to the float
+        // path — upstream's behavior (`value_unsigned == x`).
+        if (errno == ERANGE || narrowed != x)
+        {
+            return false;
+        }
+        value = narrowed;
+        return true;
     }
 
     template < typename Number, enable_if_t < std::is_signed<Number>::value, int > = 0 >
@@ -1002,8 +1016,14 @@ class lexer : public lexer_base<BasicJsonType>
         char* end = nullptr; // NOLINT(misc-const-correctness,cppcoreguidelines-pro-type-vararg,hicpp-vararg)
         errno = 0;
         const auto x = std::strtoll(str, &end, 10);
-        value = static_cast<Number>(x);
-        return errno != ERANGE;
+        const auto narrowed = static_cast<Number>(x);
+        // see the unsigned overload: same round-trip (upstream `value_integer == x`)
+        if (errno == ERANGE || static_cast<long long>(narrowed) != x)
+        {
+            return false;
+        }
+        value = narrowed;
+        return true;
     }
 #endif
 
