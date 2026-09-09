@@ -401,8 +401,15 @@ inline void to_json(BasicJsonType& j, CompatibleNumberIntegerType val) noexcept
 // NLOHMANN_JSON_SERIALIZE_ENUM); an unannotated enum keeps the integer path
 // byte-for-byte (zero drift). JSON_HAS_CPP_26_REFLECTION is defined by
 // reflection_to_json.hpp, i.e. only when the opt-in macro is on.
+// noexcept mirrors the integer-path overload (and the C++20 branch below):
+// upstream's unit-noexcept.cpp asserts noexcept(to_json(json&, enum)) and
+// noexcept(json(enum)), so dropping it here is an observable API change.
+// It is CONDITIONAL because the annotated path allocates (j = string) and may
+// throw, exactly like the NLOHMANN_JSON_SERIALIZE_ENUM it replaces (whose
+// to_json is not noexcept either); an unannotated enum keeps noexcept(true).
 template<typename BasicJsonType, concepts::enum_type EnumType>
 inline void to_json(BasicJsonType& j, EnumType e)
+noexcept(!(refl2::detail::enum_is_enumerable<EnumType>() && refl2::detail::enum_has_annotations<EnumType>()))
 {
     refl2::detail::serialize_enum(j, e);
 }

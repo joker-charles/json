@@ -5539,15 +5539,18 @@ concept array_like =
     #error "reflection_to_json.hpp requires JSON_USE_REFLECTION to be defined (opt-in C++26 reflection extension)"
 #endif
 
-#ifndef JSON_HAS_CPP_26_REFLECTION
-    #define JSON_HAS_CPP_26_REFLECTION 1
-#endif
+// NOTE: JSON_HAS_CPP_26_REFLECTION is defined at the very END of this header
+// (see below), not here. It is consumed by {to,from}_json.hpp to select the
+// reflection enum overloads; defining it before this header's own includes
+// would make a re-entrant include of those files (via adl_serializer.hpp)
+// take the refl2 branch before namespace refl2 exists — the "direct include of
+// a conversions header" order then fails with "'refl2' has not been declared".
 
-#include <cstdio>     // fprintf, abort (fixed-size from_json size mismatch)
 #include <array>      // array (compile-time key storage)
 #include <charconv>   // from_chars
 #include <forward_list> // is_library_dedicated_array (front_inserter from_json)
 #include <optional>   // is_optional (C++23 begin/end misclassification guard)
+#include <stdexcept>  // runtime_error (consteval identifier-length diagnostic)
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -5765,7 +5768,18 @@ consteval std::array<char, 64> member_json_key(std::meta::info member)
         }
     }
     const auto id = std::meta::identifier_of(member);
-    const std::size_t m = id.size() < out.size() ? id.size() : out.size();
+    // The array must stay NUL-terminated: callers build std::string(key.data())
+    // (serialize_member / deserialize_member_impl), so a 64-char identifier
+    // used to read past the array into adjacent memory and produce a garbage
+    // JSON key. Over-long identifiers are a compile error with a readable
+    // message (consteval throw), symmetric with json_name's 63-char limit.
+    if (id.size() >= out.size())
+    {
+        throw std::runtime_error("refl2: member/enumerator identifier too long "
+                                 "(max 63 chars; use [[=refl2::json_name{\"...\"}]] "
+                                 "to shorten the JSON key)");
+    }
+    const std::size_t m = id.size();
     for (std::size_t k = 0; k < m; ++k)
     {
         out[k] = id[k];
@@ -5802,6 +5816,23 @@ template<typename T> struct is_optional<std::optional<T>> : std::true_type {};
 // alternative as {"index": N, "value": <alternative>} (oneof semantics).
 template<typename T> struct is_variant : std::false_type {};
 template<typename... Ts> struct is_variant<std::variant<Ts...>> : std::true_type {};
+
+// Top-level std::variant support is a SECOND behavior change on top of the
+// JSON_USE_REFLECTION opt-in: upstream guarantees that json is NOT
+// constructible from a std::variant (tests/src/unit-regression2.cpp:569,
+// issue #1292). It is therefore gated behind its own macro so that
+// JSON_USE_REFLECTION alone preserves that invariant. std::variant MEMBERS of
+// annotated structs are unaffected — they are handled by the codec's
+// dedicated branch, not by the catch-all's eligibility.
+template<typename T>
+constexpr bool variant_whitelisted() noexcept
+{
+#if defined(JSON_USE_REFLECTION_VARIANT)
+    return is_variant<T>::value;
+#else
+    return false;
+#endif
+}
 
 template<typename B, typename T>
 struct is_nested_json : std::is_same<std::remove_cvref_t<T>, B> {};
@@ -6052,16 +6083,55 @@ struct is_reflectable_struct < U, T, std::enable_if_t <
 // shape. A type is eligible iff NO existing overload handles it, the user
 // has not customized it, and it is a reflectable struct.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Lazy instantiation of the ADL probes.
+// A short-circuited `&&` is NOT enough: reading `has_user_to_json<B,T>::value`
+// still instantiates that class template, whose base is the ADL probe
+// expression. The probe resolves `to_json(declval<B&>(), declval<const T&>())`
+// by ADL, which finds the library's own CPO object `nlohmann::to_json`
+// (associated namespace of basic_json), and instantiating the CPO re-enters
+// detail::to_json -> this very constraint -> GCC reports "satisfaction of
+// atomic constraint ... depends on itself" (observed with upstream
+// unit-disabled_exceptions.cpp / unit-regression2.cpp, T = sax_no_exception).
+// The probe therefore lives behind a specialization selected by an
+// already-computed boolean, so it is only instantiated for types that passed
+// the cheap structural conditions.
+// ---------------------------------------------------------------------------
+template<typename B, typename T, bool Probe>
+struct no_user_to_json_lazy : std::true_type {};   // Probe == false: not a candidate, skip
+
+template<typename B, typename T>
+struct no_user_to_json_lazy<B, T, true> : std::bool_constant < !has_user_to_json<B, T>::value > {};
+
+template<typename B, typename T, bool Probe>
+struct no_user_from_json_lazy : std::true_type {};
+
+template<typename B, typename T>
+struct no_user_from_json_lazy<B, T, true> : std::bool_constant < !has_user_from_json<B, T>::value > {};
+
 template<typename B, typename T>
 struct to_json_eligible
 {
-    static constexpr bool value =
+    // cheap, non-circular conditions (never instantiate the ADL probe)
+    static constexpr bool structural =
         !in_json_namespace(^^T)                 // library-internal types (identity_tag, ...) never
         && std::is_class<T>::value              // participate — MUST precede the ADL probe
         && !std::is_union<T>::value
         && !std::is_scalar<T>::value            // arithmetic, enum, pointer, ...
         && !std::is_array<T>::value
         && !nlohmann::detail::is_basic_json<T>::value
+        // per-type opt-in: only classes carrying the type-level
+        // [[=refl2::json_serializable{}]] annotation reach the catch-all;
+        // unannotated reflectable structs keep the main library's behavior.
+        // std::variant (M7) is a library-type whitelist exception — users
+        // cannot annotate library types — and is itself gated behind
+        // JSON_USE_REFLECTION_VARIANT so that upstream's
+        // `!is_constructible<json, std::variant<...>>` invariant
+        // (unit-regression2.cpp) still holds by default.
+        && ((has_annotation<json_serializable>(^^T)
+             && std::meta::is_complete_type(^^T)
+             && is_reflectable_struct<false, T>::value)
+            || variant_whitelisted<T>())
         && !is_string_like_to<B, T>::value      // string overload probe
         && !nlohmann::detail::is_compatible_array_type<B, T>::value
         && !nlohmann::detail::is_compatible_object_type<B, T>::value
@@ -6078,26 +6148,27 @@ struct to_json_eligible
 #if JSON_HAS_EXPERIMENTAL_FILESYSTEM
         && !std::is_same<std::remove_cvref_t<T>, std::experimental::filesystem::path>::value
 #endif
-        && !has_user_to_json<B, T>::value       // non-circular ADL probe
-        // per-type opt-in: only classes carrying the type-level
-        // [[=refl2::json_serializable{}]] annotation reach the catch-all;
-        // unannotated reflectable structs keep the main library's behavior.
-        // std::variant (M7) is a library-type whitelist exception — users
-        // cannot annotate library types.
-        && ((has_annotation<json_serializable>(^^T) && is_reflectable_struct<false, T>::value)
-            || is_variant<T>::value);
+        ;
+
+    static constexpr bool value = structural && no_user_to_json_lazy<B, T, structural>::value;
 };
 
 template<typename B, typename T>
 struct from_json_eligible
 {
-    static constexpr bool value =
+    // cheap, non-circular conditions (never instantiate the ADL probe) — same
+    // shape as to_json_eligible; see the lazy-probe comment above.
+    static constexpr bool structural =
         !in_json_namespace(^^T)                 // library-internal types (identity_tag, ...) never
         && std::is_class<T>::value              // participate — MUST precede the ADL probe
         && !std::is_union<T>::value
         && !std::is_scalar<T>::value
         && !std::is_array<T>::value
         && !nlohmann::detail::is_basic_json<T>::value
+        && ((has_annotation<json_serializable>(^^T)
+             && std::meta::is_complete_type(^^T)
+             && is_reflectable_struct<false, T>::value)
+            || variant_whitelisted<T>())
         && !is_string_like_from<B, T>::value    // from_json string overload probe
         && !nlohmann::detail::is_constructible_array_type<B, T>::value
         && !nlohmann::detail::is_constructible_object_type<B, T>::value
@@ -6111,10 +6182,9 @@ struct from_json_eligible
         && !std::is_same<std::remove_cvref_t<T>, std::experimental::filesystem::path>::value
 #endif
         && !is_optional<T>::value
-        && !has_user_from_json<B, T>::value     // non-circular ADL probe
-        // per-type opt-in, same as to_json_eligible (see above)
-        && ((has_annotation<json_serializable>(^^T) && is_reflectable_struct<false, T>::value)
-            || is_variant<T>::value);
+        ;
+
+    static constexpr bool value = structural && no_user_from_json_lazy<B, T, structural>::value;
 };
 
 // ---------------------------------------------------------------------------
@@ -6203,7 +6273,22 @@ consteval std::size_t enum_count(std::meta::info enum_type)
     return std::meta::enumerators_of(enum_type).size();
 }
 
+// Is the enum enumerable (i.e. does it have a definition, not just an opaque
+// declaration)? An opaque enum declaration (`enum class E : std::uint64_t;`,
+// used as a typed integer by upstream's own tests, e.g. unit-udt.cpp) makes
+// std::meta::enumerators_of throw std::meta::exception, which is a HARD error
+// in a constant expression — it would break compilation of the whole TU
+// instead of falling back to the integer path. is_enumerable_type is the
+// sanctioned pre-check (verified on g++-16).
+template<typename E>
+consteval bool enum_is_enumerable()
+{
+    return std::meta::is_enumerable_type(^^E);
+}
+
 // does the enum carry any json_name annotation on its enumerators?
+// PRECONDITION: E must be enumerable (callers guard with enum_is_enumerable);
+// enumerators_of on an opaque enum is a hard consteval error.
 template<typename E>
 consteval bool enum_has_annotations()
 {
@@ -6263,7 +6348,11 @@ template<typename B, typename E>
 void serialize_enum(B& j, E e)
 {
     using U = std::underlying_type_t<E>;
-    if constexpr (enum_has_annotations<E>())
+    // An opaque enum (declared, never defined) is not enumerable: taking the
+    // integer path keeps upstream's behavior byte-for-byte instead of tripping
+    // std::meta::enumerators_of's hard consteval error (upstream unit-udt.cpp
+    // uses such an enum).
+    if constexpr (enum_is_enumerable<E>() && enum_has_annotations<E>())
     {
         const U v = static_cast<U>(e);
         const auto& values = enum_values<E>();
@@ -6320,7 +6409,8 @@ template<typename B, typename E>
 void deserialize_enum(const B& j, E& e)
 {
     using U = std::underlying_type_t<E>;
-    if constexpr (enum_has_annotations<E>())
+    // opaque enum: not enumerable -> integer path (see serialize_enum)
+    if constexpr (enum_is_enumerable<E>() && enum_has_annotations<E>())
     {
         if (j.is_string())
         {
@@ -6568,17 +6658,16 @@ struct codec
         }
         else
         {
-            // fixed-size container (e.g. std::array): index-assign
-            if (j.size() != v.size())
+            // fixed-size container (e.g. std::array): index-assign through
+            // B::at(i), mirroring the library's from_json_array_impl for
+            // std::array<T, N> — a too-short JSON array throws the library's
+            // out_of_range.401 ("array index N is out of range"), extra
+            // elements are ignored. Never abort(): a JSON library must report
+            // malformed input as an exception, and abort() would also bypass
+            // JSON_THROW_USER / JSON_NOEXCEPTION.
+            for (std::size_t i = 0; i < v.size(); ++i)
             {
-                std::fprintf(stderr, "refl2: array size mismatch (%zu != %zu)\n",
-                             static_cast<std::size_t>(j.size()), v.size());
-                std::abort();
-            }
-            std::size_t i = 0;
-            for (auto&& e : j)
-            {
-                deserialize_one(e, v[i++]);
+                deserialize_one(j.at(i), v[i]);
             }
         }
     }
@@ -6758,7 +6847,14 @@ struct codec
         if constexpr (std::is_arithmetic_v<K>)
         {
             K k{};
-            auto [p, ec] = std::from_chars(s.data(), s.data() + s.size(), k);
+            const auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), k);
+            // A JSON object key that is not a valid number must NOT silently
+            // become 0 (it would collide with a real "0" key and lose data).
+            if (ec != std::errc() || ptr != s.data() + s.size())
+            {
+                JSON_THROW(nlohmann::detail::type_error::create(
+                               302, nlohmann::detail::concat("type must be number, but is \"", s, "\""), nullptr));
+            }
             return k;
         }
         else
@@ -6812,6 +6908,19 @@ inline void from_json(const BasicJsonType& j, T& v)
 
 } // namespace detail
 NLOHMANN_JSON_NAMESPACE_END
+
+// ---------------------------------------------------------------------------
+// Feature-test macro, defined LAST on purpose (see the note at the top of this
+// header): {to,from}_json.hpp consume it to select the reflection enum
+// overloads, and those files are re-entered from this header's own includes
+// (adl_serializer.hpp -> {from,to}_json.hpp). Defining it only after namespace
+// refl2 is complete makes the direct-include order
+//   #include <nlohmann/detail/conversions/to_json.hpp>
+// compile instead of tripping "'refl2' has not been declared".
+// ---------------------------------------------------------------------------
+#ifndef JSON_HAS_CPP_26_REFLECTION
+    #define JSON_HAS_CPP_26_REFLECTION 1
+#endif
 
 #endif
 
@@ -8125,8 +8234,15 @@ inline void to_json(BasicJsonType& j, CompatibleNumberIntegerType val) noexcept
 // NLOHMANN_JSON_SERIALIZE_ENUM); an unannotated enum keeps the integer path
 // byte-for-byte (zero drift). JSON_HAS_CPP_26_REFLECTION is defined by
 // reflection_to_json.hpp, i.e. only when the opt-in macro is on.
+// noexcept mirrors the integer-path overload (and the C++20 branch below):
+// upstream's unit-noexcept.cpp asserts noexcept(to_json(json&, enum)) and
+// noexcept(json(enum)), so dropping it here is an observable API change.
+// It is CONDITIONAL because the annotated path allocates (j = string) and may
+// throw, exactly like the NLOHMANN_JSON_SERIALIZE_ENUM it replaces (whose
+// to_json is not noexcept either); an unannotated enum keeps noexcept(true).
 template<typename BasicJsonType, concepts::enum_type EnumType>
 inline void to_json(BasicJsonType& j, EnumType e)
+noexcept(!(refl2::detail::enum_is_enumerable<EnumType>() && refl2::detail::enum_has_annotations<EnumType>()))
 {
     refl2::detail::serialize_enum(j, e);
 }
@@ -9398,12 +9514,19 @@ NLOHMANN_JSON_NAMESPACE_END
 #include <array> // array
 #include <clocale> // localeconv
 #include <cstddef> // size_t
-#include <cstdio> // snprintf
+#include <cstdint> // uint8_t (escape_control_character)
 #include <cstdlib> // strtof, strtod, strtold, strtoll, strtoull
 #include <initializer_list> // initializer_list
 #include <string> // char_traits, string
 #include <utility> // move
 #include <vector> // vector
+
+// macro_scope.hpp must come BEFORE the JSON_HAS_CPP_17 test below: it defines
+// that macro, so a standalone include of this header in C++17+ mode would
+// otherwise select the C++11/14 strtoull fallback (and fail to compile, since
+// std::from_chars is never declared) — verified regression vs develop.
+// #include <nlohmann/detail/macro_scope.hpp>
+
 #ifdef JSON_HAS_CPP_17
     #include <charconv> // from_chars
     #include <system_error> // errc
@@ -9412,8 +9535,6 @@ NLOHMANN_JSON_NAMESPACE_END
 // #include <nlohmann/detail/input/input_adapters.hpp>
 
 // #include <nlohmann/detail/input/position_t.hpp>
-
-// #include <nlohmann/detail/macro_scope.hpp>
 
 // #include <nlohmann/detail/meta/type_traits.hpp>
 
@@ -10383,8 +10504,17 @@ class lexer : public lexer_base<BasicJsonType>
         char* end = nullptr; // NOLINT(misc-const-correctness,cppcoreguidelines-pro-type-vararg,hicpp-vararg)
         errno = 0;
         const auto x = std::strtoull(str, &end, 10);
-        value = static_cast<Number>(x);
-        return errno != ERANGE;
+        const auto narrowed = static_cast<Number>(x);
+        // Round-trip check: Number may be NARROWER than unsigned long long
+        // (custom basic_json number types). Without it an out-of-range token
+        // would be silently truncated instead of falling through to the float
+        // path — upstream's behavior (`value_unsigned == x`).
+        if (errno == ERANGE || narrowed != x)
+        {
+            return false;
+        }
+        value = narrowed;
+        return true;
     }
 
     template < typename Number, enable_if_t < std::is_signed<Number>::value, int > = 0 >
@@ -10393,8 +10523,14 @@ class lexer : public lexer_base<BasicJsonType>
         char* end = nullptr; // NOLINT(misc-const-correctness,cppcoreguidelines-pro-type-vararg,hicpp-vararg)
         errno = 0;
         const auto x = std::strtoll(str, &end, 10);
-        value = static_cast<Number>(x);
-        return errno != ERANGE;
+        const auto narrowed = static_cast<Number>(x);
+        // see the unsigned overload: same round-trip (upstream `value_integer == x`)
+        if (errno == ERANGE || static_cast<long long>(narrowed) != x)
+        {
+            return false;
+        }
+        value = narrowed;
+        return true;
     }
 #endif
 
