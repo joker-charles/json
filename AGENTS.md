@@ -151,18 +151,21 @@ Rules first — the exact commands for the highlighted items are in
   line) so the history remains DCO-clean per `.github/CONTRIBUTING.md`.
   Verify with `git log --format='%h %s%n%b' -1 <sha> | grep Signed-off-by`.
 - The branch is a work-in-progress experiment; commits are local until you push.
-- **Pushing from this sandboxed environment** needs an ssh-config override: a
-  plain `git push` fails with
+- **Pushing from this sandboxed environment**: run the push with escalated
+  sandbox permissions (`danger-full-access`). A plain `git push` under the
+  default file policy fails with
   `Bad owner or permissions on /etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf`
   because the sandbox presents the system ssh config as `nobody:nogroup` and
-  ssh refuses to read it. Bypass the system config (the key in `~/.ssh` still
-  applies):
+  ssh refuses to read it; with escalation the same command succeeds
+  (verified: `git push origin feature/static-reflection` -> "Everything
+  up-to-date").
+  If escalation is not available, the fallback is a per-command override —
+  the key in `~/.ssh` still applies:
   ```sh
   GIT_SSH_COMMAND='ssh -F /dev/null' git push origin feature/static-reflection
   ```
-  Verified: authenticates as `joker-charles` and pushes. Prefer this
-  per-command override over chowning the system file or persisting
-  `core.sshCommand` in the checkout (both would outlive this session).
+  Prefer either over chowning the system file or persisting `core.sshCommand`
+  in the checkout (both would outlive this session).
 
 ## 4. Progressive reading guide (read the reference on demand)
 
