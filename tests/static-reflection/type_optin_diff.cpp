@@ -22,6 +22,9 @@
 //   g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address \
 //       -Iinclude -o type_optin_diff type_optin_diff.cpp && ./type_optin_diff
 #define JSON_USE_REFLECTION 1  // opt-in gate (UPSTREAM_INTEGRATION_PLAN.md §2.2)
+// M7 top-level std::variant support is separately gated (it would break
+// upstream's !is_constructible<json, std::variant<...>> invariant)
+#define JSON_USE_REFLECTION_VARIANT 1
 #include <nlohmann/json.hpp>
 
 #include <cstdio>

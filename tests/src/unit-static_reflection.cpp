@@ -16,15 +16,24 @@
 // standards in tests/CMakeLists.txt.
 
 #define JSON_USE_REFLECTION 1
+// M7's top-level std::variant support is a second, separately-gated behavior
+// change (it would otherwise break upstream's `!is_constructible<json,
+// std::variant<...>>` invariant, unit-regression2.cpp:569). This file opts in
+// explicitly; the gate-on upstream targets (tests/CMakeLists.txt) compile
+// without it and pin the default invariant.
+#define JSON_USE_REFLECTION_VARIANT 1
 
 #include "doctest_compatibility.h"
 
 #include <nlohmann/json.hpp>
 using nlohmann::json;
 
+#include <array>
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -217,5 +226,90 @@ TEST_CASE("static reflection std::variant whitelist (M7)")
         CHECK_THROWS_WITH_AS(static_cast<void>(j.get<V>()),
                              "[json.exception.out_of_range.403] key 'index' not found",
                              json::out_of_range);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Regression coverage for defects found in review (2026-08). Each case below
+// failed (or failed to compile) before the corresponding fix.
+// ---------------------------------------------------------------------------
+
+// opaque enum: `enum class X : T;` with no definition. std::meta::
+// enumerators_of on it is a HARD consteval error, so the M6 path must fall
+// back to the integer path instead of breaking the whole TU
+// (upstream unit-udt.cpp uses exactly this shape).
+enum class opaque_id : std::uint64_t;
+
+// plain unannotated enum with NO NLOHMANN_JSON_SERIALIZE_ENUM: the integer
+// path must stay noexcept
+namespace plain_no_macro
+{
+enum class b { x, y };
+} // namespace plain_no_macro
+
+namespace reflect
+{
+struct [[ = refl2::json_serializable {}]] WithArray
+{
+    std::array<int, 3> arr;
+};
+struct [[ = refl2::json_serializable {}]] WithMap
+{
+    std::map<int, int> m;
+};
+struct [[ = refl2::json_serializable {}]] WithVariant
+{
+    std::variant<int, std::string> v;
+};
+} // namespace reflect
+
+TEST_CASE("static reflection review regressions")
+{
+    SECTION("opaque enum keeps the integer path (no meta::exception)")
+    {
+        const json j = static_cast<opaque_id>(42);
+        CHECK(j.dump() == "42");
+        CHECK(j.get<opaque_id>() == static_cast<opaque_id>(42));
+    }
+
+    SECTION("enum to_json stays noexcept for unannotated enums")
+    {
+        // upstream unit-noexcept.cpp asserts exactly this for both the free
+        // CPO call and the basic_json converting constructor (it uses a plain
+        // enum with no NLOHMANN_JSON_SERIALIZE_ENUM, whose to_json is not
+        // noexcept either)
+        static_assert(noexcept(nlohmann::to_json(std::declval<json&>(), plain_no_macro::b::x)), "");
+        static_assert(noexcept(json(plain_no_macro::b::x)), "");
+        static_assert(!noexcept(nlohmann::to_json(std::declval<json&>(), Color::red)),
+                      "the annotated (allocating) path is not noexcept");
+    }
+
+    SECTION("std::array size mismatch throws instead of aborting")
+    {
+        // before the fix: std::abort() (SIGABRT) on a short array
+        CHECK_THROWS_WITH_AS(static_cast<void>(json::parse(R"({"arr":[1,2]})").get<reflect::WithArray>()),
+                             "[json.exception.out_of_range.401] array index 2 is out of range",
+                             json::out_of_range);
+        // extra elements are ignored, like the library's std::array from_json
+        const auto longer = json::parse(R"({"arr":[1,2,3,4]})").get<reflect::WithArray>();
+        CHECK(longer.arr == std::array<int, 3> {1, 2, 3});
+    }
+
+    SECTION("non-numeric key for an arithmetic-keyed map throws instead of becoming 0")
+    {
+        // before the fix the key silently became 0 (data loss / key collision)
+        CHECK_THROWS_WITH_AS(static_cast<void>(json::parse(R"({"m":{"abc":1}})").get<reflect::WithMap>()),
+                             "[json.exception.type_error.302] type must be number, but is \"abc\"",
+                             json::type_error);
+        const auto ok = json::parse(R"({"m":{"7":1}})").get<reflect::WithMap>();
+        CHECK(ok.m.at(7) == 1);
+    }
+
+    SECTION("std::variant MEMBER still works without JSON_USE_REFLECTION_VARIANT")
+    {
+        // the per-type gate only affects TOP-LEVEL variants
+        const json j = reflect::WithVariant {std::string("hi")};
+        CHECK(j.dump() == R"({"v":{"index":1,"value":"hi"}})");
+        CHECK(j.get<reflect::WithVariant>().v == std::variant<int, std::string> {std::string("hi")});
     }
 }

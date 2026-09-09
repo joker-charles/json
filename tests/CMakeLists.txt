@@ -187,6 +187,41 @@ json_test_add_test_for(src/unit-static_reflection.cpp
     MAIN test_main CXX_STANDARDS 26 ${test_force}
 )
 
+# Gate-on regression targets: the SAME upstream doctest TUs, compiled and run
+# with JSON_USE_REFLECTION enabled. The reflection catch-all is a behavior
+# change, and enabling it broke several of these files (opaque enum ->
+# std::meta::exception, lost noexcept, a self-dependent atomic constraint);
+# none of the default targets could catch that because only
+# unit-static_reflection.cpp defines the gate. These targets are the guard.
+# They are built directly (not via json_test_add_test_for) because the harness
+# skips files that do not mention JSON_HAS_CPP_26 in their text.
+if(compiler_supports_cpp_26)
+    foreach(reflection_upstream_test udt noexcept regression2 conversions
+            serialization constructor1 alt-string meta disabled_exceptions)
+        set(_reflection_target test-reflection_${reflection_upstream_test}_cpp26)
+        add_executable(${_reflection_target} src/unit-${reflection_upstream_test}.cpp)
+        target_link_libraries(${_reflection_target} PRIVATE test_main)
+        set_target_properties(${_reflection_target} PROPERTIES
+            CXX_STANDARD 26
+            CXX_STANDARD_REQUIRED ON
+        )
+        target_compile_definitions(${_reflection_target} PRIVATE JSON_USE_REFLECTION=1)
+        if(reflection_upstream_test STREQUAL "disabled_exceptions")
+            target_compile_definitions(${_reflection_target} PRIVATE JSON_NOEXCEPTION=1)
+        endif()
+        target_compile_options(${_reflection_target} PRIVATE
+            $<$<CXX_COMPILER_ID:GNU>:-freflection>)
+        add_test(NAME ${_reflection_target}
+            COMMAND ${_reflection_target} ${DOCTEST_TEST_FILTER}
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        )
+        set_tests_properties(${_reflection_target} PROPERTIES
+            LABELS "all"
+            FIXTURES_REQUIRED TEST_DATA
+        )
+    endforeach()
+endif()
+
 if(json_32bit_test_only)
     # Skip all other tests in this file
     return()

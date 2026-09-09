@@ -25,6 +25,9 @@
 //       -Iinclude -o probe_variant probe_variant.cpp && ./probe_variant
 // opt-in gate (UPSTREAM_INTEGRATION_PLAN.md §2.2)
 #define JSON_USE_REFLECTION 1
+// M7 top-level std::variant support is separately gated (it would break
+// upstream's !is_constructible<json, std::variant<...>> invariant)
+#define JSON_USE_REFLECTION_VARIANT 1
 #include <cstdio>
 #include <map>
 #include <optional>
