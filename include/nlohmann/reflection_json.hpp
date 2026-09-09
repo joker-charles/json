@@ -59,6 +59,7 @@
 #include <cstring>     // memcpy
 #include <iterator>    // reverse_iterator, advance, next (M4D-2 iterators)
 #include <limits>      // numeric_limits
+#include <memory>      // shared_ptr (iterator scratch surviving reverse_iterator copies)
 #include <stdexcept>   // runtime_error, out_of_range (BSON check, at/erase bounds)
 #include <string>
 #include <string_view>
@@ -103,14 +104,14 @@ namespace refl_detail
 consteval std::meta::info real_data_info()
 {
     constexpr auto m_data = std::meta::nonstatic_data_members_of(
-        ^^json, std::meta::access_context::unchecked())[0];
+                                ^^json, std::meta::access_context::unchecked())[0];
     return std::meta::type_of(m_data);
 }
 
 consteval std::meta::info real_json_value_info()
 {
     constexpr auto m_value = std::meta::nonstatic_data_members_of(
-        real_data_info(), std::meta::access_context::unchecked())[1];
+                                 real_data_info(), std::meta::access_context::unchecked())[1];
     return std::meta::type_of(m_value);
 }
 
@@ -120,14 +121,14 @@ using real_json_value = typename [: real_json_value_info() :];
 consteval std::size_t member_count()
 {
     return std::meta::nonstatic_data_members_of(
-        real_json_value_info(), std::meta::access_context::unchecked()).size();
+               real_json_value_info(), std::meta::access_context::unchecked()).size();
 }
 
 template<std::size_t I>
 consteval bool member_is_pointer()
 {
     constexpr auto m = std::meta::nonstatic_data_members_of(
-        real_json_value_info(), std::meta::access_context::unchecked())[I];
+                           real_json_value_info(), std::meta::access_context::unchecked())[I];
     using M = typename [: std::meta::type_of(m) :];
     return std::is_pointer_v<M>;
 }
@@ -212,6 +213,25 @@ template<> struct slot_index<value_t::number_float>
     static constexpr bool has = true;
     static constexpr std::size_t value = 7;
 };
+
+// ---------------------------------------------------------------------------
+// Pin the hand-written slot_index table to the union layout GENERATED from the
+// real basic_json::json_value (kMemberIds / kMemberCount). Without this the
+// two tables could drift apart silently: kStorage/kMemberIds come from
+// reflection, slot_index does not, so a same-category slot swap would be type
+// confusion rather than a compile error (docs/static-reflection/FEASIBILITY.md
+// §4.5 claims this binding exists; before this change it did not).
+// ---------------------------------------------------------------------------
+static_assert(kMemberCount == 8, "basic_json::json_value is expected to have 8 members");
+static_assert(kMemberIds[slot_index<value_t::object>::value]          == "object",          "slot_index<object> must match json_value member order");
+static_assert(kMemberIds[slot_index<value_t::array>::value]           == "array",           "slot_index<array> must match json_value member order");
+static_assert(kMemberIds[slot_index<value_t::string>::value]          == "string",          "slot_index<string> must match json_value member order");
+static_assert(kMemberIds[slot_index<value_t::binary>::value]          == "binary",          "slot_index<binary> must match json_value member order");
+static_assert(kMemberIds[slot_index<value_t::boolean>::value]         == "boolean",         "slot_index<boolean> must match json_value member order");
+static_assert(kMemberIds[slot_index<value_t::number_integer>::value]  == "number_integer",  "slot_index<number_integer> must match json_value member order");
+static_assert(kMemberIds[slot_index<value_t::number_unsigned>::value] == "number_unsigned", "slot_index<number_unsigned> must match json_value member order");
+static_assert(kMemberIds[slot_index<value_t::number_float>::value]    == "number_float",    "slot_index<number_float> must match json_value member order");
+static_assert(kStorage.size() == kMemberCount, "kStorage must cover every json_value member");
 
 // ---------------------------------------------------------------------------
 // Compile-time dispatch over ALL value_t enumerators.
@@ -311,11 +331,11 @@ consteval auto value_t_weights_impl(std::index_sequence<I...>)
 
 // three parallel tables over the enumerator set, in enumeration order
 constexpr auto kValueTNames     = refl_detail::value_t_names_impl(
-    std::make_index_sequence<kValueTInfos.size()> {});
+std::make_index_sequence<kValueTInfos.size()> {});
 constexpr auto kValueTTypeNames = refl_detail::value_t_type_names_impl(
-    std::make_index_sequence<kValueTInfos.size()> {});
+std::make_index_sequence<kValueTInfos.size()> {});
 constexpr auto kValueTWeights   = refl_detail::value_t_weights_impl(
-    std::make_index_sequence<kValueTInfos.size()> {});
+std::make_index_sequence<kValueTInfos.size()> {});
 
 // the tables must cover all enumerators — a value_t added without making it
 // into the tables is a compile error, never a silent ordering/name drift
@@ -362,7 +382,7 @@ namespace refl_detail
 // equal weights are equivalent; discarded (weight -1) is unordered — the
 // same partial_ordering semantics as value_t::operator<=>.
 [[nodiscard]] constexpr std::partial_ordering value_t_order(const value_t lhs,
-                                                             const value_t rhs) noexcept
+        const value_t rhs) noexcept
 {
     const int lw = value_t_weight(lhs);
     const int rw = value_t_weight(rhs);
@@ -554,8 +574,14 @@ struct basic_json_reflection
             constexpr value_t V = static_cast<value_t>([: r :]);
             if (src_has_type(src, V))
             {
-                m_type = V;
+                // Construct BEFORE publishing the tag: if the allocation
+                // throws, m_type must not claim a pointer-typed value over
+                // stale scalar bytes (the destructor would then delete a
+                // garbage pointer). Upstream guards the same case in
+                // json_value::destroy (json.hpp "not initialized (e.g., due
+                // to exception in the ctor)").
                 construct_one<V>(m_value);
+                m_type = V;
                 copy_from_lib<V>(src);
             }
         }
@@ -661,6 +687,9 @@ struct basic_json_reflection
                 destroy_one<V>(m_value);
             }
         }
+        // zero the union as well: a later construct_one that throws must not
+        // leave the destructor looking at stale pointer-typed bits
+        m_value = refl_detail::real_json_value {};
         m_type = value_t::null;
     }
 
@@ -1178,9 +1207,9 @@ class reflection_iterator
   private:
     using reflection_t = std::conditional_t<IsConst, const basic_json_reflection, basic_json_reflection>;
     using object_iterator_t = std::conditional_t<IsConst,
-        typename json::object_t::const_iterator, typename json::object_t::iterator>;
+          typename json::object_t::const_iterator, typename json::object_t::iterator>;
     using array_iterator_t = std::conditional_t<IsConst,
-        typename json::array_t::const_iterator, typename json::array_t::iterator>;
+          typename json::array_t::const_iterator, typename json::array_t::iterator>;
 
     friend class basic_json_reflection;
 
@@ -1189,7 +1218,15 @@ class reflection_iterator
     object_iterator_t m_object_it{};
     array_iterator_t m_array_it{};
     std::ptrdiff_t m_primitive = 0; // primitive_iterator_t: 0 = begin, 1 = end
-    mutable json m_scratch;         // materialized primitive/string/binary value
+    // Materialized primitive/string/binary value for iterator dereference.
+    // It is SHARED (shared_ptr), not a plain member: std::reverse_iterator::
+    // operator* is const and copies the underlying iterator into a local
+    // (`_Iterator __tmp = current; return *--__tmp;`), so a reference to a
+    // plain member of that copy would dangle the moment operator* returns
+    // (verified: ASan stack-use-after-return on `*r.rbegin()` for a string
+    // value). Copies share the pointee, so the returned reference outlives the
+    // temporary iterator ("last deref wins" aliasing is preserved).
+    mutable std::shared_ptr<json> m_scratch = std::make_shared<json>();
 
     // the mode of a value's current type (replaces iter_impl's switch)
     static std::uint8_t mode_for(const basic_json_reflection& j) noexcept
@@ -1265,33 +1302,33 @@ class reflection_iterator
         const value_t t = m_object->type();
         if (t == value_t::boolean)
         {
-            m_scratch = m_object->m_value.boolean;
+            *m_scratch = m_object->m_value.boolean;
         }
         else if (t == value_t::number_integer)
         {
-            m_scratch = m_object->m_value.number_integer;
+            *m_scratch = m_object->m_value.number_integer;
         }
         else if (t == value_t::number_unsigned)
         {
-            m_scratch = m_object->m_value.number_unsigned;
+            *m_scratch = m_object->m_value.number_unsigned;
         }
         else if (t == value_t::number_float)
         {
-            m_scratch = m_object->m_value.number_float;
+            *m_scratch = m_object->m_value.number_float;
         }
         else if (t == value_t::string)
         {
-            m_scratch = *m_object->m_value.string;
+            *m_scratch = *m_object->m_value.string;
         }
         else if (t == value_t::binary)
         {
-            m_scratch = *m_object->m_value.binary;
+            *m_scratch = *m_object->m_value.binary;
         }
         else
         {
             throw std::runtime_error("reflection_iterator: cannot get value");
         }
-        return m_scratch;
+        return *m_scratch;
     }
 
     pointer operator->() const
@@ -1552,8 +1589,8 @@ inline json& basic_json_reflection::operator[](const std::size_t idx)
     if (is_null())
     {
         // implicitly convert a null value to an empty array (library semantics)
-        m_type = value_t::array;
         construct_one<value_t::array>(m_value);
+        m_type = value_t::array;
     }
     if (!is_array())
     {
@@ -1572,8 +1609,8 @@ inline json& basic_json_reflection::operator[](const json::object_t::key_type& k
     if (is_null())
     {
         // implicitly convert a null value to an empty object (library semantics)
-        m_type = value_t::object;
         construct_one<value_t::object>(m_value);
+        m_type = value_t::object;
     }
     if (!is_object())
     {
@@ -1631,7 +1668,14 @@ inline basic_json_reflection::iterator basic_json_reflection::erase(iterator pos
             else
             {
                 // scalar/string/binary: erasing the single element resets the
-                // value to null (string/binary pointers freed by destroy())
+                // value to null (string/binary pointers freed by destroy()).
+                // Upstream rejects a non-begin primitive iterator with
+                // invalid_iterator.205 ("iterator out of range"); without this
+                // guard erase(end()) silently destroyed the value.
+                if (pos.m_primitive != 0)
+                {
+                    throw std::runtime_error("iterator out of range");
+                }
                 destroy();
             }
         }
@@ -1691,8 +1735,11 @@ struct reflection_serializer
 {
     std::string out;
 
-    explicit reflection_serializer(const basic_json_reflection& j, const bool ensure_ascii_ = false)
-        : ensure_ascii(ensure_ascii_)
+    explicit reflection_serializer(const basic_json_reflection& j,
+                                   const bool ensure_ascii_ = false,
+                                   const nlohmann::detail::error_handler_t error_handler_ =
+                                       nlohmann::detail::error_handler_t::strict)
+        : ensure_ascii(ensure_ascii_), error_handler(error_handler_)
     {
         dump(j);
     }
@@ -1704,7 +1751,7 @@ struct reflection_serializer
 
   private:
     bool ensure_ascii;
-    std::string buffer; // scratch for escaped strings
+    nlohmann::detail::error_handler_t error_handler;
 
     void dump(const basic_json_reflection& j)
     {
@@ -1839,85 +1886,29 @@ struct reflection_serializer
 
     void dump_float(const double f)
     {
-        // match the library's default dump for integral floats / general
-        char tmp[48];
-        if (!std::isfinite(f))
-        {
-            // the library dumps NaN AND +/-inf as "null" (dump_float,
-            // serializer.hpp: `if (!std::isfinite(x)) { write "null"; }`)
-            out += "null";
-            return;
-        }
-        if (std::signbit(f) && f == 0.0)
-        {
-            out += "-0.0"; // the library dumps negative zero as "-0.0"
-            return;
-        }
-        if (f == static_cast<long long>(f) && std::abs(f) < 1e17)
-        {
-            // integral value -> "N.N0" like the library (e.g. 3.0 -> "3.0")
-            auto [p, ec] = std::to_chars(tmp, tmp + sizeof(tmp), static_cast<long long>(f));
-            out.append(tmp, p);
-            out += ".0";
-            return;
-        }
-        // general shortest round-trip
-        auto [p, ec] = std::to_chars(tmp, tmp + sizeof(tmp), f);
-        out.append(tmp, p);
+        // Delegate to the library's own formatter (Grisu2 + format_buffer's
+        // kMinExp/kMaxExp thresholds + the ".0" guarantee). The previous
+        // std::to_chars (Ryu) version diverged for ~1.1% of doubles, including
+        // bare integer tokens for float values ("1.2345678901234568e+17" ->
+        // "123456789012345680"), which re-parsed as number_unsigned.
+        out += nlohmann::json(f).dump();
     }
 
     // escape per the library: control chars, quotes, backslash; ensure_ascii
     // additionally escapes non-ASCII
     void dump_escaped(const std::string& s, const bool ascii)
     {
-        buffer.clear();
-        for (unsigned char c : s)
-        {
-            switch (c)
-            {
-                case 0x22:
-                    buffer += "\\\"";
-                    break;
-                case 0x5C:
-                    buffer += "\\\\";
-                    break;
-                case 0x08:
-                    buffer += "\\b";
-                    break;
-                case 0x09:
-                    buffer += "\\t";
-                    break;
-                case 0x0A:
-                    buffer += "\\n";
-                    break;
-                case 0x0C:
-                    buffer += "\\f";
-                    break;
-                case 0x0D:
-                    buffer += "\\r";
-                    break;
-                default:
-                    if (c < 0x20)
-                    {
-                        char hex[7];
-                        std::snprintf(hex, sizeof hex, "\\u%04x", c);
-                        buffer += hex;
-                    }
-                    else if (ascii && c >= 0x7F)
-                    {
-                        // escape the leading byte of a UTF-8 seq as \u00XX
-                        // (adequate for the ASCII range differential cases)
-                        char hex[7];
-                        std::snprintf(hex, sizeof hex, "\\u00%02x", c);
-                        buffer += hex;
-                    }
-                    else
-                    {
-                        buffer.push_back(static_cast<char>(c));
-                    }
-            }
-        }
-        out += buffer;
+        // Reuse the library's serializer::dump_escaped instead of a hand-rolled
+        // byte loop: escaping must work on CODE POINTS (surrogate pairs for
+        // > U+FFFF) and validate UTF-8 through error_handler_t. The previous
+        // version escaped each UTF-8 BYTE as \u00XX, so every byte >= 0x80
+        // diverged ("é" -> \u00c3\u00a9 instead of \u00e9) and invalid UTF-8
+        // never raised type_error.316.
+        // (serializer::dump_escaped is private, so dump a json string through
+        // the public dump() path — byte-identical by construction — and keep
+        // only the interior: dump() adds the surrounding quotes.)
+        const std::string tmp = nlohmann::json(s).dump(-1, ' ', ascii, error_handler);
+        out.append(tmp, 1, tmp.size() - 2);
     }
 };
 
@@ -2133,6 +2124,24 @@ struct reflection_cbor_serializer
 
     void cbor_float(const double n)
     {
+        // Non-finite values use the canonical half-float encodings
+        // (binary_writer.hpp handles NaN/+-inf BEFORE write_compact_float):
+        // f97e00 / f97c00 / f9fc00. Emitting a float32/float64 payload instead
+        // was a byte-level divergence from the library.
+        if (std::isnan(n))
+        {
+            out.push_back(0xF9);
+            out.push_back(0x7E);
+            out.push_back(0x00);
+            return;
+        }
+        if (std::isinf(n))
+        {
+            out.push_back(0xF9);
+            out.push_back(n > 0 ? 0x7C : 0xFC);
+            out.push_back(0x00);
+            return;
+        }
         // replicate write_compact_float for CBOR (cbor)
         constexpr double F_MIN = static_cast<double>((std::numeric_limits<float>::lowest)());
         constexpr double F_MAX = static_cast<double>((std::numeric_limits<float>::max)());
@@ -2183,13 +2192,34 @@ template<value_t V> struct msgpack_code
 {
     static constexpr std::uint8_t value = 0xFF;
 };
-template<> struct msgpack_code<value_t::null> { static constexpr std::uint8_t value = 0xC0; }; // nil
-template<> struct msgpack_code<value_t::boolean> { static constexpr std::uint8_t value = 0xC3; }; // true; false is 0xC2
-template<> struct msgpack_code<value_t::string> { static constexpr std::uint8_t value = 0xD9; }; // str8; fixstr/str16/str32 are range-dependent
-template<> struct msgpack_code<value_t::array> { static constexpr std::uint8_t value = 0xDC; }; // array16; fixarray/array32 range-dependent
-template<> struct msgpack_code<value_t::object> { static constexpr std::uint8_t value = 0xDE; }; // map16; fixmap/map32 range-dependent
-template<> struct msgpack_code<value_t::binary> { static constexpr std::uint8_t value = 0xC4; }; // bin8; bin16/32 and ext/fixext variants
-template<> struct msgpack_code<value_t::number_float> { static constexpr std::uint8_t value = 0xCA; }; // float32; float64 is 0xCB
+template<> struct msgpack_code<value_t::null>
+{
+    static constexpr std::uint8_t value = 0xC0;
+}; // nil
+template<> struct msgpack_code<value_t::boolean>
+{
+    static constexpr std::uint8_t value = 0xC3;
+}; // true; false is 0xC2
+template<> struct msgpack_code<value_t::string>
+{
+    static constexpr std::uint8_t value = 0xD9;
+}; // str8; fixstr/str16/str32 are range-dependent
+template<> struct msgpack_code<value_t::array>
+{
+    static constexpr std::uint8_t value = 0xDC;
+}; // array16; fixarray/array32 range-dependent
+template<> struct msgpack_code<value_t::object>
+{
+    static constexpr std::uint8_t value = 0xDE;
+}; // map16; fixmap/map32 range-dependent
+template<> struct msgpack_code<value_t::binary>
+{
+    static constexpr std::uint8_t value = 0xC4;
+}; // bin8; bin16/32 and ext/fixext variants
+template<> struct msgpack_code<value_t::number_float>
+{
+    static constexpr std::uint8_t value = 0xCA;
+}; // float32; float64 is 0xCB
 // number_integer / number_unsigned: fully range-dependent (fixnum + uint/int 8..64)
 
 // --- UBJSON: primary codes ------------------------------------------------
@@ -2197,13 +2227,34 @@ template<value_t V> struct ubjson_code
 {
     static constexpr std::uint8_t value = 0xFF;
 };
-template<> struct ubjson_code<value_t::null> { static constexpr std::uint8_t value = 'Z'; };
-template<> struct ubjson_code<value_t::boolean> { static constexpr std::uint8_t value = 'T'; }; // false is 'F'
-template<> struct ubjson_code<value_t::string> { static constexpr std::uint8_t value = 'S'; };
-template<> struct ubjson_code<value_t::array> { static constexpr std::uint8_t value = '['; };
-template<> struct ubjson_code<value_t::object> { static constexpr std::uint8_t value = '{'; };
-template<> struct ubjson_code<value_t::binary> { static constexpr std::uint8_t value = '['; };
-template<> struct ubjson_code<value_t::number_float> { static constexpr std::uint8_t value = 'd'; }; // float32; float64 is 'D'
+template<> struct ubjson_code<value_t::null>
+{
+    static constexpr std::uint8_t value = 'Z';
+};
+template<> struct ubjson_code<value_t::boolean>
+{
+    static constexpr std::uint8_t value = 'T';
+}; // false is 'F'
+template<> struct ubjson_code<value_t::string>
+{
+    static constexpr std::uint8_t value = 'S';
+};
+template<> struct ubjson_code<value_t::array>
+{
+    static constexpr std::uint8_t value = '[';
+};
+template<> struct ubjson_code<value_t::object>
+{
+    static constexpr std::uint8_t value = '{';
+};
+template<> struct ubjson_code<value_t::binary>
+{
+    static constexpr std::uint8_t value = '[';
+};
+template<> struct ubjson_code<value_t::number_float>
+{
+    static constexpr std::uint8_t value = 'd';
+}; // float32; float64 is 'D'
 // number_integer / number_unsigned: range-dependent ('i'/'U'/'I'/'l'/'L', 'H' high-precision)
 
 // --- BSON: element-type codes (all fixed except integer narrowing) --------
@@ -2211,15 +2262,42 @@ template<value_t V> struct bson_code
 {
     static constexpr std::uint8_t value = 0xFF;
 };
-template<> struct bson_code<value_t::object> { static constexpr std::uint8_t value = 0x03; };
-template<> struct bson_code<value_t::array> { static constexpr std::uint8_t value = 0x04; };
-template<> struct bson_code<value_t::string> { static constexpr std::uint8_t value = 0x02; };
-template<> struct bson_code<value_t::binary> { static constexpr std::uint8_t value = 0x05; };
-template<> struct bson_code<value_t::boolean> { static constexpr std::uint8_t value = 0x08; };
-template<> struct bson_code<value_t::null> { static constexpr std::uint8_t value = 0x0A; };
-template<> struct bson_code<value_t::number_integer> { static constexpr std::uint8_t value = 0x10; }; // int32; int64 is 0x12
-template<> struct bson_code<value_t::number_unsigned> { static constexpr std::uint8_t value = 0x10; }; // int32; int64/uint64 are 0x12/0x11
-template<> struct bson_code<value_t::number_float> { static constexpr std::uint8_t value = 0x01; };
+template<> struct bson_code<value_t::object>
+{
+    static constexpr std::uint8_t value = 0x03;
+};
+template<> struct bson_code<value_t::array>
+{
+    static constexpr std::uint8_t value = 0x04;
+};
+template<> struct bson_code<value_t::string>
+{
+    static constexpr std::uint8_t value = 0x02;
+};
+template<> struct bson_code<value_t::binary>
+{
+    static constexpr std::uint8_t value = 0x05;
+};
+template<> struct bson_code<value_t::boolean>
+{
+    static constexpr std::uint8_t value = 0x08;
+};
+template<> struct bson_code<value_t::null>
+{
+    static constexpr std::uint8_t value = 0x0A;
+};
+template<> struct bson_code<value_t::number_integer>
+{
+    static constexpr std::uint8_t value = 0x10;
+}; // int32; int64 is 0x12
+template<> struct bson_code<value_t::number_unsigned>
+{
+    static constexpr std::uint8_t value = 0x10;
+}; // int32; int64/uint64 are 0x12/0x11
+template<> struct bson_code<value_t::number_float>
+{
+    static constexpr std::uint8_t value = 0x01;
+};
 
 template<template<value_t> class CodeOf, std::size_t... I>
 consteval auto codes_impl(std::index_sequence<I...>)
@@ -2259,16 +2337,46 @@ template<std::uint8_t Code> struct bson_load_code
 {
     static constexpr bson_load_entry value = {0xFF, static_cast<std::uint8_t>(bson_payload_kind::invalid)};
 };
-template<> struct bson_load_code<0x01> { static constexpr bson_load_entry value = {slot_index<value_t::number_float>::value, static_cast<std::uint8_t>(bson_payload_kind::double_fixed)}; };
-template<> struct bson_load_code<0x02> { static constexpr bson_load_entry value = {slot_index<value_t::string>::value, static_cast<std::uint8_t>(bson_payload_kind::string_len)}; };
-template<> struct bson_load_code<0x03> { static constexpr bson_load_entry value = {slot_index<value_t::object>::value, static_cast<std::uint8_t>(bson_payload_kind::object_doc)}; };
-template<> struct bson_load_code<0x04> { static constexpr bson_load_entry value = {slot_index<value_t::array>::value, static_cast<std::uint8_t>(bson_payload_kind::array_doc)}; };
-template<> struct bson_load_code<0x05> { static constexpr bson_load_entry value = {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(bson_payload_kind::binary_len)}; };
-template<> struct bson_load_code<0x08> { static constexpr bson_load_entry value = {slot_index<value_t::boolean>::value, static_cast<std::uint8_t>(bson_payload_kind::boolean_byte)}; };
-template<> struct bson_load_code<0x0A> { static constexpr bson_load_entry value = {0xFF, static_cast<std::uint8_t>(bson_payload_kind::null_fixed)}; }; // null: no union slot
-template<> struct bson_load_code<0x10> { static constexpr bson_load_entry value = {slot_index<value_t::number_integer>::value, static_cast<std::uint8_t>(bson_payload_kind::int32_le)}; };
-template<> struct bson_load_code<0x12> { static constexpr bson_load_entry value = {slot_index<value_t::number_integer>::value, static_cast<std::uint8_t>(bson_payload_kind::int64_le)}; };
-template<> struct bson_load_code<0x11> { static constexpr bson_load_entry value = {slot_index<value_t::number_unsigned>::value, static_cast<std::uint8_t>(bson_payload_kind::uint64_le)}; };
+template<> struct bson_load_code<0x01>
+{
+    static constexpr bson_load_entry value = {slot_index<value_t::number_float>::value, static_cast<std::uint8_t>(bson_payload_kind::double_fixed)};
+};
+template<> struct bson_load_code<0x02>
+{
+    static constexpr bson_load_entry value = {slot_index<value_t::string>::value, static_cast<std::uint8_t>(bson_payload_kind::string_len)};
+};
+template<> struct bson_load_code<0x03>
+{
+    static constexpr bson_load_entry value = {slot_index<value_t::object>::value, static_cast<std::uint8_t>(bson_payload_kind::object_doc)};
+};
+template<> struct bson_load_code<0x04>
+{
+    static constexpr bson_load_entry value = {slot_index<value_t::array>::value, static_cast<std::uint8_t>(bson_payload_kind::array_doc)};
+};
+template<> struct bson_load_code<0x05>
+{
+    static constexpr bson_load_entry value = {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(bson_payload_kind::binary_len)};
+};
+template<> struct bson_load_code<0x08>
+{
+    static constexpr bson_load_entry value = {slot_index<value_t::boolean>::value, static_cast<std::uint8_t>(bson_payload_kind::boolean_byte)};
+};
+template<> struct bson_load_code<0x0A>
+{
+    static constexpr bson_load_entry value = {0xFF, static_cast<std::uint8_t>(bson_payload_kind::null_fixed)};
+}; // null: no union slot
+template<> struct bson_load_code<0x10>
+{
+    static constexpr bson_load_entry value = {slot_index<value_t::number_integer>::value, static_cast<std::uint8_t>(bson_payload_kind::int32_le)};
+};
+template<> struct bson_load_code<0x12>
+{
+    static constexpr bson_load_entry value = {slot_index<value_t::number_integer>::value, static_cast<std::uint8_t>(bson_payload_kind::int64_le)};
+};
+template<> struct bson_load_code<0x11>
+{
+    static constexpr bson_load_entry value = {slot_index<value_t::number_unsigned>::value, static_cast<std::uint8_t>(bson_payload_kind::uint64_le)};
+};
 
 template<std::size_t... I>
 consteval auto load_table_impl(std::index_sequence<I...>)
@@ -2282,20 +2390,24 @@ consteval auto load_table_impl(std::index_sequence<I...>)
 
 // primary-code tables, one per binary format (indexed by union slot, 0..7)
 constexpr auto kMsgpackCodes =
-    refl_detail::codes_impl<refl_detail::msgpack_code>(std::make_index_sequence<8> {});
+refl_detail::codes_impl<refl_detail::msgpack_code>(std::make_index_sequence<8> {});
 constexpr auto kUbjsonCodes =
-    refl_detail::codes_impl<refl_detail::ubjson_code>(std::make_index_sequence<8> {});
+refl_detail::codes_impl<refl_detail::ubjson_code>(std::make_index_sequence<8> {});
 constexpr auto kBsonCodes =
-    refl_detail::codes_impl<refl_detail::bson_code>(std::make_index_sequence<8> {});
+refl_detail::codes_impl<refl_detail::bson_code>(std::make_index_sequence<8> {});
 
 // reverse BSON table: raw element-type byte -> load entry (read direction)
 constexpr auto kBsonsLoad =
-    refl_detail::load_table_impl(std::make_index_sequence<256> {});
+refl_detail::load_table_impl(std::make_index_sequence<256> {});
 
 // the tables cover exactly the 8 union slots; null/discarded have no slot
 static_assert(kMsgpackCodes.size() == 8 && kUbjsonCodes.size() == 8 && kBsonCodes.size() == 8,
               "binary byte-code tables must cover every json_value member");
-static_assert(kUbjsonCodes[slot_index<value_t::null>::has ? 0 : 0] == kUbjsonCodes[0], "");
+// null/discarded have no union slot, so they must not appear in the byte-code
+// tables (the previous spelling here was `kUbjsonCodes[0] == kUbjsonCodes[0]`,
+// a tautology that checked nothing).
+static_assert(!slot_index<value_t::null>::has && !slot_index<value_t::discarded>::has,
+              "null/discarded must not have a json_value slot");
 
 // BSON load-table completeness: each of the 9 element types has a legal entry,
 // and the union slots match the writer table / the value_t enumeration —
@@ -2630,38 +2742,70 @@ consteval msgpack_load_entry msgpack_entry_for(const std::uint8_t b)
     }
     switch (b)
     {
-        case 0xC0: return {0xFF, static_cast<std::uint8_t>(msgpack_payload_kind::nil_fixed)};
-        case 0xC1: return {0xFF, static_cast<std::uint8_t>(msgpack_payload_kind::invalid)};
-        case 0xC2: return {slot_index<value_t::boolean>::value, static_cast<std::uint8_t>(msgpack_payload_kind::boolean_false)};
-        case 0xC3: return {slot_index<value_t::boolean>::value, static_cast<std::uint8_t>(msgpack_payload_kind::boolean_true)};
-        case 0xC4: return {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(msgpack_payload_kind::bin8)};
-        case 0xC5: return {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(msgpack_payload_kind::bin16)};
-        case 0xC6: return {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(msgpack_payload_kind::bin32)};
-        case 0xC7: return {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(msgpack_payload_kind::ext8)};
-        case 0xC8: return {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(msgpack_payload_kind::ext16)};
-        case 0xC9: return {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(msgpack_payload_kind::ext32)};
-        case 0xCA: return {slot_index<value_t::number_float>::value, static_cast<std::uint8_t>(msgpack_payload_kind::float32)};
-        case 0xCB: return {slot_index<value_t::number_float>::value, static_cast<std::uint8_t>(msgpack_payload_kind::float64)};
-        case 0xCC: return {slot_index<value_t::number_unsigned>::value, static_cast<std::uint8_t>(msgpack_payload_kind::uint8)};
-        case 0xCD: return {slot_index<value_t::number_unsigned>::value, static_cast<std::uint8_t>(msgpack_payload_kind::uint16)};
-        case 0xCE: return {slot_index<value_t::number_unsigned>::value, static_cast<std::uint8_t>(msgpack_payload_kind::uint32)};
-        case 0xCF: return {slot_index<value_t::number_unsigned>::value, static_cast<std::uint8_t>(msgpack_payload_kind::uint64)};
-        case 0xD0: return {slot_index<value_t::number_integer>::value, static_cast<std::uint8_t>(msgpack_payload_kind::int8)};
-        case 0xD1: return {slot_index<value_t::number_integer>::value, static_cast<std::uint8_t>(msgpack_payload_kind::int16)};
-        case 0xD2: return {slot_index<value_t::number_integer>::value, static_cast<std::uint8_t>(msgpack_payload_kind::int32)};
-        case 0xD3: return {slot_index<value_t::number_integer>::value, static_cast<std::uint8_t>(msgpack_payload_kind::int64)};
-        case 0xD4: return {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(msgpack_payload_kind::fixext1)};
-        case 0xD5: return {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(msgpack_payload_kind::fixext2)};
-        case 0xD6: return {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(msgpack_payload_kind::fixext4)};
-        case 0xD7: return {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(msgpack_payload_kind::fixext8)};
-        case 0xD8: return {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(msgpack_payload_kind::fixext16)};
-        case 0xD9: return {slot_index<value_t::string>::value, static_cast<std::uint8_t>(msgpack_payload_kind::str8)};
-        case 0xDA: return {slot_index<value_t::string>::value, static_cast<std::uint8_t>(msgpack_payload_kind::str16)};
-        case 0xDB: return {slot_index<value_t::string>::value, static_cast<std::uint8_t>(msgpack_payload_kind::str32)};
-        case 0xDC: return {slot_index<value_t::array>::value, static_cast<std::uint8_t>(msgpack_payload_kind::array16)};
-        case 0xDD: return {slot_index<value_t::array>::value, static_cast<std::uint8_t>(msgpack_payload_kind::array32)};
-        case 0xDE: return {slot_index<value_t::object>::value, static_cast<std::uint8_t>(msgpack_payload_kind::map16)};
-        case 0xDF: return {slot_index<value_t::object>::value, static_cast<std::uint8_t>(msgpack_payload_kind::map32)};
+        case 0xC0:
+            return {0xFF, static_cast<std::uint8_t>(msgpack_payload_kind::nil_fixed)};
+        case 0xC1:
+            return {0xFF, static_cast<std::uint8_t>(msgpack_payload_kind::invalid)};
+        case 0xC2:
+            return {slot_index<value_t::boolean>::value, static_cast<std::uint8_t>(msgpack_payload_kind::boolean_false)};
+        case 0xC3:
+            return {slot_index<value_t::boolean>::value, static_cast<std::uint8_t>(msgpack_payload_kind::boolean_true)};
+        case 0xC4:
+            return {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(msgpack_payload_kind::bin8)};
+        case 0xC5:
+            return {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(msgpack_payload_kind::bin16)};
+        case 0xC6:
+            return {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(msgpack_payload_kind::bin32)};
+        case 0xC7:
+            return {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(msgpack_payload_kind::ext8)};
+        case 0xC8:
+            return {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(msgpack_payload_kind::ext16)};
+        case 0xC9:
+            return {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(msgpack_payload_kind::ext32)};
+        case 0xCA:
+            return {slot_index<value_t::number_float>::value, static_cast<std::uint8_t>(msgpack_payload_kind::float32)};
+        case 0xCB:
+            return {slot_index<value_t::number_float>::value, static_cast<std::uint8_t>(msgpack_payload_kind::float64)};
+        case 0xCC:
+            return {slot_index<value_t::number_unsigned>::value, static_cast<std::uint8_t>(msgpack_payload_kind::uint8)};
+        case 0xCD:
+            return {slot_index<value_t::number_unsigned>::value, static_cast<std::uint8_t>(msgpack_payload_kind::uint16)};
+        case 0xCE:
+            return {slot_index<value_t::number_unsigned>::value, static_cast<std::uint8_t>(msgpack_payload_kind::uint32)};
+        case 0xCF:
+            return {slot_index<value_t::number_unsigned>::value, static_cast<std::uint8_t>(msgpack_payload_kind::uint64)};
+        case 0xD0:
+            return {slot_index<value_t::number_integer>::value, static_cast<std::uint8_t>(msgpack_payload_kind::int8)};
+        case 0xD1:
+            return {slot_index<value_t::number_integer>::value, static_cast<std::uint8_t>(msgpack_payload_kind::int16)};
+        case 0xD2:
+            return {slot_index<value_t::number_integer>::value, static_cast<std::uint8_t>(msgpack_payload_kind::int32)};
+        case 0xD3:
+            return {slot_index<value_t::number_integer>::value, static_cast<std::uint8_t>(msgpack_payload_kind::int64)};
+        case 0xD4:
+            return {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(msgpack_payload_kind::fixext1)};
+        case 0xD5:
+            return {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(msgpack_payload_kind::fixext2)};
+        case 0xD6:
+            return {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(msgpack_payload_kind::fixext4)};
+        case 0xD7:
+            return {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(msgpack_payload_kind::fixext8)};
+        case 0xD8:
+            return {slot_index<value_t::binary>::value, static_cast<std::uint8_t>(msgpack_payload_kind::fixext16)};
+        case 0xD9:
+            return {slot_index<value_t::string>::value, static_cast<std::uint8_t>(msgpack_payload_kind::str8)};
+        case 0xDA:
+            return {slot_index<value_t::string>::value, static_cast<std::uint8_t>(msgpack_payload_kind::str16)};
+        case 0xDB:
+            return {slot_index<value_t::string>::value, static_cast<std::uint8_t>(msgpack_payload_kind::str32)};
+        case 0xDC:
+            return {slot_index<value_t::array>::value, static_cast<std::uint8_t>(msgpack_payload_kind::array16)};
+        case 0xDD:
+            return {slot_index<value_t::array>::value, static_cast<std::uint8_t>(msgpack_payload_kind::array32)};
+        case 0xDE:
+            return {slot_index<value_t::object>::value, static_cast<std::uint8_t>(msgpack_payload_kind::map16)};
+        case 0xDF:
+            return {slot_index<value_t::object>::value, static_cast<std::uint8_t>(msgpack_payload_kind::map32)};
         default:
             break;
     }
@@ -2710,30 +2854,54 @@ consteval ubjson_load_entry ubjson_entry_for(const std::uint8_t b)
 {
     switch (b)
     {
-        case 'T': return {slot_index<value_t::boolean>::value, static_cast<std::uint8_t>(ubjson_payload_kind::boolean_true)};
-        case 'F': return {slot_index<value_t::boolean>::value, static_cast<std::uint8_t>(ubjson_payload_kind::boolean_false)};
-        case 'Z': return {0xFF, static_cast<std::uint8_t>(ubjson_payload_kind::null_fixed)};
-        case 'N': return {0xFF, static_cast<std::uint8_t>(ubjson_payload_kind::noop)};
-        case 'U': return {slot_index<value_t::number_unsigned>::value, static_cast<std::uint8_t>(ubjson_payload_kind::uint8)};
-        case 'i': return {slot_index<value_t::number_integer>::value, static_cast<std::uint8_t>(ubjson_payload_kind::int8)};
-        case 'I': return {slot_index<value_t::number_integer>::value, static_cast<std::uint8_t>(ubjson_payload_kind::int16)};
-        case 'l': return {slot_index<value_t::number_integer>::value, static_cast<std::uint8_t>(ubjson_payload_kind::int32)};
-        case 'L': return {slot_index<value_t::number_integer>::value, static_cast<std::uint8_t>(ubjson_payload_kind::int64)};
-        case 'u': return {slot_index<value_t::number_unsigned>::value, static_cast<std::uint8_t>(ubjson_payload_kind::uint16_bjd)};
-        case 'm': return {slot_index<value_t::number_unsigned>::value, static_cast<std::uint8_t>(ubjson_payload_kind::uint32_bjd)};
-        case 'M': return {slot_index<value_t::number_unsigned>::value, static_cast<std::uint8_t>(ubjson_payload_kind::uint64_bjd)};
-        case 'h': return {slot_index<value_t::number_float>::value, static_cast<std::uint8_t>(ubjson_payload_kind::half_float)};
-        case 'd': return {slot_index<value_t::number_float>::value, static_cast<std::uint8_t>(ubjson_payload_kind::float32)};
-        case 'D': return {slot_index<value_t::number_float>::value, static_cast<std::uint8_t>(ubjson_payload_kind::float64)};
-        case 'C': return {slot_index<value_t::string>::value, static_cast<std::uint8_t>(ubjson_payload_kind::char_)};
-        case 'S': return {slot_index<value_t::string>::value, static_cast<std::uint8_t>(ubjson_payload_kind::string_)};
-        case 'H': return {0xFF, static_cast<std::uint8_t>(ubjson_payload_kind::high_precision)};
-        case '[': return {slot_index<value_t::array>::value, static_cast<std::uint8_t>(ubjson_payload_kind::array_)};
-        case '{': return {slot_index<value_t::object>::value, static_cast<std::uint8_t>(ubjson_payload_kind::object_)};
-        case '$': return {0xFF, static_cast<std::uint8_t>(ubjson_payload_kind::type_marker)};
-        case '#': return {0xFF, static_cast<std::uint8_t>(ubjson_payload_kind::count_marker)};
-        case 'B': return {slot_index<value_t::number_unsigned>::value, static_cast<std::uint8_t>(ubjson_payload_kind::byte_bjd)};
-        default:  return {0xFF, static_cast<std::uint8_t>(ubjson_payload_kind::invalid)};
+        case 'T':
+            return {slot_index<value_t::boolean>::value, static_cast<std::uint8_t>(ubjson_payload_kind::boolean_true)};
+        case 'F':
+            return {slot_index<value_t::boolean>::value, static_cast<std::uint8_t>(ubjson_payload_kind::boolean_false)};
+        case 'Z':
+            return {0xFF, static_cast<std::uint8_t>(ubjson_payload_kind::null_fixed)};
+        case 'N':
+            return {0xFF, static_cast<std::uint8_t>(ubjson_payload_kind::noop)};
+        case 'U':
+            return {slot_index<value_t::number_unsigned>::value, static_cast<std::uint8_t>(ubjson_payload_kind::uint8)};
+        case 'i':
+            return {slot_index<value_t::number_integer>::value, static_cast<std::uint8_t>(ubjson_payload_kind::int8)};
+        case 'I':
+            return {slot_index<value_t::number_integer>::value, static_cast<std::uint8_t>(ubjson_payload_kind::int16)};
+        case 'l':
+            return {slot_index<value_t::number_integer>::value, static_cast<std::uint8_t>(ubjson_payload_kind::int32)};
+        case 'L':
+            return {slot_index<value_t::number_integer>::value, static_cast<std::uint8_t>(ubjson_payload_kind::int64)};
+        case 'u':
+            return {slot_index<value_t::number_unsigned>::value, static_cast<std::uint8_t>(ubjson_payload_kind::uint16_bjd)};
+        case 'm':
+            return {slot_index<value_t::number_unsigned>::value, static_cast<std::uint8_t>(ubjson_payload_kind::uint32_bjd)};
+        case 'M':
+            return {slot_index<value_t::number_unsigned>::value, static_cast<std::uint8_t>(ubjson_payload_kind::uint64_bjd)};
+        case 'h':
+            return {slot_index<value_t::number_float>::value, static_cast<std::uint8_t>(ubjson_payload_kind::half_float)};
+        case 'd':
+            return {slot_index<value_t::number_float>::value, static_cast<std::uint8_t>(ubjson_payload_kind::float32)};
+        case 'D':
+            return {slot_index<value_t::number_float>::value, static_cast<std::uint8_t>(ubjson_payload_kind::float64)};
+        case 'C':
+            return {slot_index<value_t::string>::value, static_cast<std::uint8_t>(ubjson_payload_kind::char_)};
+        case 'S':
+            return {slot_index<value_t::string>::value, static_cast<std::uint8_t>(ubjson_payload_kind::string_)};
+        case 'H':
+            return {0xFF, static_cast<std::uint8_t>(ubjson_payload_kind::high_precision)};
+        case '[':
+            return {slot_index<value_t::array>::value, static_cast<std::uint8_t>(ubjson_payload_kind::array_)};
+        case '{':
+            return {slot_index<value_t::object>::value, static_cast<std::uint8_t>(ubjson_payload_kind::object_)};
+        case '$':
+            return {0xFF, static_cast<std::uint8_t>(ubjson_payload_kind::type_marker)};
+        case '#':
+            return {0xFF, static_cast<std::uint8_t>(ubjson_payload_kind::count_marker)};
+        case 'B':
+            return {slot_index<value_t::number_unsigned>::value, static_cast<std::uint8_t>(ubjson_payload_kind::byte_bjd)};
+        default:
+            return {0xFF, static_cast<std::uint8_t>(ubjson_payload_kind::invalid)};
     }
 }
 } // namespace refl_detail
@@ -2767,11 +2935,11 @@ consteval auto ubjson_load_table_impl(std::index_sequence<I...>)
 
 // reverse tables: raw first byte -> load entry (read direction)
 constexpr auto kCborLoads =
-    cbor_load_table_impl(std::make_index_sequence<256> {});
+cbor_load_table_impl(std::make_index_sequence<256> {});
 constexpr auto kMsgpackLoads =
-    msgpack_load_table_impl(std::make_index_sequence<256> {});
+msgpack_load_table_impl(std::make_index_sequence<256> {});
 constexpr auto kUbjsonLoads =
-    ubjson_load_table_impl(std::make_index_sequence<256> {});
+ubjson_load_table_impl(std::make_index_sequence<256> {});
 
 // table completeness + spot checks: adding a value_t or changing a wire
 // mapping is a compile error, never a silent parse drift.
@@ -3430,6 +3598,15 @@ struct reflection_bson_serializer
 
     void bson_entry_header(const std::string& name, const std::uint8_t element_type)
     {
+        // A cstring key cannot carry U+0000: upstream throws
+        // out_of_range.409 ("BSON key cannot contain code point U+0000")
+        // instead of writing a document whose key is silently truncated.
+        const auto nul = name.find(static_cast<char>(0));
+        if (nul != std::string::npos)
+        {
+            throw std::out_of_range("BSON key cannot contain code point U+0000 (at byte "
+                                    + std::to_string(nul) + ")");
+        }
         out.push_back(element_type);
         out.insert(out.end(), name.begin(), name.end());
         out.push_back(0x00);
@@ -3482,7 +3659,7 @@ struct reflection_bson_serializer
             bson_entry_header(name, kBsonCodes[slot_index<value_t::binary>::value]);
             append_little(to_bson_length(u.binary->size()));
             out.push_back(u.binary->has_subtype() ? static_cast<std::uint8_t>(u.binary->subtype())
-                                                  : static_cast<std::uint8_t>(0x00));
+                          : static_cast<std::uint8_t>(0x00));
             out.insert(out.end(), u.binary->begin(), u.binary->end());
         }
         else if constexpr (V == value_t::boolean)
@@ -3644,6 +3821,11 @@ struct reflection_bson_parser
             err = "to deserialize from BSON, top-level type must be object";
             return false;
         }
+        // strict end-of-input, like from_bson's default strict = true
+        if (!at_end())
+        {
+            return fail("expected end of input");
+        }
         out.assign_from(top);
         return true;
     }
@@ -3756,7 +3938,9 @@ struct reflection_bson_parser
             }
             else
             {
-                obj.emplace(std::move(name), std::move(val));
+                // last-wins, like upstream (its SAX key() hook assigns through
+                // operator[]); emplace() would keep the FIRST value
+                obj.insert_or_assign(std::move(name), std::move(val));
             }
         }
 
@@ -3968,43 +4152,67 @@ struct reflection_ubjson_optimized_serializer
     {
         if ((std::numeric_limits<std::int8_t>::min)() <= n && n <= (std::numeric_limits<std::int8_t>::max)())
         {
-            if (add_prefix) out.push_back('i');
+            if (add_prefix)
+            {
+                out.push_back('i');
+            }
             write_num(static_cast<std::int8_t>(n), use_bjdata);
         }
         else if (0 <= n && n <= static_cast<std::int64_t>((std::numeric_limits<std::uint8_t>::max)()))
         {
-            if (add_prefix) out.push_back('U');
+            if (add_prefix)
+            {
+                out.push_back('U');
+            }
             write_num(static_cast<std::uint8_t>(n), use_bjdata);
         }
         else if ((std::numeric_limits<std::int16_t>::min)() <= n && n <= (std::numeric_limits<std::int16_t>::max)())
         {
-            if (add_prefix) out.push_back('I');
+            if (add_prefix)
+            {
+                out.push_back('I');
+            }
             write_num(static_cast<std::int16_t>(n), use_bjdata);
         }
         else if (use_bjdata && 0 <= n && n <= static_cast<std::int64_t>((std::numeric_limits<std::uint16_t>::max)()))
         {
-            if (add_prefix) out.push_back('u'); // uint16 - bjdata only
+            if (add_prefix)
+            {
+                out.push_back('u');    // uint16 - bjdata only
+            }
             write_num(static_cast<std::uint16_t>(n), use_bjdata);
         }
         else if ((std::numeric_limits<std::int32_t>::min)() <= n && n <= (std::numeric_limits<std::int32_t>::max)())
         {
-            if (add_prefix) out.push_back('l');
+            if (add_prefix)
+            {
+                out.push_back('l');
+            }
             write_num(static_cast<std::int32_t>(n), use_bjdata);
         }
         else if (use_bjdata && 0 <= n && n <= static_cast<std::int64_t>((std::numeric_limits<std::uint32_t>::max)()))
         {
-            if (add_prefix) out.push_back('m'); // uint32 - bjdata only
+            if (add_prefix)
+            {
+                out.push_back('m');    // uint32 - bjdata only
+            }
             write_num(static_cast<std::uint32_t>(n), use_bjdata);
         }
         else if ((std::numeric_limits<std::int64_t>::min)() <= n && n <= (std::numeric_limits<std::int64_t>::max)())
         {
-            if (add_prefix) out.push_back('L');
+            if (add_prefix)
+            {
+                out.push_back('L');
+            }
             write_num(static_cast<std::int64_t>(n), use_bjdata);
         }
         else
         {
             // high-precision number (unreachable for int64 in practice)
-            if (add_prefix) out.push_back('H');
+            if (add_prefix)
+            {
+                out.push_back('H');
+            }
             high_precision(n);
         }
     }
@@ -4013,48 +4221,75 @@ struct reflection_ubjson_optimized_serializer
     {
         if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int8_t>::max)()))
         {
-            if (add_prefix) out.push_back('i');
+            if (add_prefix)
+            {
+                out.push_back('i');
+            }
             write_num(static_cast<std::uint8_t>(n), use_bjdata);
         }
         else if (n <= (std::numeric_limits<std::uint8_t>::max)())
         {
-            if (add_prefix) out.push_back('U');
+            if (add_prefix)
+            {
+                out.push_back('U');
+            }
             write_num(static_cast<std::uint8_t>(n), use_bjdata);
         }
         else if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int16_t>::max)()))
         {
-            if (add_prefix) out.push_back('I');
+            if (add_prefix)
+            {
+                out.push_back('I');
+            }
             write_num(static_cast<std::int16_t>(n), use_bjdata);
         }
         else if (use_bjdata && n <= static_cast<std::uint64_t>((std::numeric_limits<std::uint16_t>::max)()))
         {
-            if (add_prefix) out.push_back('u'); // uint16 - bjdata only
+            if (add_prefix)
+            {
+                out.push_back('u');    // uint16 - bjdata only
+            }
             write_num(static_cast<std::uint16_t>(n), use_bjdata);
         }
         else if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int32_t>::max)()))
         {
-            if (add_prefix) out.push_back('l');
+            if (add_prefix)
+            {
+                out.push_back('l');
+            }
             write_num(static_cast<std::int32_t>(n), use_bjdata);
         }
         else if (use_bjdata && n <= static_cast<std::uint64_t>((std::numeric_limits<std::uint32_t>::max)()))
         {
-            if (add_prefix) out.push_back('m'); // uint32 - bjdata only
+            if (add_prefix)
+            {
+                out.push_back('m');    // uint32 - bjdata only
+            }
             write_num(static_cast<std::uint32_t>(n), use_bjdata);
         }
         else if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)()))
         {
-            if (add_prefix) out.push_back('L');
+            if (add_prefix)
+            {
+                out.push_back('L');
+            }
             write_num(static_cast<std::int64_t>(n), use_bjdata);
         }
         else if (use_bjdata && n <= (std::numeric_limits<std::uint64_t>::max)())
         {
-            if (add_prefix) out.push_back('M'); // uint64 - bjdata only
+            if (add_prefix)
+            {
+                out.push_back('M');    // uint64 - bjdata only
+            }
             write_num(static_cast<std::uint64_t>(n), use_bjdata);
         }
         else
         {
             // high-precision number: uint64 above int64 max (plain UBJSON)
-            if (add_prefix) out.push_back('H');
+            if (add_prefix)
+            {
+                out.push_back('H');
+            }
             high_precision(n);
         }
     }
@@ -4073,7 +4308,10 @@ struct reflection_ubjson_optimized_serializer
     {
         // number_float_t is double: the prefix is always 'D' + float64
         // (UBJSON floats are NOT compacted — verified fact)
-        if (add_prefix) out.push_back('D');
+        if (add_prefix)
+        {
+            out.push_back('D');
+        }
         write_num(n, use_bjdata);
     }
 
@@ -4118,26 +4356,71 @@ struct reflection_ubjson_optimized_serializer
 
     char prefix_signed(const std::int64_t n) const noexcept
     {
-        if ((std::numeric_limits<std::int8_t>::min)() <= n && n <= (std::numeric_limits<std::int8_t>::max)()) return 'i';
-        if (0 <= n && n <= static_cast<std::int64_t>((std::numeric_limits<std::uint8_t>::max)())) return 'U';
-        if ((std::numeric_limits<std::int16_t>::min)() <= n && n <= (std::numeric_limits<std::int16_t>::max)()) return 'I';
-        if (use_bjdata && 0 <= n && n <= static_cast<std::int64_t>((std::numeric_limits<std::uint16_t>::max)())) return 'u';
-        if ((std::numeric_limits<std::int32_t>::min)() <= n && n <= (std::numeric_limits<std::int32_t>::max)()) return 'l';
-        if (use_bjdata && 0 <= n && n <= static_cast<std::int64_t>((std::numeric_limits<std::uint32_t>::max)())) return 'm';
-        if ((std::numeric_limits<std::int64_t>::min)() <= n && n <= (std::numeric_limits<std::int64_t>::max)()) return 'L';
+        if ((std::numeric_limits<std::int8_t>::min)() <= n && n <= (std::numeric_limits<std::int8_t>::max)())
+        {
+            return 'i';
+        }
+        if (0 <= n && n <= static_cast<std::int64_t>((std::numeric_limits<std::uint8_t>::max)()))
+        {
+            return 'U';
+        }
+        if ((std::numeric_limits<std::int16_t>::min)() <= n && n <= (std::numeric_limits<std::int16_t>::max)())
+        {
+            return 'I';
+        }
+        if (use_bjdata && 0 <= n && n <= static_cast<std::int64_t>((std::numeric_limits<std::uint16_t>::max)()))
+        {
+            return 'u';
+        }
+        if ((std::numeric_limits<std::int32_t>::min)() <= n && n <= (std::numeric_limits<std::int32_t>::max)())
+        {
+            return 'l';
+        }
+        if (use_bjdata && 0 <= n && n <= static_cast<std::int64_t>((std::numeric_limits<std::uint32_t>::max)()))
+        {
+            return 'm';
+        }
+        if ((std::numeric_limits<std::int64_t>::min)() <= n && n <= (std::numeric_limits<std::int64_t>::max)())
+        {
+            return 'L';
+        }
         return 'H';
     }
 
     char prefix_unsigned(const std::uint64_t n) const noexcept
     {
-        if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int8_t>::max)())) return 'i';
-        if (n <= (std::numeric_limits<std::uint8_t>::max)()) return 'U';
-        if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int16_t>::max)())) return 'I';
-        if (use_bjdata && n <= static_cast<std::uint64_t>((std::numeric_limits<std::uint16_t>::max)())) return 'u';
-        if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int32_t>::max)())) return 'l';
-        if (use_bjdata && n <= static_cast<std::uint64_t>((std::numeric_limits<std::uint32_t>::max)())) return 'm';
-        if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)())) return 'L';
-        if (use_bjdata && n <= (std::numeric_limits<std::uint64_t>::max)()) return 'M';
+        if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int8_t>::max)()))
+        {
+            return 'i';
+        }
+        if (n <= (std::numeric_limits<std::uint8_t>::max)())
+        {
+            return 'U';
+        }
+        if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int16_t>::max)()))
+        {
+            return 'I';
+        }
+        if (use_bjdata && n <= static_cast<std::uint64_t>((std::numeric_limits<std::uint16_t>::max)()))
+        {
+            return 'u';
+        }
+        if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int32_t>::max)()))
+        {
+            return 'l';
+        }
+        if (use_bjdata && n <= static_cast<std::uint64_t>((std::numeric_limits<std::uint32_t>::max)()))
+        {
+            return 'm';
+        }
+        if (n <= static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)()))
+        {
+            return 'L';
+        }
+        if (use_bjdata && n <= (std::numeric_limits<std::uint64_t>::max)())
+        {
+            return 'M';
+        }
         return 'H';
     }
 
@@ -4170,11 +4453,17 @@ struct reflection_ubjson_optimized_serializer
         const auto& u = j.value();
         if constexpr (V == value_t::null)
         {
-            if (add_prefix) out.push_back('Z');
+            if (add_prefix)
+            {
+                out.push_back('Z');
+            }
         }
         else if constexpr (V == value_t::boolean)
         {
-            if (add_prefix) out.push_back(u.boolean ? 'T' : 'F');
+            if (add_prefix)
+            {
+                out.push_back(u.boolean ? 'T' : 'F');
+            }
         }
         else if constexpr (V == value_t::number_integer)
         {
@@ -4190,7 +4479,10 @@ struct reflection_ubjson_optimized_serializer
         }
         else if constexpr (V == value_t::string)
         {
-            if (add_prefix) out.push_back('S');
+            if (add_prefix)
+            {
+                out.push_back('S');
+            }
             ubjson_unsigned(static_cast<std::uint64_t>(u.string->size()), true);
             out.insert(out.end(), u.string->begin(), u.string->end());
         }
@@ -4211,14 +4503,17 @@ struct reflection_ubjson_optimized_serializer
 
     void write_array(const json::array_t& arr, const bool add_prefix)
     {
-        if (add_prefix) out.push_back('[');
+        if (add_prefix)
+        {
+            out.push_back('[');
+        }
 
         bool prefix_required = true;
         if (use_type && !arr.empty())
         {
             const char first_prefix = prefix_of(arr.front());
             const bool same_prefix = std::all_of(arr.begin() + 1, arr.end(),
-                                                 [this, first_prefix](const json& v)
+                                                 [this, first_prefix](const json & v)
             {
                 return prefix_of(v) == first_prefix;
             });
@@ -4260,14 +4555,17 @@ struct reflection_ubjson_optimized_serializer
             return;
         }
 
-        if (add_prefix) out.push_back('{');
+        if (add_prefix)
+        {
+            out.push_back('{');
+        }
 
         bool prefix_required = true;
         if (use_type && !obj.empty())
         {
             const char first_prefix = prefix_of(obj.begin()->second);
             const bool same_prefix = std::all_of(obj.begin(), obj.end(),
-                                                 [this, first_prefix](const json::object_t::value_type& el)
+                                                 [this, first_prefix](const json::object_t::value_type & el)
             {
                 return prefix_of(el.second) == first_prefix;
             });
@@ -4300,7 +4598,10 @@ struct reflection_ubjson_optimized_serializer
 
     void write_binary(const json::binary_t& bin, const bool add_prefix)
     {
-        if (add_prefix) out.push_back('[');
+        if (add_prefix)
+        {
+            out.push_back('[');
+        }
 
         // draft2 skips the '$' prefix for an EMPTY binary
         if (use_type && (bjdata_draft3 || !bin.empty()))
@@ -4340,8 +4641,14 @@ struct reflection_ubjson_optimized_serializer
     {
         switch (prefix)
         {
-            case '[': case '{': case 'S': case 'H':
-            case 'T': case 'F': case 'N': case 'Z':
+            case '[':
+            case '{':
+            case 'S':
+            case 'H':
+            case 'T':
+            case 'F':
+            case 'N':
+            case 'Z':
                 return true;
             default:
                 return false;
@@ -4413,35 +4720,67 @@ struct reflection_ubjson_optimized_serializer
         const auto& data = obj.at("_ArrayData_");
         switch (dtype)
         {
-            case 'U': case 'C': case 'B':
-                for (const auto& el : data) write_num(static_cast<std::uint8_t>(el.template get<std::uint64_t>()), true);
+            case 'U':
+            case 'C':
+            case 'B':
+                for (const auto& el : data)
+                {
+                    write_num(static_cast<std::uint8_t>(el.template get<std::uint64_t>()), true);
+                }
                 break;
             case 'i':
-                for (const auto& el : data) write_num(static_cast<std::int8_t>(el.template get<std::int64_t>()), true);
+                for (const auto& el : data)
+                {
+                    write_num(static_cast<std::int8_t>(el.template get<std::int64_t>()), true);
+                }
                 break;
             case 'u':
-                for (const auto& el : data) write_num(static_cast<std::uint16_t>(el.template get<std::uint64_t>()), true);
+                for (const auto& el : data)
+                {
+                    write_num(static_cast<std::uint16_t>(el.template get<std::uint64_t>()), true);
+                }
                 break;
             case 'I':
-                for (const auto& el : data) write_num(static_cast<std::int16_t>(el.template get<std::int64_t>()), true);
+                for (const auto& el : data)
+                {
+                    write_num(static_cast<std::int16_t>(el.template get<std::int64_t>()), true);
+                }
                 break;
             case 'm':
-                for (const auto& el : data) write_num(static_cast<std::uint32_t>(el.template get<std::uint64_t>()), true);
+                for (const auto& el : data)
+                {
+                    write_num(static_cast<std::uint32_t>(el.template get<std::uint64_t>()), true);
+                }
                 break;
             case 'l':
-                for (const auto& el : data) write_num(static_cast<std::int32_t>(el.template get<std::int64_t>()), true);
+                for (const auto& el : data)
+                {
+                    write_num(static_cast<std::int32_t>(el.template get<std::int64_t>()), true);
+                }
                 break;
             case 'M':
-                for (const auto& el : data) write_num(el.template get<std::uint64_t>(), true);
+                for (const auto& el : data)
+                {
+                    write_num(el.template get<std::uint64_t>(), true);
+                }
                 break;
             case 'L':
-                for (const auto& el : data) write_num(el.template get<std::int64_t>(), true);
+                for (const auto& el : data)
+                {
+                    write_num(el.template get<std::int64_t>(), true);
+                }
                 break;
             case 'd':
-                for (const auto& el : data) write_num(static_cast<float>(el.template get<double>()), true);
+                for (const auto& el : data)
+                {
+                    write_num(static_cast<float>(el.template get<double>()), true);
+                }
                 break;
             case 'D':
-                for (const auto& el : data) write_num(el.template get<double>(), true);
+                for (const auto& el : data)
+                {
+                    write_num(el.template get<double>(), true);
+                }
                 break;
         }
         return false;
@@ -4477,6 +4816,12 @@ struct reflection_cbor_parser
         if (!parse_cbor_value(top))
         {
             return false;
+        }
+        // strict end-of-input, like from_cbor's default strict = true: without
+        // this, "01 02" parsed as 1 and silently dropped the trailing byte.
+        if (!at_end())
+        {
+            return fail("expected end of input");
         }
         out.assign_from(top);
         return true;
@@ -4668,7 +5013,7 @@ struct reflection_cbor_parser
                 continue;
             }
             if (!(kind >= refl_detail::cbor_payload_kind::text_immediate &&
-                  kind <= refl_detail::cbor_payload_kind::text64))
+                    kind <= refl_detail::cbor_payload_kind::text64))
             {
                 return fail("invalid chunk in indefinite text");
             }
@@ -4708,7 +5053,7 @@ struct reflection_cbor_parser
                 continue;
             }
             if (!(kind >= refl_detail::cbor_payload_kind::bytes_immediate &&
-                  kind <= refl_detail::cbor_payload_kind::bytes64))
+                    kind <= refl_detail::cbor_payload_kind::bytes64))
             {
                 return fail("invalid chunk in indefinite binary");
             }
@@ -4982,7 +5327,13 @@ struct reflection_cbor_parser
             return fail("excessive array size");
         }
         json::array_t arr;
-        arr.reserve(static_cast<std::size_t>(count));
+        // Never reserve the ATTACKER-DECLARED count: a 9-byte CBOR header can
+        // claim 2^32 elements, so the raw reserve() allocated gigabytes (or
+        // threw std::length_error / std::bad_alloc out of a `bool` API).
+        // Upstream does not pre-allocate at all; bounding by the remaining
+        // input (>= 1 byte per element) keeps the peak allocation sane while
+        // preserving behavior for well-formed input.
+        arr.reserve(std::min<std::size_t>(static_cast<std::size_t>(count), (data.size() - pos)));
         for (std::uint64_t i = 0; i < count; ++i)
         {
             json el;
@@ -5291,6 +5642,11 @@ struct reflection_msgpack_parser
         if (!parse_value(top))
         {
             return false;
+        }
+        // strict end-of-input (see the CBOR parser)
+        if (!at_end())
+        {
+            return fail("expected end of input");
         }
         out.assign_from(top);
         return true;
@@ -5659,7 +6015,8 @@ struct reflection_msgpack_parser
                     return false;
                 }
                 json::array_t arr;
-                arr.reserve(count);
+                // bounded by the remaining input; see the CBOR array branch
+                arr.reserve(std::min<std::size_t>(count, (data.size() - pos)));
                 for (std::size_t i = 0; i < count; ++i)
                 {
                     json el;
@@ -5774,6 +6131,17 @@ struct reflection_ubjson_parser
         if (!parse_value(top))
         {
             return false;
+        }
+        // strict end-of-input: trailing 'N' (no-op) markers are skipped first,
+        // exactly like upstream's get_ignore_noop() loop, then any other byte
+        // is an error ("01 02" used to parse as 1 and drop the second byte).
+        while (!at_end() && data[pos] == 'N')
+        {
+            ++pos;
+        }
+        if (!at_end())
+        {
+            return fail("expected end of input");
         }
         out.assign_from(top);
         return true;
@@ -6191,8 +6559,14 @@ struct reflection_ubjson_parser
     {
         switch (prefix)
         {
-            case '[': case '{': case 'S': case 'H':
-            case 'T': case 'F': case 'N': case 'Z':
+            case '[':
+            case '{':
+            case 'S':
+            case 'H':
+            case 'T':
+            case 'F':
+            case 'N':
+            case 'Z':
                 return true;
             default:
                 return false;
@@ -6390,19 +6764,44 @@ struct reflection_ubjson_parser
         const char* type_name = nullptr;
         switch (type)
         {
-            case 'B': type_name = "byte";   break;
-            case 'C': type_name = "char";   break;
-            case 'D': type_name = "double"; break;
-            case 'I': type_name = "int16";  break;
-            case 'L': type_name = "int64";  break;
-            case 'M': type_name = "uint64"; break;
-            case 'U': type_name = "uint8";  break;
-            case 'd': type_name = "single"; break;
-            case 'i': type_name = "int8";   break;
-            case 'l': type_name = "int32";  break;
-            case 'm': type_name = "uint32"; break;
-            case 'u': type_name = "uint16"; break;
-            default: break;
+            case 'B':
+                type_name = "byte";
+                break;
+            case 'C':
+                type_name = "char";
+                break;
+            case 'D':
+                type_name = "double";
+                break;
+            case 'I':
+                type_name = "int16";
+                break;
+            case 'L':
+                type_name = "int64";
+                break;
+            case 'M':
+                type_name = "uint64";
+                break;
+            case 'U':
+                type_name = "uint8";
+                break;
+            case 'd':
+                type_name = "single";
+                break;
+            case 'i':
+                type_name = "int8";
+                break;
+            case 'l':
+                type_name = "int32";
+                break;
+            case 'm':
+                type_name = "uint32";
+                break;
+            case 'u':
+                type_name = "uint16";
+                break;
+            default:
+                break;
         }
         if (type_name == nullptr)
         {
@@ -6424,7 +6823,9 @@ struct reflection_ubjson_parser
         obj["_ArraySize_"] = std::move(sizes);
 
         json::array_t data;
-        data.reserve(size);
+        // bounded by the remaining input; a 19-byte header can claim 2^32
+        // elements (see the CBOR array branch)
+        data.reserve(std::min<std::size_t>(size, (data.size() - pos)));
         for (std::size_t i = 0; i < size; ++i)
         {
             json el;
@@ -6474,7 +6875,9 @@ struct reflection_ubjson_parser
             }
 
             json::array_t arr;
-            arr.reserve(size);
+            // bounded by the remaining input; an 11-byte `#L` header can claim
+            // 2^40 elements (see the CBOR array branch)
+            arr.reserve(std::min<std::size_t>(size, (data.size() - pos)));
             if (type != 0 && type != 'N')
             {
                 for (std::size_t i = 0; i < size; ++i)
@@ -6630,6 +7033,22 @@ struct reflection_ubjson_parser
             case 'C':
             {
                 return read_char(out);
+            }
+            case '[':
+            {
+                // Optimized ('$'-typed) containers: ubjson_prefix returns '['
+                // for arrays/binary and '{' for objects, so a conforming writer
+                // (nlohmann's own to_ubjson(use_count, use_type)) emits
+                // $[ / ${ for nested homogeneous containers. Upstream handles
+                // both in get_ubjson_value (binary_reader.hpp "case '[': return
+                // get_ubjson_array();" / "case '{': return get_ubjson_object();").
+                // Without these cases the reader rejected the library's own
+                // output ("invalid optimized element type").
+                return parse_array(out);
+            }
+            case '{':
+            {
+                return parse_object(out);
             }
             case 'S':
             {
