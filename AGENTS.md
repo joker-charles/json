@@ -88,6 +88,14 @@ is completed: the to_json boolean overload is `concepts::boolean_like<T,B>`
 (the last pure-category overload left on enable_if). The main doctest suite
 is green (test-udt_cpp11 / test-serialization_cpp11 / test-conversions_cpp17
 / test-concepts_dual_cpp20).
+**Review pass (2026-08)**: a code review of the unmerged work found and fixed 20 defects —
+most importantly that enabling `JSON_USE_REFLECTION` broke 4 upstream doctest TUs
+(opaque enum -> `std::meta::exception`, lost `noexcept`, a self-dependent atomic
+constraint, the M7 variant invariant), plus `std::abort()` on malformed input, a
+dangling `rbegin()` reference, and JSON/CBOR/BSON output divergences. Top-level
+`std::variant` is now gated behind `JSON_USE_REFLECTION_VARIANT`, gate-on regression
+targets `test-reflection_*_cpp26` compile the upstream TUs with the gate enabled, and
+the full report with verification commands is `docs/static-reflection/REVIEW_2026-08.md`.
 Design:
 `docs/static-reflection/M5_REFLECTION_TO_JSON.md` (M5/M6),
 `docs/static-reflection/M4D_API_SURFACE.md` (M4D),

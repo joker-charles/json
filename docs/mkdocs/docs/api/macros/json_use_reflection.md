@@ -38,6 +38,24 @@ When active, the header defines
 code inside the library is guarded on that macro rather than on
 `JSON_USE_REFLECTION` directly.
 
+## Top-level `std::variant` (separate switch)
+
+`JSON_USE_REFLECTION` alone does **not** make `basic_json` constructible from
+a `std::variant`. Upstream guarantees that it is not (see
+`tests/src/unit-regression2.cpp`, issue #1292), so the oneof wire format
+(`{"index":N,"value":…}`) for a *top-level* variant is gated behind a second
+macro:
+
+```cpp
+#define JSON_USE_REFLECTION
+#define JSON_USE_REFLECTION_VARIANT
+#include <nlohmann/json.hpp>
+```
+
+`std::variant` **members** of annotated structs are unaffected: they are
+handled by the reflection codec's dedicated branch, not by the top-level
+catch-all, and work with `JSON_USE_REFLECTION` alone.
+
 ## Examples
 
 ??? example

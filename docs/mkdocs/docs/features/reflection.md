@@ -94,15 +94,35 @@ An unannotated enum keeps the integer path byte-for-byte.
 
 ## std::variant
 
-A top-level `std::variant` is supported out of the box (no annotation possible
-on library types) and serializes as the oneof wire format
-`{"index": <active alternative index>, "value": <alternative>}`:
+A `std::variant` **member** of an annotated struct is serialized as the oneof
+wire format `{"index": <active alternative index>, "value": <alternative>}`:
 
 ```cpp
-std::variant<int, std::string> v {42};
-json j = v;                           // {"index":0,"value":42}
-auto back = j.get<decltype(v)>();
+struct [[=refl2::json_serializable{}]] message
+{
+    std::variant<int, std::string> payload;
+};
+
+json j = message {42};                // {"payload":{"index":0,"value":42}}
 ```
+
+A **top-level** `std::variant` additionally needs
+[`JSON_USE_REFLECTION_VARIANT`](../api/macros/json_use_reflection.md#top-level-stdvariant-separate-switch),
+because upstream guarantees that `basic_json` is *not* constructible from a
+`std::variant` (`tests/src/unit-regression2.cpp`, issue #1292) and that
+invariant is preserved by default.
+
+## Known divergences from the macro family
+
+The extension is not a byte-for-byte replacement of every macro semantic:
+
+- An annotated enum's `from_json` accepts any integer and throws
+  `type_error.302` for an unknown string, where
+  [`NLOHMANN_JSON_SERIALIZE_ENUM`](../api/macros/nlohmann_json_serialize_enum.md)
+  silently falls back to the first table entry.
+- `[[=refl2::json_default{}]]` falls back to a default-constructed `T{}` when
+  the key is missing; the `_WITH_DEFAULT` macro additionally falls back when
+  the whole JSON value is `null` (not an object).
 
 ## Limitations
 

@@ -23,5 +23,12 @@ hold:
 
 Users normally do not need this macro; it exists so the library's feature
 code (for example the M6 enum string mapping) can be guarded on one name
-instead of repeating the compiler-and-opt-in condition. It is never
-user-definable: defining it manually has no effect.
+instead of repeating the compiler-and-opt-in condition.
+
+It must **not** be defined by hand: the macro gates code in
+`detail/conversions/{to,from}_json.hpp` that refers to the `refl2` namespace,
+so defining it without including the extension header is a compile error
+(`'refl2' has not been declared`) rather than a no-op. It is defined at the
+**end** of `reflection_to_json.hpp`, after `namespace refl2` is complete,
+because the conversions headers are re-entered from that header's own includes
+(`adl_serializer.hpp`).
