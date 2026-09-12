@@ -6877,6 +6877,87 @@ struct codec
     }
 };
 
+// ---------------------------------------------------------------------------
+// Public annotation inspection API.
+//
+// The annotation types above (json_serializable / json_name / json_ignore /
+// json_default) are the user-facing half of this extension; these queries are
+// the other half. Without them a user could WRITE annotations but not READ
+// them back, so any annotation-driven tool built outside the codec -- JSON
+// Schema generation, validation, documentation, code generation -- would have
+// to reach into refl2::detail.
+//
+// These are thin public aliases over the codec's own helpers, so they report
+// exactly what the codec sees:
+//   * members carrying [[=refl2::json_ignore{}]] are already EXCLUDED from
+//     member_count and from every member I (indices are of serialized
+//     members, not source members);
+//   * the access policy is the default unprivileged one (public members
+//     only). The explicit unchecked path stays library-internal via
+//     codec<true>; it is not part of this surface.
+//
+// Everything here is compile-time (consteval / inline constexpr), so a tool
+// built on it costs nothing at run time.
+// ---------------------------------------------------------------------------
+
+// does `entity` (a member or an enumerator) carry the annotation `Ann`?
+template<typename Ann>
+consteval bool has_annotation(std::meta::info entity)
+{
+    return detail::has_annotation<Ann>(entity);
+}
+
+// number of SERIALIZED members of T (json_ignore members excluded)
+template<typename T>
+inline constexpr std::size_t member_count = detail::member_count_v<false, T>;
+
+// the I-th serialized member of T, as a std::meta::info (spliceable)
+template<typename T, std::size_t I>
+inline constexpr std::meta::info member = detail::member_v<false, T, I>;
+
+// JSON key of the I-th serialized member: the json_name value if present,
+// else the identifier. Value-copied NUL-terminated array (use .data()).
+template<typename T, std::size_t I>
+inline constexpr std::array<char, 64> member_key = detail::member_key_v<false, T, I>;
+
+// whether the I-th serialized member carries [[=refl2::json_default{}]]
+template<typename T, std::size_t I>
+inline constexpr bool member_has_default = detail::member_has_default_v<false, T, I>;
+
+// ---- enums (M6 string mapping) -------------------------------------------
+
+// number of enumerators of E; PRECONDITION: enum_is_enumerable<E>()
+template<typename E>
+consteval std::size_t enum_count()
+{
+    return detail::enum_count(^^E);
+}
+
+// is E defined rather than merely declared? An opaque enum
+// (`enum class E : std::uint64_t;`) is not enumerable, and enumerators_of on
+// it is a hard consteval error -- guard with this first.
+template<typename E>
+consteval bool enum_is_enumerable()
+{
+    return detail::enum_is_enumerable<E>();
+}
+
+// does any enumerator of E carry [[=refl2::json_name{"..."}]]? PRECONDITION:
+// enum_is_enumerable<E>()
+template<typename E>
+consteval bool enum_has_annotations()
+{
+    return detail::enum_has_annotations<E>();
+}
+
+// the JSON string of the I-th enumerator (json_name value, else identifier)
+template<typename E, std::size_t I>
+inline constexpr std::array<char, 64> enum_string = detail::enum_string_v<E, I>;
+
+// the underlying value of the I-th enumerator
+template<typename E, std::size_t I>
+inline constexpr std::underlying_type_t<E> enum_value = detail::enum_value_v<E, I>;
+
 } // namespace refl2
 
 // ---------------------------------------------------------------------------
