@@ -213,3 +213,28 @@ It is C++26-only (P2996):
   ```
 - For a full C++26 sweep of the whole doctest suite, configure with
   `-DJSON_TestStandards=26` (the `cxx26-reflect-tests` preset).
+
+### Documentation example check (`check_docs_examples.sh`)
+
+`docs/mkdocs/docs/features/reflection.md` contains two fenced blocks that are
+executable claims: the `namespace schema` JSON Schema generator (```cpp) and
+the JSON it produces for `person` (```json). Nothing compiled them, so the page
+could drift from the library silently.
+
+```sh
+GXX=g++-16 bash tests/static-reflection/check_docs_examples.sh
+```
+
+It (1) compiles and runs `tests/static-reflection/probe_json_schema.cpp`, whose
+own cross-check asserts the schema's keys equal what the codec emits; (2)
+extracts the page's ```cpp block **verbatim**, wraps it in the fixtures the page
+shows, and compiles it; (3) compares its output against the page's ```json
+block by parsing both, so key order does not matter. Exits non-zero on any of
+those. Verified to fail on all three drift modes (tampered output block,
+tampered code block, broken fixture).
+
+Pairs with the compile-fail harness:
+
+```sh
+GXX=g++-16 bash tests/static-reflection/compile_fail.sh   # 12 cases, must fail to compile
+```
