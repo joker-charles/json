@@ -112,6 +112,114 @@ because upstream guarantees that `basic_json` is *not* constructible from a
 `std::variant` (`tests/src/unit-regression2.cpp`, issue #1292) and that
 invariant is preserved by default.
 
+## Inspecting annotations from your own code
+
+The annotation types are the user-facing half of the extension; the queries
+below are the other half. They let you build annotation-driven tools *outside*
+the codec — JSON Schema generation, validation, documentation, code generation —
+without reaching into an internal namespace.
+
+| Query | Result |
+|---|---|
+| `refl2::member_count<T>` | number of **serialized** members (members marked `json_ignore` are already excluded) |
+| `refl2::member<T, I>` | the `I`-th serialized member, as a `std::meta::info` (spliceable) |
+| `refl2::member_key<T, I>` | its JSON key — the `json_name` value if present, else the identifier |
+| `refl2::member_has_default<T, I>` | whether it carries `[[=refl2::json_default{}]]` |
+| `refl2::has_annotation<Ann>(entity)` | whether a member or enumerator carries annotation `Ann` |
+| `refl2::enum_count<E>()`, `refl2::enum_has_annotations<E>()`, `refl2::enum_is_enumerable<E>()` | enum facts (guard with `enum_is_enumerable` first — an opaque enum is a hard error) |
+| `refl2::enum_string<E, I>`, `refl2::enum_value<E, I>` | the `I`-th enumerator's mapped string and underlying value |
+
+All of these are compile-time, so a tool built on them costs nothing at run
+time. Because `member_count`/`member`/`member_key` report what the codec
+actually serializes, a tool built on them cannot disagree with the wire format
+about *which* members exist or *what they are called* — that agreement is
+asserted by the `probe_json_schema.cpp` fixture under
+`tests/static-reflection/` on this branch (see the
+[repository](https://github.com/nlohmann/json/blob/feature/static-reflection/tests/static-reflection/probe_json_schema.cpp)).
+
+### Example: generating a JSON Schema
+
+A reflective JSON Schema generator is about 60 lines on top of these queries —
+the annotations already carry everything a schema needs. This is the property
+half; a real generator would add arrays, `optional`, `std::variant`, and ranges.
+
+```cpp
+namespace schema
+{
+template<typename T>
+nlohmann::json object_schema();
+
+template<typename M>
+nlohmann::json scalar_schema()
+{
+    using U = std::remove_cvref_t<M>;
+    if constexpr (std::is_same_v<U, bool>)                  return {{"type", "boolean"}};
+    else if constexpr (std::is_integral_v<U>)               return {{"type", "integer"}};
+    else if constexpr (std::is_floating_point_v<U>)         return {{"type", "number"}};
+    else if constexpr (std::is_same_v<U, std::string>)      return {{"type", "string"}};
+    else                                                    return object_schema<U>();
+}
+
+template<typename T, std::size_t... I>
+nlohmann::json object_schema_impl(std::index_sequence<I...>)
+{
+    nlohmann::json props = nlohmann::json::object();
+    nlohmann::json required = nlohmann::json::array();
+
+    (([&]
+    {
+        using M = typename [: std::meta::type_of(refl2::member<T, I>) :];
+        const std::string key{refl2::member_key<T, I>.data()};
+        props[key] = scalar_schema<M>();
+        // a json_default member may be absent from the input
+        if constexpr (!refl2::member_has_default<T, I>)
+        {
+            required.push_back(key);
+        }
+    }()), ...);
+
+    nlohmann::json s{{"type", "object"}, {"properties", props}};
+    if (!required.empty())
+    {
+        s["required"] = required;
+    }
+    return s;
+}
+
+template<typename T>
+nlohmann::json object_schema()
+{
+    static_assert(refl2::has_annotation<refl2::json_serializable>(^^T),
+                  "requires struct [[=refl2::json_serializable{}]] T");
+    return object_schema_impl<T>(std::make_index_sequence<refl2::member_count<T>>{});
+}
+} // namespace schema
+```
+
+For the `person` struct above it produces (key order as `nlohmann::json` sorts
+objects):
+
+```json
+{
+  "properties": {
+    "location": {
+      "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
+      "required": ["x", "y"],
+      "type": "object"
+    },
+    "name": { "type": "string" },
+    "score": { "type": "integer" },
+    "years": { "type": "integer" }
+  },
+  "required": ["name", "years", "location"],
+  "type": "object"
+}
+```
+
+`ssn` is absent (from `json_ignore`, and so are its index and the schema's
+knowledge of it), `age` appears as `years` (from `json_name`), and `score`
+appears in `properties` but not in `required` (from `json_default`).
+
 ## Known divergences from the macro family
 
 The extension is not a byte-for-byte replacement of every macro semantic:
