@@ -163,9 +163,27 @@ Rules first — the exact commands for the highlighted items are in
 
 ## 4. Progressive reading guide (read the reference on demand)
 
+**Before writing or reviewing any C++ code in this repository, load the
+`modern-cpp` skill** (`skill` tool, name `modern-cpp`). Do not write C++20+
+code or make a toolchain/build judgement until it is loaded. It is a layered
+bundle: read its router `SKILL.md` first, then follow its routing table to
+**one** `references/` file for the task — do not read them all.
+
+The trigger is the *kind of decision*, not the language standard: this
+repository keeps C++11–C++26 green, so "it's only C++20 syntax" is not a
+reason to skip it. Load it when you are about to:
+
+- write/modify anything using P2996 reflection, P2900 contracts, or `#embed`;
+- use a C++20+ library facility (`format`, `expected`, `span`, `ranges`,
+  `print`, `mdspan`, `inplace_vector`, …);
+- resolve a build/toolchain error (`meta: No such file or directory`,
+  `'-freflection' only supported with '-std=c++26'`, "C++23 used silently", …);
+- design a reflection-driven serializer/codec;
+- pick a header or an exact API spelling instead of guessing it.
+
 | When | Read |
 |---|---|
-| Before writing ANY reflection/concepts/serialization code | `docs/static-reflection/VERIFIED_FACTS.md` — verified compiler/type facts (do not re-verify); generic C++26 facts live in the `modern-cpp` skill |
+| Before writing ANY reflection/concepts/serialization code | `docs/static-reflection/VERIFIED_FACTS.md` — verified compiler/type facts (do not re-derive them); generic C++26 facts live in the `modern-cpp` skill |
 | Configuring, building, reproducing, measuring | `docs/static-reflection/BUILD_RECIPES.md` — toolchain, fixture build lines, amalgamate, test suite |
 | Milestone design & verification methodology | `FEASIBILITY.md` (M0–M3) / `M4_ASSESSMENT.md` / `M5_REFLECTION_TO_JSON.md` / `EVALUATION.md` — see §5 |
 | Working on the main library | §2 safety boundaries above + `BUILD_RECIPES.md` recipes |
