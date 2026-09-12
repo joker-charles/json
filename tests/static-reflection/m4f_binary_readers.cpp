@@ -105,9 +105,15 @@ void check_msgpack_case(const lib_json& c)
 
 void check_ubjson_case(const lib_json& c)
 {
-    for (const bool uc : {false, true})
+    for (const bool uc :
+            {
+                false, true
+            })
     {
-        for (const bool ut : {false, true})
+        for (const bool ut :
+                {
+                    false, true
+                })
         {
             if (ut && !uc)
             {
@@ -132,9 +138,15 @@ void check_ubjson_case(const lib_json& c)
 
 void check_bjdata_case(const lib_json& c)
 {
-    for (const bool uc : {false, true})
+    for (const bool uc :
+            {
+                false, true
+            })
     {
-        for (const bool ut : {false, true})
+        for (const bool ut :
+                {
+                    false, true
+                })
         {
             if (ut && !uc)
             {
@@ -162,7 +174,8 @@ int main()
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("[1] valid-value round trips across CBOR / MsgPack / UBJSON / BJData\n");
 
-    const std::vector<lib_json> kCases = {
+    const std::vector<lib_json> kCases =
+    {
         lib_json(nullptr),
         lib_json(true),
         lib_json(false),
@@ -204,9 +217,9 @@ int main()
         lib_json::binary({}),
         // JData ndarray (BJData reader must decode it back to the object)
         lib_json::object({{"_ArrayType_", "uint8"}, {"_ArraySize_", lib_json::array({2, 2})},
-                          {"_ArrayData_", lib_json::array({1, 2, 3, 4})}}),
+            {"_ArrayData_", lib_json::array({1, 2, 3, 4})}}),
         lib_json::object({{"_ArrayType_", "double"}, {"_ArraySize_", lib_json::array({2, 3})},
-                          {"_ArrayData_", lib_json::array({1.5, 2.5, 3.5, 4.5, 5.5, 6.5})}})
+            {"_ArrayData_", lib_json::array({1.5, 2.5, 3.5, 4.5, 5.5, 6.5})}})
     };
 
     for (const auto& c : kCases)
@@ -319,7 +332,8 @@ int main()
             const char* text;
             bool valid;
         };
-        const hp_case cases[] = {
+        const hp_case cases[] =
+        {
             {"12", true},
             {" 12", true},
             {"12 ", true},
@@ -367,8 +381,8 @@ int main()
     // explicit byte-level check for the size-vector path).
     {
         const auto c = lib_json::object({{"_ArrayType_", "uint8"},
-                                         {"_ArraySize_", lib_json::array({2, 2})},
-                                         {"_ArrayData_", lib_json::array({1, 2, 3, 4})}});
+            {"_ArraySize_", lib_json::array({2, 2})},
+            {"_ArrayData_", lib_json::array({1, 2, 3, 4})}});
         const auto bytes = lib_json::to_bjdata(c, true, true, nlohmann::detail::bjdata_version_t::draft2);
         basic_json_reflection parsed;
         reflection_ubjson_parser p(bytes, true);

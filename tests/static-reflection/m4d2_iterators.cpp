@@ -188,7 +188,8 @@ void check_iteration()
 
     // primitives: one-element ranges (the reflection materializes the value)
     const lib_json prims[] = {lib_json(42), lib_json(3.5), lib_json(true),
-                              lib_json("abc"), lib_json::binary({1, 2, 3})};
+                              lib_json("abc"), lib_json::binary({1, 2, 3})
+                             };
     for (const auto& p : prims)
     {
         basic_json_reflection rp;
@@ -269,9 +270,15 @@ void check_operator_index()
     }
     // wrong-type operator[] -> both throw
     both("operator[](idx) on object", lib_json::object({{"a", 1}}),
-         [](auto& v) { static_cast<void>(v[std::size_t(0)]); });
+    [](auto & v)
+    {
+        static_cast<void>(v[std::size_t(0)]);
+    });
     both("operator[](key) on array", lib_json::array({1}),
-         [](auto& v) { static_cast<void>(v[std::string("k")]); });
+         [](auto & v)
+    {
+        static_cast<void>(v[std::string("k")]);
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -318,35 +325,74 @@ void check_erase_iter()
     std::printf("[4] erase(iterator) / erase(first,last)\n");
 
     both("erase(first array iterator)", lib_json::array({1, 2, 3}),
-         [](auto& v) { static_cast<void>(v.erase(v.begin())); });
+         [](auto & v)
+    {
+        static_cast<void>(v.erase(v.begin()));
+    });
     both("erase(middle array iterator)", lib_json::array({1, 2, 3, 4}),
-         [](auto& v) { static_cast<void>(v.erase(v.begin() + 2)); });
+         [](auto & v)
+    {
+        static_cast<void>(v.erase(v.begin() + 2));
+    });
     both("erase(last array iterator)", lib_json::array({1, 2, 3}),
-         [](auto& v) { static_cast<void>(v.erase(v.end() - 1)); });
+         [](auto & v)
+    {
+        static_cast<void>(v.erase(v.end() - 1));
+    });
     both("erase(range [1,3))", lib_json::array({1, 2, 3, 4, 5}),
-         [](auto& v) { static_cast<void>(v.erase(v.begin() + 1, v.begin() + 3)); });
+         [](auto & v)
+    {
+        static_cast<void>(v.erase(v.begin() + 1, v.begin() + 3));
+    });
     both("erase(whole range)", lib_json::array({1, 2, 3}),
-         [](auto& v) { static_cast<void>(v.erase(v.begin(), v.end())); });
+         [](auto & v)
+    {
+        static_cast<void>(v.erase(v.begin(), v.end()));
+    });
     both("erase(iterator) on object via find", lib_json::object({{"a", 1}, {"b", 2}, {"c", 3}}),
-         [](auto& v) { static_cast<void>(v.erase(v.find(std::string("b")))); });
+    [](auto & v)
+    {
+        static_cast<void>(v.erase(v.find(std::string("b"))));
+    });
     both("erase(object range [a,b))", lib_json::object({{"a", 1}, {"b", 2}, {"c", 3}}),
-         [](auto& v) { static_cast<void>(v.erase(v.find(std::string("a")), v.find(std::string("c")))); });
+    [](auto & v)
+    {
+        static_cast<void>(v.erase(v.find(std::string("a")), v.find(std::string("c"))));
+    });
 
     // erasing a primitive resets to null (library semantics)
     both("erase(iterator) on number", lib_json(42),
-         [](auto& v) { static_cast<void>(v.erase(v.begin())); });
+         [](auto & v)
+    {
+        static_cast<void>(v.erase(v.begin()));
+    });
     both("erase(iterator) on string", lib_json("abc"),
-         [](auto& v) { static_cast<void>(v.erase(v.begin())); });
+         [](auto & v)
+    {
+        static_cast<void>(v.erase(v.begin()));
+    });
 
     // error paths
     both("erase on null", lib_json(nullptr),
-         [](auto& v) { static_cast<void>(v.erase(v.begin())); });
+         [](auto & v)
+    {
+        static_cast<void>(v.erase(v.begin()));
+    });
     both("erase on discarded", lib_json(lib_json::value_t::discarded),
-         [](auto& v) { static_cast<void>(v.erase(v.begin())); });
+         [](auto & v)
+    {
+        static_cast<void>(v.erase(v.begin()));
+    });
     both("key() on array iterator", lib_json::array({1, 2}),
-         [](auto& v) { static_cast<void>(v.begin().key()); });
+         [](auto & v)
+    {
+        static_cast<void>(v.begin().key());
+    });
     both("object iterator offset", lib_json::object({{"a", 1}}),
-         [](auto& v) { static_cast<void>(v.begin() + 1); });
+    [](auto & v)
+    {
+        static_cast<void>(v.begin() + 1);
+    });
 
     // cross-container comparison throws on both sides (iterators of different
     // containers cannot be compared — the generic-lambda harness cannot

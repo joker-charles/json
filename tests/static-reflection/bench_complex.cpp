@@ -98,14 +98,26 @@ void from_json(const BasicJsonType& j, T& v)
 // ---------------------------------------------------------------------------
 // nested leaf type: serialized by the macro in macro mode, by reflection
 // (zero boilerplate) in the reflection modes.
-struct Leaf { int value; std::string label; };
+struct Leaf
+{
+    int value;
+    std::string label;
+};
 #if !defined(BENCH_ADL_REFLECTION) && !defined(BENCH_REFLECTION)
     NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Leaf, value, label)
 #endif
 
 // base of the multi-level inheritance chain (flattened into the person).
-struct Base { int seq; std::string tag; };
-struct Mid : Base { double ratio; std::vector<int> hist; };
+struct Base
+{
+    int seq;
+    std::string tag;
+};
+struct Mid : Base
+{
+    double ratio;
+    std::vector<int> hist;
+};
 #if !defined(BENCH_ADL_REFLECTION) && !defined(BENCH_REFLECTION)
     NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Base, seq, tag)
     NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Mid, seq, tag, ratio, hist)

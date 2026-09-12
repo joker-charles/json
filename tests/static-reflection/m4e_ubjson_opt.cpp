@@ -70,7 +70,8 @@ std::string hex(const std::vector<std::uint8_t>& v)
     return s;
 }
 
-const std::vector<lib_json> kCases = {
+const std::vector<lib_json> kCases =
+{
     // scalars
     lib_json(nullptr),
     lib_json(true),
@@ -129,26 +130,26 @@ const std::vector<lib_json> kCases = {
     lib_json::binary({}),
     // JData ndarray: valid
     lib_json::object({{"_ArrayType_", "double"}, {"_ArraySize_", lib_json::array({2, 3})},
-                      {"_ArrayData_", lib_json::array({1.5, 2.5, 3.5, 4.5, 5.5, 6.5})}}),
+        {"_ArrayData_", lib_json::array({1.5, 2.5, 3.5, 4.5, 5.5, 6.5})}}),
     lib_json::object({{"_ArrayType_", "uint8"}, {"_ArraySize_", lib_json::array({3})},
-                      {"_ArrayData_", lib_json::array({1, 2, 3})}}),
+        {"_ArrayData_", lib_json::array({1, 2, 3})}}),
     lib_json::object({{"_ArrayType_", "int16"}, {"_ArraySize_", lib_json::array({2, 2})},
-                      {"_ArrayData_", lib_json::array({-1, 2, -3, 4})}}),
+        {"_ArrayData_", lib_json::array({-1, 2, -3, 4})}}),
     lib_json::object({{"_ArrayType_", "uint16"}, {"_ArraySize_", lib_json::array({2})},
-                      {"_ArrayData_", lib_json::array({1, 65535})}}),
+        {"_ArrayData_", lib_json::array({1, 65535})}}),
     lib_json::object({{"_ArrayType_", "uint64"}, {"_ArraySize_", lib_json::array({1})},
-                      {"_ArrayData_", lib_json::array({18446744073709551615ull})}}),
+        {"_ArrayData_", lib_json::array({18446744073709551615ull})}}),
     lib_json::object({{"_ArrayType_", "byte"}, {"_ArraySize_", lib_json::array({3})},
-                      {"_ArrayData_", lib_json::array({1, 2, 255})}}),
+        {"_ArrayData_", lib_json::array({1, 2, 255})}}),
     // JData ndarray: invalid -> falls back to a plain object
     lib_json::object({{"_ArrayType_", "nope"}, {"_ArraySize_", lib_json::array({1})},
-                      {"_ArrayData_", lib_json::array({1})}}),
+        {"_ArrayData_", lib_json::array({1})}}),
     lib_json::object({{"_ArrayType_", "uint8"}, {"_ArraySize_", lib_json::array({2})},
-                      {"_ArrayData_", lib_json::array({1})}}), // size mismatch
+        {"_ArrayData_", lib_json::array({1})}}), // size mismatch
     lib_json::object({{"_ArrayType_", "uint8"}, {"_ArraySize_", lib_json::array({1})},
-                      {"_ArrayData_", lib_json::array({"x"})}}), // wrong element kind
+        {"_ArrayData_", lib_json::array({"x"})}}), // wrong element kind
     lib_json::object({{"_ArrayType_", "uint8"}, {"_ArraySize_", lib_json::array({-1})},
-                      {"_ArrayData_", lib_json::array({1})}}), // negative dimension
+        {"_ArrayData_", lib_json::array({1})}}), // negative dimension
     lib_json(value_t::discarded),
 };
 
@@ -167,9 +168,15 @@ void run_case(const lib_json& c)
               c.dump().c_str(), hex(mine).c_str(), hex(want).c_str(), hex(old).c_str());
     }
 
-    for (const bool uc : {false, true})
+    for (const bool uc :
+            {
+                false, true
+            })
     {
-        for (const bool ut : {false, true})
+        for (const bool ut :
+                {
+                    false, true
+                })
         {
             if (ut && !uc)
             {

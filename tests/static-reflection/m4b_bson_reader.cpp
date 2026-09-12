@@ -134,7 +134,7 @@ int main()
     check(json::object({{"k", std::string("a\x00" "b", 3)}}), "string with NUL");
     check(json::object({{"k", json::binary_t(std::vector<std::uint8_t>{1, 2, 3, 255})}}), "binary subtype default");
     {
-        json::binary_t b(std::vector<std::uint8_t>{0x10, 0x20});
+        json::binary_t b(std::vector<std::uint8_t> {0x10, 0x20});
         b.set_subtype(0xFF);
         check(json::object({{"k", b}}), "binary subtype 0xFF");
     }
@@ -165,16 +165,17 @@ int main()
     check(json::object({{"a", json::array({1, "two", nullptr, false, 3.5})}}), "array of mixed types");
     check(json::object({{"a", json::array({json::array(), json::array({1})})}}), "nested arrays");
     check(json::object({{"inner", json::object({{"x", 1}, {"y", json::object({{"z", "deep"}})}})}}),
-          "deeply nested objects");
-    check(json::object({
-              {"n", 42},
-              {"s", "text"},
-              {"arr", json::array({1, 2, json::object({{"in", true}})})},
-              {"bin", json::binary_t(std::vector<std::uint8_t>{9, 8, 7})},
-              {"nil", nullptr},
-              {"f", 2.71828},
-          }),
-          "large mixed document");
+    "deeply nested objects");
+    check(json::object(
+    {
+        {"n", 42},
+        {"s", "text"},
+        {"arr", json::array({1, 2, json::object({{"in", true}})})},
+        {"bin", json::binary_t(std::vector<std::uint8_t>{9, 8, 7})},
+        {"nil", nullptr},
+        {"f", 2.71828},
+    }),
+    "large mixed document");
 
     std::printf("\n[c] malformed input (safe failure, not library-identical codes)\n");
     check_negative({}, "empty input");

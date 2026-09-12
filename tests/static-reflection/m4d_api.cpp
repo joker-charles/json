@@ -248,10 +248,19 @@ void check_at()
     CHECK(rdump(rm) == real_mut.dump(), "at() mutation not visible in dump");
 
     // out-of-range array index -> both throw out_of_range
-    both_match("at(out-of-range idx)", arr, [](auto& v) { static_cast<void>(v.at(5)); });
+    both_match("at(out-of-range idx)", arr, [](auto & v)
+    {
+        static_cast<void>(v.at(5));
+    });
     // wrong type (object value used as array) -> both throw type_error
-    both_match("at(idx) on object", lib_json{{"k", 1}}, [](auto& v) { static_cast<void>(v.at(0)); });
-    both_match("at(idx) on string", lib_json("abc"), [](auto& v) { static_cast<void>(v.at(0)); });
+    both_match("at(idx) on object", lib_json{{"k", 1}}, [](auto & v)
+    {
+        static_cast<void>(v.at(0));
+    });
+    both_match("at(idx) on string", lib_json("abc"), [](auto & v)
+    {
+        static_cast<void>(v.at(0));
+    });
 
     // object key access (nested object needs the double-brace form:
     // {"b", {"nested", true}} would build an ARRAY ["nested", true])
@@ -261,8 +270,14 @@ void check_at()
     CHECK(robj.at("a").dump() == obj.at("a").dump(), "at(key) value mismatch");
     CHECK(robj.at("b").at("nested").dump() == obj.at("b").at("nested").dump(),
           "nested at() value mismatch");
-    both_match("at(missing key)", obj, [](auto& v) { static_cast<void>(v.at("nope")); });
-    both_match("at(key) on array", arr, [](auto& v) { static_cast<void>(v.at("nope")); });
+    both_match("at(missing key)", obj, [](auto & v)
+    {
+        static_cast<void>(v.at("nope"));
+    });
+    both_match("at(key) on array", arr, [](auto & v)
+    {
+        static_cast<void>(v.at("nope"));
+    });
 }
 
 void check_erase()
@@ -280,23 +295,45 @@ void check_erase()
         CHECK(rdump(refl) == real.dump(), "erase(key) dump mismatch");
     }
     // missing key -> 0 erased, no throw
-    both_match("erase(missing key)", obj, [](auto& v) { static_cast<void>(v.erase(std::string("nope"))); });
+    both_match("erase(missing key)", obj, [](auto & v)
+    {
+        static_cast<void>(v.erase(std::string("nope")));
+    });
     // wrong type -> both throw type_error
-    both_match("erase(key) on array", lib_json{1, 2}, [](auto& v) { static_cast<void>(v.erase(std::string("k"))); });
+    both_match("erase(key) on array", lib_json{1, 2}, [](auto & v)
+    {
+        static_cast<void>(v.erase(std::string("k")));
+    });
 
     // array index form
     const lib_json arr = {1, 2, 3, 4};
-    both_match("erase(idx)", arr, [](auto& v) { v.erase(std::size_t(1)); });
-    both_match("erase(first idx)", arr, [](auto& v) { v.erase(std::size_t(0)); });
-    both_match("erase(last idx)", arr, [](auto& v) { v.erase(std::size_t(3)); });
-    both_match("erase(out-of-range idx)", arr, [](auto& v) { v.erase(std::size_t(7)); });
-    both_match("erase(idx) on object", obj, [](auto& v) { v.erase(std::size_t(0)); });
+    both_match("erase(idx)", arr, [](auto & v)
+    {
+        v.erase(std::size_t(1));
+    });
+    both_match("erase(first idx)", arr, [](auto & v)
+    {
+        v.erase(std::size_t(0));
+    });
+    both_match("erase(last idx)", arr, [](auto & v)
+    {
+        v.erase(std::size_t(3));
+    });
+    both_match("erase(out-of-range idx)", arr, [](auto & v)
+    {
+        v.erase(std::size_t(7));
+    });
+    both_match("erase(idx) on object", obj, [](auto & v)
+    {
+        v.erase(std::size_t(0));
+    });
 }
 
 void check_clear()
 {
     std::printf("[5] clear\n");
-    const std::vector<lib_json> samples = {
+    const std::vector<lib_json> samples =
+    {
         lib_json{{"a", 1}, {"b", {1, 2}}},
         lib_json{1, "two", 3.5},
         lib_json("some string"),
@@ -379,19 +416,23 @@ void check_swap()
               "swap(container_type&) mismatch");
     }
     // wrong-type swaps -> both throw type_error
-    both_match("swap(array_t&) on object", a_src, [](auto& v) {
+    both_match("swap(array_t&) on object", a_src, [](auto & v)
+    {
         lib_json::array_t tmp;
         v.swap(tmp);
     });
-    both_match("swap(object_t&) on array", b_src, [](auto& v) {
+    both_match("swap(object_t&) on array", b_src, [](auto & v)
+    {
         lib_json::object_t tmp;
         v.swap(tmp);
     });
-    both_match("swap(string_t&) on array", b_src, [](auto& v) {
+    both_match("swap(string_t&) on array", b_src, [](auto & v)
+    {
         lib_json::string_t tmp;
         v.swap(tmp);
     });
-    both_match("swap(binary_t&) on array", b_src, [](auto& v) {
+    both_match("swap(binary_t&) on array", b_src, [](auto & v)
+    {
         lib_json::binary_t tmp;
         v.swap(tmp);
     });
@@ -403,7 +444,8 @@ void check_swap()
 void check_compare()
 {
     std::printf("[7] comparison operators over value matrix\n");
-    const std::vector<lib_json> vals = {
+    const std::vector<lib_json> vals =
+    {
         lib_json(nullptr),
         lib_json(true),
         lib_json(false),
@@ -460,7 +502,7 @@ void check_compare()
             const bool m_ge = (ra >= rb);
             ++checks;
             if (r_eq != m_eq || r_ne != m_ne || r_lt != m_lt || r_le != m_le ||
-                r_gt != m_gt || r_ge != m_ge)
+                    r_gt != m_gt || r_ge != m_ge)
             {
                 report_fail("comparison mismatch (" + std::to_string(i) + "," +
                             std::to_string(j) + ") real=" + vals[i].dump() + " vs " +
@@ -482,7 +524,8 @@ void check_compare()
 void check_leaks()
 {
     std::printf("[8] construct/destroy/swap/clear cycles (ASan)\n");
-    const lib_json samples[] = {
+    const lib_json samples[] =
+    {
         lib_json{{"a", {1, 2}}, {"b", "x"}},
         lib_json{1, "two", lib_json::array({true})},
         lib_json::binary({1, 2, 3}, 4),

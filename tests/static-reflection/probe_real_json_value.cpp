@@ -33,7 +33,7 @@ using json = nlohmann::json;
 consteval auto data_info()
 {
     constexpr auto m_data = std::meta::nonstatic_data_members_of(
-        ^^json, std::meta::access_context::unchecked())[0];
+                                ^^json, std::meta::access_context::unchecked())[0];
     return std::meta::type_of(m_data);
 }
 // json_value (private nested union) info: m_value is data's second member
@@ -41,7 +41,7 @@ consteval auto data_info()
 consteval auto json_value_info()
 {
     constexpr auto m_value = std::meta::nonstatic_data_members_of(
-        data_info(), std::meta::access_context::unchecked())[1];
+                                 data_info(), std::meta::access_context::unchecked())[1];
     return std::meta::type_of(m_value);
 }
 
@@ -52,10 +52,10 @@ int main()
 {
     // 1. member enumeration from a consteval context (the ONLY working one)
     constexpr std::size_t n = std::meta::nonstatic_data_members_of(
-        json_value_info(), std::meta::access_context::unchecked()).size();
+                                  json_value_info(), std::meta::access_context::unchecked()).size();
     std::printf("json_value member count = %zu (expect 8)\n", n);
     template for (constexpr auto m : std::define_static_array(
-        std::meta::nonstatic_data_members_of(json_value_info(), std::meta::access_context::unchecked())))
+                      std::meta::nonstatic_data_members_of(json_value_info(), std::meta::access_context::unchecked())))
     {
         std::printf("  - %s\n", std::meta::identifier_of(m).data());
     }

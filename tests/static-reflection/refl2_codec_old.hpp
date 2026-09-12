@@ -50,7 +50,7 @@ namespace refl2
 // the dispatch pattern this branch verified to work on GCC 16 (see
 // AGENTS.md §3: if constexpr does not discard the false branch).
 // ---------------------------------------------------------------------------
-template<std::size_t N> struct priority_tag : priority_tag<N - 1> {};
+template<std::size_t N> struct priority_tag : priority_tag < N - 1 > {};
 template<> struct priority_tag<0> {};
 
 // --- detection traits (self-contained, public API only) ---
@@ -85,10 +85,10 @@ template<typename T, typename = void>
 struct is_array_like : std::false_type {};
 template<typename T>
 struct is_array_like<T, std::void_t<
-    decltype(std::begin(std::declval<const T&>())),
-    decltype(std::end(std::declval<const T&>())),
-    typename T::value_type>>
-    : std::bool_constant<!is_object_like<T>::value> {};
+decltype(std::begin(std::declval<const T&>())),
+decltype(std::end(std::declval<const T&>())),
+         typename T::value_type>>
+             : std::bool_constant < !is_object_like<T>::value > {};
 
 // The access-context policy: codec<false> = unprivileged (public members
 // only), codec<true> = unchecked (everything, for library internals).
@@ -104,9 +104,9 @@ consteval std::meta::access_context reflect_context(bool unchecked)
 template<bool U, typename T, typename = void>
 struct is_reflectable_struct : std::false_type {};
 template<bool U, typename T>
-struct is_reflectable_struct<U, T, std::enable_if_t<
+struct is_reflectable_struct < U, T, std::enable_if_t <
     std::is_class<T>::value && !std::is_scalar<T>::value && !std::is_union<T>::value
-    && !is_array_like<T>::value && !is_object_like<T>::value>>
+    && !is_array_like<T>::value && !is_object_like<T>::value >>
 {
     static constexpr bool value =
         (std::meta::nonstatic_data_members_of(^^T, reflect_context(U)).size() > 0);
@@ -176,7 +176,7 @@ struct codec
     {
         j = B::object();
         template for (constexpr auto m : std::define_static_array(
-            std::meta::nonstatic_data_members_of(^^T, reflect_context(Unchecked))))
+                          std::meta::nonstatic_data_members_of(^^T, reflect_context(Unchecked))))
         {
             serialize_one(j[std::string(std::meta::identifier_of(m))], v.[:m:]);
         }
@@ -195,7 +195,7 @@ struct codec
     template<typename B, typename T>
     static void serialize_one(B& j, const T& v)
     {
-        serialize_one_impl(j, v, priority_tag<5>{});
+        serialize_one_impl(j, v, priority_tag<5> {});
     }
 
     // ---- from_json side (symmetric) --------------------------------------
@@ -262,7 +262,7 @@ struct codec
     static void deserialize_one_impl(const B& j, T& v, priority_tag<1>)
     {
         template for (constexpr auto m : std::define_static_array(
-            std::meta::nonstatic_data_members_of(^^T, reflect_context(Unchecked))))
+                          std::meta::nonstatic_data_members_of(^^T, reflect_context(Unchecked))))
         {
             deserialize_one(j.at(std::string(std::meta::identifier_of(m))), v.[:m:]);
         }
@@ -281,7 +281,7 @@ struct codec
     template<typename B, typename T>
     static void deserialize_one(const B& j, T& v)
     {
-        deserialize_one_impl(j, v, priority_tag<5>{});
+        deserialize_one_impl(j, v, priority_tag<5> {});
     }
 
     // ---- helpers ----------------------------------------------------------
