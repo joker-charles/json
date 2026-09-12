@@ -31,6 +31,7 @@ using nlohmann::json;
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <optional>
 #include <string>
@@ -143,6 +144,55 @@ TEST_CASE("static reflection opt-in: annotated structs serialize")
         CHECK(d.d == 0);
     }
 
+    SECTION("json_default member that IS present is read, not defaulted")
+    {
+        // the other half of the json_default contract: only the missing-key
+        // path was covered before, so a present value silently defaulting
+        // would not have been caught
+        const json j = json::object({{"a", 5}, {"d", 7}});
+        const auto d = j.get<reflect::WithDefault>();
+        CHECK(d.a == 5);
+        CHECK(d.d == 7);
+    }
+
+    SECTION("json_default: a present null is not a fallback (both paths agree)")
+    {
+        // null is a PRESENT value and is not convertible to int, so neither
+        // path defaults it -- the macro and the reflection path throw alike
+        const json j = json::object({{"a", 5}, {"d", nullptr}});
+        CHECK_THROWS_WITH_AS(static_cast<void>(j.get<reflect::WithDefault>()),
+                             "[json.exception.type_error.302] type must be number, but is null",
+                             json::type_error);
+        CHECK_THROWS_AS(static_cast<void>(j.get<macro::WithDefault>()), json::type_error);
+    }
+
+    SECTION("json_default: whole-value null -- documented divergence")
+    {
+        // _WITH_DEFAULT treats a null ENTIRE value as "every member default";
+        // refl2 has no such fallback and throws. features/reflection.md lists
+        // this as a known divergence, but it had no test.
+        const json j = nullptr;
+        const auto md = j.get<macro::WithDefault>();
+        CHECK(md.a == 0);
+        CHECK(md.d == 0);
+        CHECK_THROWS_WITH_AS(static_cast<void>(j.get<reflect::WithDefault>()),
+                             "[json.exception.type_error.304] cannot use at() with null",
+                             json::type_error);
+    }
+
+    SECTION("a null value resets an optional member")
+    {
+        // the reset branch (the non-null emplace branch was the only covered
+        // one), so an optional member silently keeping its previous value on
+        // a null input would not have been caught
+        const json j = json::parse(R"({"id":1,"p":{"x":1.0,"y":2.0},"ps":[],"m":{},"opt":null})");
+        const auto o = j.get<reflect::Outer>();
+        CHECK(o.id == 1);
+        CHECK(!o.opt.has_value());
+        // round-trips back to null, not to a default value
+        CHECK(json(o).at("opt").is_null());
+    }
+
     SECTION("nested positions: member, vector, map, optional")
     {
         const json j = reflect::Outer {3, {1.0, 2.0}, {{3.0, 4.0}}, {{"k", {5.0, 6.0}}}, 9};
@@ -195,6 +245,51 @@ TEST_CASE("static reflection enum string mapping (M6)")
         };
         CHECK(json(PlainE::b).dump() == "1");
         CHECK(json(1).get<PlainE>() == PlainE::b);
+    }
+
+    SECTION("annotated enum accepts integers as well as its mapped strings")
+    {
+        // documented divergence from NLOHMANN_JSON_SERIALIZE_ENUM (which only
+        // accepts table entries): the annotated path falls back to the integer
+        // branch for any non-string JSON
+        CHECK(json(1).get<Color>() == Color::green);
+        CHECK(json(0).get<Color>() == Color::red);
+        // unsigned and negative integers both go through enum_get_arithmetic
+        CHECK(json(0u).get<Color>() == Color::red);
+        CHECK(static_cast<int>(json(-1).get<Color>()) == -1);
+        // float is the third arithmetic branch
+        CHECK(json(1.0).get<Color>() == Color::green);
+    }
+
+    SECTION("annotated enum rejects a non-numeric, non-string value")
+    {
+        // previously uncovered: the enum_get_arithmetic else-branch
+        CHECK_THROWS_WITH_AS(static_cast<void>(json(nullptr).get<Color>()),
+                             "[json.exception.type_error.302] type must be number, but is null",
+                             json::type_error);
+        CHECK_THROWS_WITH_AS(static_cast<void>(json::array().get<Color>()),
+                             "[json.exception.type_error.302] type must be number, but is array",
+                             json::type_error);
+    }
+
+    SECTION("annotated enum throws on an unknown string")
+    {
+        // documented divergence: the macro silently falls back to the first
+        // table entry, the annotated path reports the bad key
+        CHECK_THROWS_WITH_AS(static_cast<void>(json("PURPLE").get<Color>()),
+                             "[json.exception.type_error.302] cannot parse enum string 'PURPLE'",
+                             json::type_error);
+    }
+
+    SECTION("annotated enum round-trips through its mapping")
+    {
+        for (const auto c :
+                {
+                    Color::red, Color::green
+                })
+        {
+            CHECK(json(c).get<Color>() == c);
+        }
     }
 }
 
@@ -272,6 +367,17 @@ TEST_CASE("static reflection review regressions")
         const json j = static_cast<opaque_id>(42);
         CHECK(j.dump() == "42");
         CHECK(j.get<opaque_id>() == static_cast<opaque_id>(42));
+        // every arithmetic branch of the integer fallback, for an enum whose
+        // underlying type is unsigned long (the annotated path uses the same
+        // helper)
+        CHECK(json(42u).get<opaque_id>() == static_cast<opaque_id>(42));
+        CHECK(json(42.0).get<opaque_id>() == static_cast<opaque_id>(42));
+        // a NEGATIVE integer is the signed branch: nlohmann stores a positive
+        // literal as unsigned, so only this reaches the number_integer case
+        // (it wraps through the unsigned underlying type)
+        CHECK(static_cast<std::uint64_t>(json(-1).get<opaque_id>())
+              == std::numeric_limits<std::uint64_t>::max());
+        CHECK_THROWS_AS(static_cast<void>(json(nullptr).get<opaque_id>()), json::type_error);
     }
 
     SECTION("enum to_json stays noexcept for unannotated enums")
@@ -313,6 +419,17 @@ TEST_CASE("static reflection review regressions")
         const json j = reflect::WithVariant {std::string("hi")};
         CHECK(j.dump() == R"({"v":{"index":1,"value":"hi"}})");
         CHECK(j.get<reflect::WithVariant>().v == std::variant<int, std::string> {std::string("hi")});
+    }
+
+    SECTION("a variant member with its FIRST alternative active round-trips")
+    {
+        // index 0 was never deserialized before: every variant fixture used
+        // alternative 1, so the emplace<I=0> path went untested
+        const json j = reflect::WithVariant {42};
+        CHECK(j.dump() == R"({"v":{"index":0,"value":42}})");
+        const auto back = j.get<reflect::WithVariant>();
+        CHECK(back.v.index() == 0);
+        CHECK(std::get<0>(back.v) == 42);
     }
 }
 
