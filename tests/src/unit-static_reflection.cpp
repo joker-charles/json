@@ -28,11 +28,13 @@
 #include <nlohmann/json.hpp>
 using nlohmann::json;
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -311,5 +313,173 @@ TEST_CASE("static reflection review regressions")
         const json j = reflect::WithVariant {std::string("hi")};
         CHECK(j.dump() == R"({"v":{"index":1,"value":"hi"}})");
         CHECK(j.get<reflect::WithVariant>().v == std::variant<int, std::string> {std::string("hi")});
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Public annotation inspection API (refl2::member_count / member / member_key /
+// member_has_default / has_annotation / enum_*). This is what lets a user build
+// annotation-driven tools outside the codec, so the contract worth pinning is
+// that it reports EXACTLY what the codec serializes -- a tool and the wire
+// format must not be able to disagree about which members exist or their keys.
+// ---------------------------------------------------------------------------
+TEST_CASE("static reflection: public annotation inspection API")
+{
+    SECTION("member_count excludes json_ignore members")
+    {
+        // Partial has keep + skip, and skip is [[=refl2::json_ignore{}]]
+        static_assert(refl2::member_count<reflect::Partial> == 1, "");
+        static_assert(refl2::member_count<reflect::Point> == 2, "");
+        // Outer: id, p, ps, m, opt
+        static_assert(refl2::member_count<reflect::Outer> == 5, "");
+    }
+
+    SECTION("member_key honours json_name and falls back to the identifier")
+    {
+        CHECK(std::string(refl2::member_key<reflect::WithNames, 0>.data()) == "display");
+        CHECK(std::string(refl2::member_key<reflect::WithNames, 1>.data()) == "y");
+        CHECK(std::string(refl2::member_key<reflect::Point, 0>.data()) == "x");
+    }
+
+    SECTION("member info is spliceable into a type")
+    {
+        using First = typename [: std::meta::type_of(refl2::member<reflect::Point, 0>) :];
+        static_assert(std::is_same_v<First, double>, "");
+        using Outer0 = typename [: std::meta::type_of(refl2::member<reflect::Outer, 0>) :];
+        static_assert(std::is_same_v<Outer0, int>, "");
+    }
+
+    SECTION("member_has_default tracks json_default")
+    {
+        static_assert(refl2::member_has_default<reflect::WithDefault, 1>, "");
+        static_assert(!refl2::member_has_default<reflect::WithDefault, 0>, "");
+        static_assert(!refl2::member_has_default<reflect::Point, 0>, "");
+    }
+
+    SECTION("has_annotation works on members and on enumerators")
+    {
+        // json_ignore members are FILTERED OUT of refl2::member, so the
+        // annotation is observable through the raw reflection query -- this is
+        // exactly the documented difference between refl2::member (serialized
+        // members only) and std::meta::nonstatic_data_members_of (source
+        // members). Getting this backwards asserts the opposite of the design.
+        static_assert(refl2::member_count<reflect::Partial> == 1, "");
+        CHECK(std::string(refl2::member_key<reflect::Partial, 0>.data()) == "keep");
+        static_assert(!refl2::has_annotation<refl2::json_ignore>(
+                          std::meta::nonstatic_data_members_of(^^reflect::Partial,
+                                  std::meta::access_context::unprivileged())[0]), "");
+        static_assert(refl2::has_annotation<refl2::json_ignore>(
+                          std::meta::nonstatic_data_members_of(^^reflect::Partial,
+                                  std::meta::access_context::unprivileged())[1]), "");
+
+        static_assert(refl2::has_annotation<refl2::json_name>(refl2::member<reflect::WithNames, 0>), "");
+        static_assert(!refl2::has_annotation<refl2::json_name>(refl2::member<reflect::WithNames, 1>), "");
+        static_assert(refl2::has_annotation<refl2::json_serializable>(^^reflect::Point), "");
+        static_assert(refl2::has_annotation<refl2::json_serializable>(^^reflect::Outer), "");
+        // negative control: an unannotated enum's enumerator carries no json_name
+        static_assert(!refl2::has_annotation<refl2::json_name>(
+                          std::meta::enumerators_of(^^MacroColor)[0]), "");
+    }
+
+    SECTION("enum queries")
+    {
+        static_assert(refl2::enum_is_enumerable<Color>(), "");
+        static_assert(refl2::enum_has_annotations<Color>(), "");
+        static_assert(refl2::enum_count<Color>() == 2, "");
+        CHECK(std::string(refl2::enum_string<Color, 0>.data()) == "RED");
+        CHECK(std::string(refl2::enum_string<Color, 1>.data()) == "GREEN");
+        static_assert(refl2::enum_value<Color, 0> == 0, "");
+        static_assert(refl2::enum_value<Color, 1> == 1, "");
+
+        // an opaque enum declaration is NOT enumerable -- the documented
+        // precondition for the other enum queries (enumerators_of on it is a
+        // hard consteval error, not a fallback)
+        static_assert(!refl2::enum_is_enumerable<opaque_id>(), "");
+        // an unannotated enum is enumerable but carries no json_name
+        static_assert(refl2::enum_is_enumerable<MacroColor>(), "");
+        static_assert(!refl2::enum_has_annotations<MacroColor>(), "");
+    }
+
+    SECTION("the inspection API agrees with what the codec actually emits")
+    {
+        // The invariant that matters: for every annotated type, the keys the
+        // API reports are exactly the keys in the serialized object. A tool
+        // built on the API therefore cannot drift from the wire format.
+        const auto keys_agree = [](const json & j, const std::vector<std::string>& reported)
+        {
+            std::vector<std::string> emitted;
+            for (auto it = j.begin(); it != j.end(); ++it)
+            {
+                emitted.push_back(it.key());
+            }
+            std::sort(emitted.begin(), emitted.end());
+            auto want = reported;
+            std::sort(want.begin(), want.end());
+            return emitted == want;
+        };
+
+        const json jp = reflect::Partial {1, 2};
+        REQUIRE(keys_agree(jp, {"keep"}));
+        CHECK(!jp.contains("skip"));
+
+        const json jn = reflect::WithNames {7, 8};
+        REQUIRE(keys_agree(jn, {"display", "y"}));
+
+        const json jo = reflect::Outer {1, {1.0, 2.0}, {}, {}, std::nullopt};
+        REQUIRE(keys_agree(jo, {"id", "m", "opt", "p", "ps"}));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Dispatch precedence: a user-supplied to_json wins over the reflection branch.
+//
+// This is correct behaviour, and it is pinned here because getting it wrong is
+// silent: refl2::detail::to_adl_branch_eligible_v becomes true as soon as the
+// type has ANY to_json (including one generated by NLOHMANN_DEFINE_TYPE_*),
+// and the codec's priority_tag<4> ADL branch outranks its priority_tag<1>
+// reflection branch -- so the reflection codec is never instantiated for that
+// type. A benchmark that gave its "reflection" structs the intrusive macro
+// therefore measured the macro path twice and reported them as identical
+// (docs/static-reflection/SCALING.md §3). The static_asserts below are the
+// guard: if the precedence ever flips, this test fails loudly instead of
+// quietly changing what a benchmark means.
+// ---------------------------------------------------------------------------
+namespace dispatch
+{
+// reflectable AND carrying a macro-provided to_json -> the ADL branch wins
+struct [[ = refl2::json_serializable {}]] WithMacro
+{
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(WithMacro, v)
+    int v;
+};
+// reflectable with no customization -> the reflection branch
+struct [[ = refl2::json_serializable {}]] Plain
+{
+    int v;
+};
+} // namespace dispatch
+
+TEST_CASE("static reflection: dispatch precedence between ADL and reflection")
+{
+    SECTION("a user to_json makes the ADL branch eligible and wins")
+    {
+        static_assert(refl2::detail::to_adl_branch_eligible_v<json, dispatch::WithMacro>,
+                      "the macro-provided to_json must make the ADL branch eligible");
+        static_assert(refl2::detail::to_adl_branch_eligible_v<json, dispatch::Plain> == false,
+                      "a plain struct must NOT take the ADL branch");
+    }
+
+    SECTION("both types are reflectable, so only the precedence decides")
+    {
+        static_assert(refl2::detail::is_reflectable_struct<false, dispatch::WithMacro>::value, "");
+        static_assert(refl2::detail::is_reflectable_struct<false, dispatch::Plain>::value, "");
+    }
+
+    SECTION("both still serialize to the same document")
+    {
+        const json a = dispatch::WithMacro {7};
+        const json b = dispatch::Plain {7};
+        CHECK(a.dump() == R"({"v":7})");
+        CHECK(a.dump() == b.dump());
     }
 }
