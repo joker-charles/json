@@ -61,7 +61,6 @@ complexity blowup.
 
 `docs/static-reflection/data/measure_results_20260815.txt` reports, at N=20
 `-O2`:
-
 ```
 macro  N=20   O=2  exe=131088  nm=206
 refl2  N=20   O=2  exe=131088  nm=206      <-- identical
@@ -106,6 +105,30 @@ struct) and in its driver, which now also passes the required
 `-DJSON_USE_REFLECTION` (without it the TU does not compile at all — that
 breakage had gone unnoticed because the last committed run predates the opt-in
 gate).
+
+### 3.1 The corrected N=1…100 table
+
+Re-running the same sweep with the same driver at the same N and `-O`
+(`data/measure_results_20260912_corrected.txt`) gives the numbers that replace
+the invalid column. Executable bytes / `size text`, `-O2`:
+
+| N | macro | v1 | refl2 | refl2 vs macro |
+|---:|---:|---:|---:|---:|
+| 1 | 113,464 | 119,888 | 121,536 | **+7%** |
+| 20 | 131,168 | 174,424 | 308,336 | **+135%** |
+| 28 | 145,200 | 198,312 | 384,656 | +165% |
+| 50 | 182,864 | 269,488 | 623,280 | +241% |
+| 100 | 266,888 | 434,144 | 1,155,184 | **+333% (4.3×)** |
+
+and wall time (`-O2`, min of 3): 3.56 / 3.81 / 3.77 s at N=1 rising to
+6.09 / 8.14 / **14.44** s at N=100 — refl2 is the slowest of the three at
+every point, which is the opposite of what the invalid column implied.
+
+The shape is worth stating plainly, because it differs from a fixed overhead:
+the reflection path is **cheap for one type (+7% size, +6% time) and its cost
+accumulates per type**. So "reflection costs about the same as the macro" is
+true only for a handful of types, and badly wrong for hundreds — which is the
+range a real codebase lives in.
 
 ## 4. Caveats
 

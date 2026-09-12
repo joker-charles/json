@@ -18,9 +18,10 @@
 > compilers (Clang/MSVC), other library versions, or other type shapes;
 > the durable findings are the **methodology** and the **same-toolchain
 > relative relationships** (e.g. on flat/shallow-nested types refl2 is
-> never slower than the macro baseline at runtime and size-identical at
-> -O2; the extended inheritance/optional/bit-field paths are measured in
-> §2.2 and do not collapse quite as far).
+> never slower than the macro baseline at *runtime*; its compile-time and
+> binary cost is by contrast **per-type and cumulative**, so it depends
+> entirely on the type count — see the corrected §2.2 Q2/Q3 and
+> `SCALING.md`).
 
 ## TL;DR
 
@@ -34,7 +35,7 @@ measured answer.
 |---|---|---|
 | Q1 | Save code? | Yes — 1 line/type; 0 one-time cost if the library ships the codec (scenario B); break-even ≈25 (v1) / ≈466–672 (v2) types if you write it (scenario A) |
 | Q2 | Compile cost? | concepts ≈0%; reflection +2~5% wall on flat/complex structs, lower peak RSS |
-| Q3 | Code bloat? | concepts ≤0.6% `.o`; reflection flat path **size-identical to macro at -O2**; extended paths +1.9% text / +5.5% exe |
+| Q3 | Code bloat? | concepts ≤0.6% `.o`; reflection at -O2 is **+7% exe for 1 type, growing to +333% (4.3×) at 100 types** — a per-type cost, not a fixed one (v2 column corrected, see §2.2); extended paths +1.9% text / +5.5% exe |
 | Q4 | Diagnostics? | concepts errors are +58% longer but name *why*; reflection v2 collapses "type not handled" into one actionable `static_assert` (11 lines vs 238/376) |
 | Q5 | Non-happy paths? | All pass (38 checks): private nested types ARE reflectable in a consteval context (the single most valuable finding), ADL customization wins, inheritance/optional/bit-fields round-trip; a non-default template-param TU is required to expose the concepts parameter-order bug |
 
@@ -44,8 +45,11 @@ measured answer.
    at `-std=c++26 -freflection`; the concepts slice alone ≈0%.
 2. Reflection is **not faster than the macro on the hot path** — its value is
    saved code, structurally impossible silent omission, and actionable
-   diagnostics. Flat types are size-identical at -O2; extended paths are
-   5–6% slower to serialize but 20–37% faster to deserialize.
+   diagnostics. Its compile-time/binary cost, however, is **per-type**: +7% exe
+   at -O2 for one type, +333% (4.3×) at 100 types, ~5.8× at 1600 (`SCALING.md`),
+   so it is cheap for small codebases and expensive for large ones. At runtime
+   flat types are no slower, and extended paths are 5–6% slower to serialize but
+   20–37% faster to deserialize.
 3. Absolute numbers drift with the machine — the durable findings are the
    **methodology and same-toolchain ratios** (see Applicability and §3).
 
@@ -67,21 +71,27 @@ measured answer.
   v2 = the complete ADL-aware recursive codec "refl2" (672 lines whole
   file, 466 code-only), break-even ≈ 25 / ≈ 672 (≈ 466) types. (Definitions:
   §2.1.)
-- **At -O2 the flat path is size-identical to the macro version** (exe
-  equal at every N, text within 32 B). The extended
-  inheritance/optional/bit-field paths do NOT collapse that far: text
-  +1.9% / exe +5.5% for a three-type TU (+11.6% per inherited/optional
-  single-type TU; bit-fields −2.2%).
+- **Compile-time/binary cost is per-type, not a fixed overhead.** At -O2 the
+  reflection path is nearly free for a single type (+7% exe) but grows linearly
+  with the type count: **4.3× the macro's executable at N=100** and ~5.8× at
+  N=1600 (`SCALING.md`). The earlier "size-identical to macro at -O2" claim was
+  an artifact of a benchmark that never instantiated the reflection codec; see
+  the correction in §2.2 and `data/README.md`. (The extended
+  inheritance/optional/bit-field paths are a separate measurement: text
+  +1.9% / exe +5.5% for a three-type TU; +11.6% per inherited/optional
+  single-type TU; bit-fields −2.2%.)
 - **Runtime: never slower than macro on flat/shallow-nested types**
   (nested ~13–19% faster). Extended paths: deserialize 20–37% faster,
   but serialize 5–6% slower for inherited/optional types.
 - **Unsupported types get one actionable static_assert** (11 error lines)
-  instead of the library's 238 (enable_if) / 376 (concepts) error
-  cascades; the v2 dispatch also collapses at -O2 to ~macro code size on
-  flat types.
-- **v2 is cheaper to compile than v1** (−1.7…−3.9% at -O0; −7.7…−21.2%
-  at -O2); -O2 wall times vs macro are load-noise on this machine and are
-  not used for conclusions.
+  instead of the library's 238 (enable_if) / 376 (concepts) error cascades.
+  (The claim that "the v2 dispatch also collapses at -O2 to ~macro code
+  size on flat types" has been withdrawn — it was measured on a TU where the
+  reflection codec was never instantiated.)
+- **v2 is not cheaper than v1** — with the codec actually instantiated, v2 is
+  *slower to compile* than v1 at every N (N=100 -O2: 14.44 s vs 8.14 s) and
+  *larger* (1,155,184 B vs 434,144 B). The earlier "v2 cheaper than v1 by
+  −1.7…−3.9%" was measured against the macro path, not against v1.
 - **Single-toolchain evidence** — g++-16 / nlohmann-json 3.12.0 / one
   machine / person-like shapes: ratios and methodology are the durable
   findings (see Applicability), not the absolutes.
@@ -575,68 +585,68 @@ point answers different questions depending on who pays the one-time cost:
 > is measured in `SCALING.md`. Bench and driver are fixed.
 
 **Q2 compile time** (same TU, same flags; -O0: min of 3 — stable; -O2:
-median of 7 — high-noise, see the note below):
+median of 7 — high-noise, see the note below).
+**Re-measured 2026-09-12 with the struct bug fixed** — the v2 column below is
+the corrected one (min of 3 at both levels); the pre-fix table is superseded:
 
 | N | macro -O0 | v1 -O0 | v2 -O0 | macro -O2 | v1 -O2 | v2 -O2 |
 |---|---|---|---|---|---|---|
-| 1 | 2.21 s | 2.35 s | 2.29 s | 3.17 s | 3.23 s | 2.98 s |
-| 20 | 2.41 s | 2.59 s | 2.49 s | 3.18 s | 3.52 s | 2.99 s |
-| 28 | 2.50 s | 2.66 s | 2.57 s | 3.26 s | 4.17 s | 3.53 s |
-| 50 | 2.69 s | 2.98 s | 2.93 s | 3.79 s | 4.87 s | 3.89 s |
-| 100 | 2.77 s | 3.19 s | 3.13 s | 5.01 s | 7.13 s | 5.62 s |
+| 1 | 2.64 s | 2.78 s | 2.95 s | 3.56 s | 3.81 s | 3.77 s |
+| 20 | 2.77 s | 3.07 s | 4.34 s | 3.69 s | 4.49 s | 5.88 s |
+| 28 | 2.91 s | 3.10 s | 4.38 s | 3.76 s | 4.30 s | 6.06 s |
+| 50 | 2.90 s | 3.23 s | 5.93 s | 4.23 s | 5.28 s | 8.22 s |
+| 100 | 3.65 s | 4.16 s | 10.04 s | 6.09 s | 8.14 s | 14.44 s |
 
-v2 is **cheaper to compile than v1** at every measured point (−1.7…−3.9% at
--O0; −7.7…−21.2% at -O2, medians of 7) and close to the macro baseline at
--O0 (+2.8…+13.0%, min of 3). The dispatch machinery is resolved at compile
-time and adds less per-type instantiation work than v1's per-member
-`j[...] = v.[:m:]` + `std::string(identifier_of(m))` codegen.
+With the codec actually instantiated, **v2 is the most expensive of the three
+at every N**, and the gap widens with the type count: at N=100 -O2 it is
++137% vs macro (14.44 s vs 6.09 s) and +77% vs v1. The earlier statement that
+"v2 is cheaper to compile than v1 at every measured point" was an artifact —
+v2's column was the macro path, so the comparison was macro-vs-v1 mislabelled.
 
-**-O2 compile time is not reliable on this machine.** The -O2 wall times
-were re-measured with 7 compiles per config (medians above; raw values in
-§5's snapshot) and still swing −6.0…+12.2% vs macro across N (v2 faster at
-N=1/20, slower at N=28/100) under machine load. The earlier min-of-3 run
-swung −10.6…+15.0% — same picture, different bounds. The robust evidence in
-this evaluation is the **-O0 compile time** (stable), the **-O2 binary size
-identity** (Q3) and the **runtime throughput** below; the -O2 compile-time
-column should be read as indicative only.
+**-O2 compile time is not reliable on this machine.** The -O2 wall times were
+re-measured with 7 compiles per config and still swing with machine load. The
+robust evidence in this evaluation is the **-O2 binary size** (Q3), the
+**-O0 compile time**, and the **runtime throughput** below; the -O2
+compile-time column should be read as indicative only. (The "binary size
+identity" that this note used to cite as robust evidence has been withdrawn —
+see Q3.)
 
-**Q3 binary** (executable bytes / `size` text, per N):
+**Q3 binary** (executable bytes / `size` text, per N).
+**Re-measured 2026-09-12 with the struct bug fixed**; v2 is the corrected
+column:
 
 | N | macro -O0 | v1 -O0 | v2 -O0 | macro -O2 | v1 -O2 | v2 -O2 |
 |---|---|---|---|---|---|---|
-| 1 | 393,656 / 169,213 | 484,512 / 199,086 | 395,632 / 169,997 | 113,384 / 80,111 | 119,888 / 85,244 | 113,384 / 80,143 |
-| 20 | 445,936 / 202,548 | 555,608 / 260,100 | 501,944 / 217,432 | 131,088 / 94,192 | 174,456 / 129,294 | 131,088 / 94,224 |
-| 28 | 470,560 / 216,580 | 584,264 / 285,788 | 546,544 / 237,400 | 145,120 / 106,241 | 194,248 / 149,994 | 145,120 / 106,273 |
-| 50 | 530,088 / 255,186 | 669,208 / 356,438 | 666,120 / 292,319 | 182,608 / 138,326 | 265,248 / 207,914 | 182,608 / 138,358 |
-| 100 | 667,600 / 343,012 | 850,360 / 517,124 | 939,752 / 417,253 | 266,640 / 208,925 | 421,720 / 342,974 | 266,640 / 208,957 |
+| 1 | 393,648 / 169,213 | 484,504 / 199,086 | 464,232 / 189,749 | 113,464 / 80,247 | 119,888 / 85,244 | 121,536 / 84,498 |
+| 20 | 445,936 / 202,548 | 555,600 / 260,100 | 792,832 / 284,911 | 131,168 / 94,328 | 174,424 / 130,722 | 308,336 / 136,434 |
+| 28 | 470,560 / 216,580 | 584,256 / 285,788 | 926,840 / 324,975 | 145,200 / 106,377 | 198,312 / 152,430 | 384,656 / 158,747 |
+| 50 | 530,080 / 255,186 | 669,208 / 356,438 | 1,308,672 / 435,157 | 182,864 / 138,718 | 269,488 / 213,054 | 623,280 / 245,599 |
+| 100 | 667,600 / 343,012 | 850,352 / 517,124 | 2,165,680 / 685,691 | 266,888 / 209,638 | 434,144 / 353,414 | 1,155,184 / 420,890 |
 
-**The headline**: at **-O2, v2 is size-identical to the macro version** — the
-executable size is exactly equal at every N (113,384 / 131,088 / 145,120 /
-182,608 / 266,640 B), `size text` is within 32 B (a read-only alignment gap;
-macro 94,192 vs v2 94,224 at N=20), and `nm` is identical to macro at every
-N (179 / 206 / 215 / 238 / 288 symbols; v1: 191 / 239 / 255 / 300 / 400).
-True byte-identity is not expected: the linker build-id note hashes the TU
-content, and the two sources necessarily differ. The v2 dispatch
-(priority_tag ranking, adl_serializer indirection, reflection recursion)
-fully collapses under optimization: both paths converge on the same
-`adl_serializer`/`external_constructor` code the macro generates directly.
-v1 does NOT converge (its per-member string-key conversion + assignment
-survives optimization: +6…+58% exe at -O2) — so v2 is **smaller than v1 at
--O2 by −5…−37%**.
+**The corrected headline**: there is **no size identity**. At -O2 the
+reflection path is +7% the macro's size for a single type (121,536 vs 113,464 B)
+and grows to **+333% (4.3×) at N=100** (1,155,184 vs 266,888 B); symbol counts
+follow (N=100 -O2: 2,606 vs 290). v2 is also larger than v1 at every N
+(N=100: 1,155,184 vs 434,144 B). The growth is linear in the type count, not a
+fixed overhead — see `SCALING.md` for the sweep to N=1600 (~5.8× macro).
 
-The static-key optimization (§2.1) does **not** break size identity: the
-`static const std::string` keys are constant-folded into `.rodata` and
-identical keys merge (the binary holds exactly one copy of each member name,
-same as the macro's literals), so `.rodata` grows by only the same 32-B
-alignment gap and the executable size is unchanged at every N.
+The earlier text here explained the identity as "the v2 dispatch fully
+collapses under optimization: both paths converge on the same
+`adl_serializer`/`external_constructor` code the macro generates directly."
+That explanation was wrong, and wrong in an instructive way: the two paths did
+produce identical code because **the reflection path was never compiled at
+all**. Giving the struct a `NLOHMANN_DEFINE_TYPE_INTRUSIVE` makes
+`refl2::detail::to_adl_branch_eligible_v` true, and the codec's
+`priority_tag<4>` ADL branch outranks its `priority_tag<1>` reflection branch,
+so `refl2::codec<false>::to_json` dispatched straight to the macro's
+`to_json`. The "collapse" was the absence of the code being measured.
 
-At **-O0**, v2 sits between macro and v1: near-macro at N=1 (+0.5%), growing
-to +40.8% exe at N=100 (v1: +27.4%). The -O0 overhead is the un-collapsed
-dispatch: `nm` at N=50 counts 1,871 symbols for v2 vs 1,621 (v1) / 1,471
-(macro). The old §2.2 lesson still stands — always state the optimization
-level and keep the generated code observable — but the new finding is that
-the -O0 bloat of v2 is *mostly optimization artifacts*: it evaporates at -O2
-to exactly zero.
+At **-O0** v2 is +18% exe at N=1, growing to +224% at N=100 (v1: +27.4%);
+the un-collapsed dispatch shows in `nm` (N=50: 3,689 symbols for v2 vs 1,621
+v1 / 1,471 macro). The old §2.2 lesson still stands — always state the
+optimization level and keep the generated code observable — with the
+correction that the -O0→-O2 difference does **not** erase the reflection
+overhead: it shrinks the constant but the per-type growth remains.
 
 **Runtime (conversion layer)** — new in this revision:
 `tests/static-reflection/bench_runtime.cpp`, three modes selected by the same
@@ -950,6 +960,20 @@ ccache); absolute values vary by hardware, **ratios and methodology are the
 point**.
 
 ## 5. Measurement log & corrections vs the previous version
+
+> **2026-09-12 correction — read before trusting any `v2` figure below.**
+> Every log entry in this section that reports the refl2/v2 mode as
+> "size-identical to macro at -O2", or as cheaper to compile than v1, records a
+> measurement of a TU in which **the reflection codec was never instantiated**
+> (`bench_macro_vs_reflection.cpp` gave the v2 structs the intrusive macro, and
+> the macro's `to_json` wins the codec's ADL branch). Those entries are kept
+> because this section is a traceability log — they record what was run and
+> reproduced at the time — but the numbers are invalid, not merely superseded.
+> The log's *methodological* conclusions (e.g. §3 item 2, "state the
+> optimization level and keep the generated code observable") remain correct
+> and were in fact in tension with the v2 size-identity claim even then.
+> Corrected three-mode numbers: `data/measure_results_20260912_corrected.txt`;
+> analysis: `SCALING.md`.
 
 Re-measured 2026-08-15 on this machine (12th Gen i5-12600KF, 10 cores,
 g++-16 16.1.0-2ubuntu1, no ccache; baseline develop `cdf52ae9`, branch

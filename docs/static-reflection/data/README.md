@@ -7,7 +7,8 @@ that header rather than editing these in place.
 | File | What it measures | Status |
 |---|---|---|
 | `measure_results_20260815.txt` | `bench_macro_vs_reflection.sh`: macro / v1 / refl2 at N=1…100, `-O0` and `-O2`, min-of-3 | ⚠️ **the `refl2`/`v2` column is invalid** — see `SCALING.md` §3 and the correction note in `EVALUATION.md` §2.2. The `macro` and `v1` columns are sound. |
-| `runtime_measure_20260815.txt` | runtime throughput of the same three modes | macro/v1 sound; the refl2 rows come from the same mis-selected TU and should be re-derived. |
+| `measure_results_20260912_corrected.txt` | same sweep, same driver, with the struct bug fixed and the driver's flag bug fixed — **this is the valid three-mode table** | current; supersedes the v2 column above |
+| `runtime_measure_20260815.txt` | runtime throughput of the same three modes | **valid** — `bench_runtime.cpp` selects its structs with its own `BENCH_ADL_REFLECTION` branch, so its refl2 numbers are genuinely the reflection codec |
 | `scaling_sweep_20260912.txt` | `bench_scaling.sh`: macro vs refl2 at N=100…1600, `-O0`, min-of-1 | current; refl2 struct is a plain annotated type (the real reflection path) |
 | `scaling_sweep_o2_20260912.txt` | same at `-O2`, N=100…800 | current |
 

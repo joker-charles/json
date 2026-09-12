@@ -1,0 +1,46 @@
+# refl2 three-mode bench sweep
+# date:      2026-09-12T17:03:49+08:00
+# host:      DESKTOP-5DLHVD6
+# toolchain: g++-16 (Ubuntu 16.2.0-1ubuntu1) 16.2.0
+# git:       91e77ea9
+# config:    N='1 20 28 50 100' O='0 2' runs=3 modes='macro refl refl2'
+# src:       /home/joker/apps/json/tests/static-reflection/bench_macro_vs_reflection.cpp
+# units:     wall=s, rss=KB, exe/text=bytes, nm=symbols
+
+macro  N=1    O=0  wall_min=2.64     rss_min=366308    exe=393648     text=169213     nm=1177
+refl   N=1    O=0  wall_min=2.78     rss_min=371536    exe=484504     text=199086     nm=1425
+refl2  N=1    O=0  wall_min=2.95     rss_min=365012    exe=464232     text=189749     nm=1386
+macro  N=1    O=2  wall_min=3.56     rss_min=379668    exe=113464     text=80247      nm=180
+refl   N=1    O=2  wall_min=3.81     rss_min=385048    exe=119888     text=85244      nm=191
+refl2  N=1    O=2  wall_min=3.77     rss_min=375432    exe=121536     text=84498      nm=214
+macro  N=20   O=0  wall_min=2.77     rss_min=372688    exe=445936     text=202548     nm=1291
+refl   N=20   O=0  wall_min=3.07     rss_min=380760    exe=555600     text=260100     nm=1501
+refl2  N=20   O=0  wall_min=4.34     rss_min=406708    exe=792832     text=284911     nm=2279
+macro  N=20   O=2  wall_min=3.69     rss_min=386596    exe=131168     text=94328      nm=207
+refl   N=20   O=2  wall_min=4.49     rss_min=399328    exe=174424     text=130722     nm=239
+refl2  N=20   O=2  wall_min=5.88     rss_min=408304    exe=308336     text=136434     nm=694
+macro  N=28   O=0  wall_min=2.91     rss_min=378424    exe=470560     text=216580     nm=1339
+refl   N=28   O=0  wall_min=3.10     rss_min=387136    exe=584256     text=285788     nm=1533
+refl2  N=28   O=0  wall_min=4.38     rss_min=416396    exe=926840     text=324975     nm=2655
+macro  N=28   O=2  wall_min=3.76     rss_min=394872    exe=145200     text=106377     nm=216
+refl   N=28   O=2  wall_min=4.30     rss_min=408596    exe=198312     text=152430     nm=255
+refl2  N=28   O=2  wall_min=6.06     rss_min=419656    exe=384656     text=158747     nm=868
+macro  N=50   O=0  wall_min=2.90     rss_min=389584    exe=530080     text=255186     nm=1471
+refl   N=50   O=0  wall_min=3.23     rss_min=400640    exe=669208     text=356438     nm=1621
+refl2  N=50   O=0  wall_min=5.93     rss_min=450320    exe=1308672    text=435157     nm=3689
+macro  N=50   O=2  wall_min=4.23     rss_min=411092    exe=182864     text=138718     nm=240
+refl   N=50   O=2  wall_min=5.28     rss_min=434052    exe=269488     text=213054     nm=301
+refl2  N=50   O=2  wall_min=8.22     rss_min=459392    exe=623280     text=245599     nm=1383
+macro  N=100  O=0  wall_min=3.65     rss_min=462080    exe=667600     text=343012     nm=1771
+refl   N=100  O=0  wall_min=4.16     rss_min=455024    exe=850352     text=517124     nm=1821
+refl2  N=100  O=0  wall_min=10.04    rss_min=527328    exe=2165680    text=685691     nm=6039
+macro  N=100  O=2  wall_min=6.09     rss_min=516208    exe=266888     text=209638     nm=290
+refl   N=100  O=2  wall_min=8.14     rss_min=458044    exe=434144     text=353414     nm=401
+refl2  N=100  O=2  wall_min=14.44    rss_min=587920    exe=1155184    text=420890     nm=2606
+# behavior parity: all modes print identical totals
+# -O2 N=1: macro vs refl2 — size differ (113464 vs 121536); text 80247 vs 84498 B (4251 B delta)
+# -O2 N=20: macro vs refl2 — size differ (131168 vs 308336); text 94328 vs 136434 B (42106 B delta)
+# -O2 N=28: macro vs refl2 — size differ (145200 vs 384656); text 106377 vs 158747 B (52370 B delta)
+# -O2 N=50: macro vs refl2 — size differ (182864 vs 623280); text 138718 vs 245599 B (106881 B delta)
+# -O2 N=100: macro vs refl2 — size differ (266888 vs 1155184); text 209638 vs 420890 B (211252 B delta)
+SWEEP DONE

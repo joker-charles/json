@@ -76,7 +76,14 @@ for n in ${BENCH_N_SET}; do
     for o in ${BENCH_OPT_SET}; do
         for mode in ${BENCH_MODES}; do
             flags=(-std=c++26 -freflection -O"${o}" -DBENCH_N="${n}" -I"${REPO_ROOT}/include")
-            [ -n "${MODE_FLAGS[$mode]}" ] && flags+=("${MODE_FLAGS[$mode]}")
+            # MODE_FLAGS entries may carry several flags; split on whitespace so
+            # each becomes its own argv entry. Appending the raw string would
+            # pass "-DA -DB" as ONE argument (a malformed -D) and the build
+            # fails with no obvious cause.
+            if [ -n "${MODE_FLAGS[$mode]}" ]; then
+                read -r -a mode_flags <<< "${MODE_FLAGS[$mode]}"
+                flags+=("${mode_flags[@]}")
+            fi
             exe="${OUT_DIR}/bin_${mode}_n${n}_o${o}"
             best_wall=9999.0; best_rss=999999999; rc_ok=0
             tmp_err="${OUT_DIR}/.time_err_$$"
