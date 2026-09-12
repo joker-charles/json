@@ -9,8 +9,10 @@
 //                   -DBENCH_REFLECTION -Iinclude \
 //                   -o /tmp/bench_refl bench_macro_vs_reflection.cpp
 //   refl2 (v2):   g++-16 -std=c++26 -freflection -O0 -DBENCH_N=50 \
-//                   -DBENCH_ADL_REFLECTION -Iinclude \
+//                   -DBENCH_ADL_REFLECTION -DJSON_USE_REFLECTION -Iinclude \
 //                   -o /tmp/bench_refl2 bench_macro_vs_reflection.cpp
+//                 (-DJSON_USE_REFLECTION is required: the reflection extension
+//                  is behind the opt-in gate, read at include time)
 //
 //   macro mode  = NLOHMANN_DEFINE_TYPE_INTRUSIVE (the library's own macros)
 //   refl (v1)   = the naive generic serializer (EVALUATION.md §2.1): flat
@@ -99,15 +101,37 @@ void from_json(const BasicJsonType& j, T& v)
     std::vector<std::string> tags; \
     bool active;
 
+// BENCH_REFLECTION (v1) and BENCH_ADL_REFLECTION (refl2) both measure a
+// REFLECTION path, so both need a plain struct: the reflection catch-all is
+// what does the work.
+//
+// The macro branch below used to be the `#else`, which meant BENCH_ADL_REFLECTION
+// fell into it too. That silently invalidated the refl2 column: giving the type
+// a NLOHMANN_DEFINE_TYPE_INTRUSIVE friend makes
+// refl2::detail::to_adl_branch_eligible_v true, the codec's priority_tag<4> ADL
+// branch then wins over its priority_tag<1> reflection branch, and the
+// reflection codec is never instantiated at all. The effect was measurable:
+// refl2 reported the SAME executable size as macro (both 131088 B at N=20 -O2)
+// because it WAS the macro path plus a thin codec wrapper. Only BENCH_REFLECTION
+// was reaching the plain-struct branch, so only v1 was measuring reflection.
 #ifdef BENCH_REFLECTION
 #define DEFINE_PERSON(i) struct person_##i \
     { \
         PERSON_FIELDS \
     };
+#elif defined(BENCH_ADL_REFLECTION)
+// refl2 (v2): the user writes a plain struct; the type-level annotation opts
+// it into the catch-all. Without the annotation the codec still serializes it
+// when called directly, but the shipped user-facing path is the annotated one,
+// so measure that.
+#define DEFINE_PERSON(i) struct [[=refl2::json_serializable{}]] person_##i \
+    { \
+        PERSON_FIELDS \
+    };
 #else
-// intrusive: the NLOHMANN_DEFINE_TYPE_INTRUSIVE call lives INSIDE the class
-// body (it defines friend to_json/from_json); per-type user cost = 1 struct
-// line + 1 macro line (the field lines are common to both modes)
+// macro: intrusive. the NLOHMANN_DEFINE_TYPE_INTRUSIVE call lives INSIDE the
+// class body (it defines friend to_json/from_json); per-type user cost = 1
+// struct line + 1 macro line (the field lines are common to both modes)
 #define DEFINE_PERSON(i) struct person_##i \
     { \
         NLOHMANN_DEFINE_TYPE_INTRUSIVE(person_##i, name, age, height, tags, active) \

@@ -552,6 +552,28 @@ point answers different questions depending on who pays the one-time cost:
   ships is the 672-line implementation (plus the extension burden documented
   in §2.1's coverage boundary).
 
+> **CORRECTION (2026-09-12) — the `v2` columns in Q2/Q3 below do not measure
+> the reflection codec.** `bench_macro_vs_reflection.cpp` chose its struct
+> definition with `#ifdef BENCH_REFLECTION ... #else ... NLOHMANN_DEFINE_TYPE_INTRUSIVE ... #endif`,
+> and `BENCH_ADL_REFLECTION` (v2) does not define `BENCH_REFLECTION` — so the
+> "reflection" structs also carried the intrusive macro. That macro's friend
+> `to_json` makes `refl2::detail::to_adl_branch_eligible_v` true, and the
+> codec's `priority_tag<4>` ADL branch outranks its `priority_tag<1>`
+> reflection branch, so **the reflection codec was never instantiated in the v2
+> configuration**. The v2 numbers are the macro path plus a thin codec wrapper;
+> that is the whole explanation for "v2 ≈ macro" below and for the "binary size
+> identity" this section calls its robust evidence.
+>
+> With the struct fixed to a plain annotated type, at the identical N=20 `-O2`
+> configuration: macro `exe=131168 text=68379 nm=207` (reproducing this
+> section's 131,088 / 206) but refl2 `exe=308336 text=99509 nm=694`.
+>
+> What survives: **v1** (whose struct branch *is* the plain one) is genuinely
+> measured, and Q3's macro column is sound. The v2 column, and every statement
+> comparing v2 to macro, must be re-derived. The real reflection path's scaling
+> — linear, but ~5.5× macro in wall time and ~5.8× in binary size at N=1600 —
+> is measured in `SCALING.md`. Bench and driver are fixed.
+
 **Q2 compile time** (same TU, same flags; -O0: min of 3 — stable; -O2:
 median of 7 — high-noise, see the note below):
 

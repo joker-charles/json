@@ -42,7 +42,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 SRC="${SCRIPT_DIR}/bench_macro_vs_reflection.cpp"
 
-declare -A MODE_FLAGS=( [macro]="" [refl]="-DBENCH_REFLECTION" [refl2]="-DBENCH_ADL_REFLECTION" )
+# refl2 needs JSON_USE_REFLECTION: reflection_to_json.hpp is behind the opt-in
+# gate, and the gate is read at include time.
+declare -A MODE_FLAGS=( [macro]="" [refl]="-DBENCH_REFLECTION" [refl2]="-DBENCH_ADL_REFLECTION -DJSON_USE_REFLECTION" )
 declare -A MODE_LABEL=( [macro]="macro" [refl]="refl v1" [refl2]="refl2 v2" )
 
 # --- prerequisites ----------------------------------------------------------
