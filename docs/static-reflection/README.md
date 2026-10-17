@@ -16,7 +16,7 @@ nlohmann/json 的 tagged-union 核心，并用 **C++20 concepts** 现代化序�
 | 查某个里程碑的实现 / 边界 / 坑 | 下方「里程碑设计」对应文档 |
 | 查已验证的编译器 / 类型事实（别重新踩坑） | [`VERIFIED_FACTS.md`](VERIFIED_FACTS.md) |
 | 配置、构建、复现、测量 | [`BUILD_RECIPES.md`](BUILD_RECIPES.md) |
-| 看审查结论 / 已修缺陷 / 待办 | [`REVIEW_2026-08.md`](REVIEW_2026-08.md) |
+| 看审查结论 / 已修缺陷 / 待办 | [`REVIEW_2026-08.md`](REVIEW_2026-08.md) → [`REVIEW_2026-10.md`](REVIEW_2026-10.md) |
 
 ## 文档分类
 
@@ -51,6 +51,11 @@ nlohmann/json 的 tagged-union 核心，并用 **C++20 concepts** 现代化序�
   20 项缺陷（含开启 `JSON_USE_REFLECTION` 后 4 个上游测试 TU 编译失败、
   `std::abort()`、悬垂引用、序列化字节不一致等）、逐条修复与验证命令、
   以及 6 项待办。做上游 PR 前必读。
+- **`REVIEW_2026-10.md`** — 第二轮审查（concepts 双轨 + refl2 codec）：
+  容器 `from_json` 缺类型守卫导致静默接受错误类型（`json(5)` → `[5]`、
+  `json(5)` → `{"":5}` 等，差分矩阵 30 组不一致）、`std::array` 错误码漂移、
+  HEAD 上一个 fixture 编译失败；含修复、回归与仍未关闭的边界（异常保证、
+  `Box<json>`、`map<int,…>` 互操作）。
 - **`VERIFIED_FACTS.md`** — 本工具链上已实证的编译器 / 类型事实（357 行）。
   写任何反射 / concepts / 序列化代码前先读，避免重新踩坑。
 - **`BUILD_RECIPES.md`** — 工具链、各探针编译命令、单头 amalgamate、仓库测试套件（122 行）。
