@@ -1187,6 +1187,20 @@ struct codec
     requires (detail::is_array_like<T>::value && !detail::is_library_dedicated_array<B, T>)
     static void deserialize_one_impl(const B& j, T& v, detail::priority_tag<3>)
     {
+        // Mirror the library's from_json_array_impl guard: a non-array JSON
+        // value is a type_error.302, NOT an empty (or, worse, one-element)
+        // container. Without this guard the range-for below accepted every
+        // JSON type: a primitive iterates as exactly one element (nlohmann's
+        // primitive_iterator begin != end), so json(5).get<vector<int>>()
+        // silently became [5], null became [], and an object became its
+        // values — all of which the library rejects with 302. Every container
+        // branch (sequential / insert-based / fixed-size) needs it; the
+        // fixed-size one used to surface at()'s type_error.304 instead.
+        if (!j.is_array())
+        {
+            JSON_THROW(nlohmann::detail::type_error::create(
+                           302, nlohmann::detail::concat("type must be array, but is ", j.type_name()), &j));
+        }
         if constexpr (requires { v.push_back(typename T::value_type{}); })
         {
             // sequential containers (vector, list, deque): append
@@ -1232,6 +1246,15 @@ struct codec
     requires detail::is_object_like<T>::value
     static void deserialize_one_impl(const B& j, T& v, detail::priority_tag<2>)
     {
+        // Mirror the library's from_json object guard (type_error.302). The
+        // proxy's key() is EMPTY for non-objects instead of throwing, so
+        // without this guard json(5).get<map<string,int>>() silently produced
+        // {"":5} and null/arrays became empty maps.
+        if (!j.is_object())
+        {
+            JSON_THROW(nlohmann::detail::type_error::create(
+                           302, nlohmann::detail::concat("type must be object, but is ", j.type_name()), &j));
+        }
         v.clear();
         for (const auto& item : j.items())
         {

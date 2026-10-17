@@ -34,6 +34,7 @@ using nlohmann::json;
 #include <limits>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -354,6 +355,18 @@ struct [[ = refl2::json_serializable {}]] WithMap
 {
     std::map<int, int> m;
 };
+struct [[ = refl2::json_serializable {}]] WithStringMap
+{
+    std::map<std::string, int> m;
+};
+struct [[ = refl2::json_serializable {}]] WithSet
+{
+    std::set<int> s;
+};
+struct [[ = refl2::json_serializable {}]] WithVector
+{
+    std::vector<int> v;
+};
 struct [[ = refl2::json_serializable {}]] WithVariant
 {
     std::variant<int, std::string> v;
@@ -598,5 +611,72 @@ TEST_CASE("static reflection: dispatch precedence between ADL and reflection")
         const json b = dispatch::Plain {7};
         CHECK(a.dump() == R"({"v":7})");
         CHECK(a.dump() == b.dump());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Container from_json must reject the WRONG JSON type with the library's
+// type_error.302, exactly like detail::from_json's array/object overloads.
+//
+// The codec's range-for / items() loops have no natural failure on a
+// non-container value: a primitive iterates as exactly one element (so
+// json(5) silently became [5]), null iterates as none, and an object iterates
+// as its values; items() reports an EMPTY key for non-objects (so json(5)
+// became {"":5}). Upstream rejects all of these with 302, so the pre-fix
+// behaviour was both a silent wrong value and a zero-drift violation.
+// The fixed-size (std::array) branch additionally reported at()'s
+// type_error.304 instead of the 302 its upstream counterpart throws.
+// ---------------------------------------------------------------------------
+TEST_CASE("static reflection: container from_json requires the matching JSON type")
+{
+    SECTION("sequential container member rejects null / primitive / object")
+    {
+        CHECK_THROWS_WITH_AS(static_cast<void>(json::parse(R"({"v":5})").get<reflect::WithVector>()),
+                             "[json.exception.type_error.302] type must be array, but is number",
+                             json::type_error);
+        CHECK_THROWS_WITH_AS(static_cast<void>(json::parse(R"({"v":null})").get<reflect::WithVector>()),
+                             "[json.exception.type_error.302] type must be array, but is null",
+                             json::type_error);
+        CHECK_THROWS_WITH_AS(static_cast<void>(json::parse(R"({"v":{"a":1}})").get<reflect::WithVector>()),
+                             "[json.exception.type_error.302] type must be array, but is object",
+                             json::type_error);
+        // valid input still round-trips
+        CHECK(json::parse(R"({"v":[1,2,3]})").get<reflect::WithVector>().v == std::vector<int> {1, 2, 3});
+    }
+
+    SECTION("insert-based container member rejects null / primitive / object")
+    {
+        CHECK_THROWS_WITH_AS(static_cast<void>(json::parse(R"({"s":7})").get<reflect::WithSet>()),
+                             "[json.exception.type_error.302] type must be array, but is number",
+                             json::type_error);
+        CHECK_THROWS_WITH_AS(static_cast<void>(json::parse(R"({"s":null})").get<reflect::WithSet>()),
+                             "[json.exception.type_error.302] type must be array, but is null",
+                             json::type_error);
+        CHECK(json::parse(R"({"s":[3,1,2]})").get<reflect::WithSet>().s == std::set<int> {1, 2, 3});
+    }
+
+    SECTION("object member rejects null / primitive / array")
+    {
+        CHECK_THROWS_WITH_AS(static_cast<void>(json::parse(R"({"m":5})").get<reflect::WithStringMap>()),
+                             "[json.exception.type_error.302] type must be object, but is number",
+                             json::type_error);
+        CHECK_THROWS_WITH_AS(static_cast<void>(json::parse(R"({"m":null})").get<reflect::WithStringMap>()),
+                             "[json.exception.type_error.302] type must be object, but is null",
+                             json::type_error);
+        CHECK_THROWS_WITH_AS(static_cast<void>(json::parse(R"({"m":[]})").get<reflect::WithStringMap>()),
+                             "[json.exception.type_error.302] type must be object, but is array",
+                             json::type_error);
+        // valid input still round-trips
+        CHECK(json::parse(R"({"m":{"k":1}})").get<reflect::WithStringMap>().m.at("k") == 1);
+    }
+
+    SECTION("fixed-size array member reports the array type error, not at()'s 304")
+    {
+        CHECK_THROWS_WITH_AS(static_cast<void>(json::parse(R"({"arr":5})").get<reflect::WithArray>()),
+                             "[json.exception.type_error.302] type must be array, but is number",
+                             json::type_error);
+        CHECK_THROWS_WITH_AS(static_cast<void>(json::parse(R"({"arr":{}})").get<reflect::WithArray>()),
+                             "[json.exception.type_error.302] type must be array, but is object",
+                             json::type_error);
     }
 }
