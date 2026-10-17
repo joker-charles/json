@@ -24,6 +24,12 @@
 // catch-all eligibility) or via std::variant (M7 whitelist exception), so no
 // [[=refl2::json_serializable{}]] type-level annotation is required.
 #define JSON_USE_REFLECTION 1  // opt-in gate (UPSTREAM_INTEGRATION_PLAN.md §2.2)
+// M7 top-level std::variant support is separately gated (it would break
+// upstream's !is_constructible<json, std::variant<...>> invariant). The
+// round-trip at the end of main() goes through j.get<V>(), i.e. the library's
+// own get<> machinery, which needs this gate — the codec's variant branch
+// alone is not enough. Same definition as probe_variant.cpp / type_optin_diff.cpp.
+#define JSON_USE_REFLECTION_VARIANT 1
 #include <cstdio>
 #include <map>
 #include <optional>
