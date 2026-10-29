@@ -158,10 +158,15 @@ The annotation must follow the class key: `struct [[=nlohmann::json_serializable
 - private members, base classes, unions, anonymous members;
 - recursive reflection of unannotated nested structs;
 - custom `basic_json` serializer template parameters;
-- a CMake/CI target (the branch's static-reflection fixtures are manual; a
-  C++26 CI job is a follow-up).
+- a general C++26 CI matrix (the single `test-static_reflection_cpp26`
+  doctest target exists; broader CI wiring is a follow-up).
 
 ## 8. Tests
+
+C++26 doctest target: `tests/src/unit-static_reflection.cpp`
+(`test-static_reflection_cpp26`) — the portable subset of the old catch-all
+tests: plain/nested structs, library containers, object-access semantics, and
+per-type opt-in.
 
 Runtime fixture: `tests/static-reflection/reflection_flat_struct.cpp`
 

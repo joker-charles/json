@@ -22,8 +22,9 @@ The C++20 concepts layer is deleted:
 - concept-specific tests (`unit-concepts_dual.cpp`, `concepts_smoke.cpp`,
   `probe_layered_concepts.cpp`, `probe_composite_concept.cpp`,
   `probe_draft_drift.cpp`) removed;
-- `tests/CMakeLists.txt` reverted to `develop` (no C++26 reflection targets,
-  no gate-on regression targets).
+- `tests/CMakeLists.txt` is `develop` plus one C++26 target for the new
+  flat-struct doctest; the old reflection/gate-on and concepts dual-path
+  targets are removed.
 
 The lexer/binary_reader `std::from_chars`/hex error-message changes were not
 reflection features; they were reverted with the rest of the core so the tree
@@ -47,6 +48,9 @@ the library's `JSON_THROW` macro (it was undefined by `macro_unscope.hpp`).
 
 - Main doctest suite: unchanged upstream targets; `test-udt_cpp11`,
   `test-serialization_cpp11`, `test-conversions_cpp17` pass.
+- `tests/src/unit-static_reflection.cpp` / `test-static_reflection_cpp26`:
+  C++26 doctest for the flat-struct extension (portable subset of the old
+  catch-all test file; 4 cases / 35 assertions).
 - Supported reflection fixtures:
   - `tests/static-reflection/reflection_flat_struct.cpp` (split and
     `-Isingle_include -Iinclude`);
@@ -91,6 +95,8 @@ cmake -S . -B build-test-clean -DCMAKE_CXX_COMPILER=g++-16 \
   -DJSON_BuildTests=ON -DJSON_MultipleHeaders=ON -DBUILD_TESTING=ON
 cmake --build build-test-clean --target test-udt_cpp11 \
   test-serialization_cpp11 test-conversions_cpp17 -j2
+cmake --build build-test-clean --target test-static_reflection_cpp26 -j2
+./build-test-clean/tests/test-static_reflection_cpp26
 ```
 
 The full `ci_single_binaries` target could not be built in this sandbox

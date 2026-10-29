@@ -31,9 +31,11 @@ catch-all/enum core integration were removed. Reflection is **add-on-only**:
 `<nlohmann/reflection_to_json.hpp>` (legacy refl2 codec, explicit include only),
 `<nlohmann/reflection_binary.hpp>` / `reflection_json.hpp` (legacy binary
 mirror, explicit include only). `single_include/nlohmann/json.hpp` is
-regenerated and matches `develop`; the new add-on is not amalgamated. The
-historical milestone paragraphs below describe earlier branch states and are
-not current contracts. See `docs/static-reflection/CORE_CLEANUP_2026-10.md`
+regenerated and matches `develop`; the new add-on is not amalgamated.
+`tests/CMakeLists.txt` is `develop` plus one C++26 doctest target
+(`test-static_reflection_cpp26`) for the flat-struct extension. The historical
+milestone paragraphs below describe earlier branch states and are not current
+contracts. See `docs/static-reflection/CORE_CLEANUP_2026-10.md`
 and `docs/static-reflection/FLAT_STRUCT_REFLECTION.md`.
 
 Status: M0–M3 (reflection) complete & verified; M4 verdict: reflection does not

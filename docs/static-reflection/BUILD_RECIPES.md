@@ -214,17 +214,23 @@ cmake --build build-test --target test-udt_cpp11 test-serialization_cpp11 \
 ./build-test/tests/test-udt_cpp11
 ./build-test/tests/test-serialization_cpp11
 ./build-test/tests/test-conversions_cpp17
+cmake --build build-test --target test-static_reflection_cpp26 -j2
+./build-test/tests/test-static_reflection_cpp26
 ```
 
-`tests/CMakeLists.txt` matches `develop`: there is no C++26 reflection doctest
-target and no concepts dual-path target in the clean-core tree.
+`tests/CMakeLists.txt` is `develop` plus the C++26
+`test-static_reflection_cpp26` target, which compiles
+`tests/src/unit-static_reflection.cpp` against the standalone
+`<nlohmann/reflection.hpp>` with `-freflection`. The old catch-all doctest,
+gate-on regression targets, and concepts dual-path target are gone.
 
 ### Static-reflection add-on fixtures
 
-Reflection tests are standalone add-on fixtures, not CTest targets:
-`tests/static-reflection/reflection_flat_struct.cpp` (the supported extension),
-explicit `refl2::codec` probes, binary-mirror fixtures, and the compile-fail
-harness (`GXX=g++-16 bash tests/static-reflection/compile_fail.sh`). See
+Reflection tests are the C++26 doctest target above plus standalone add-on
+fixtures: `tests/static-reflection/reflection_flat_struct.cpp` (the supported
+extension), explicit `refl2::codec` probes, binary-mirror fixtures, and the
+compile-fail harness (`GXX=g++-16 bash
+tests/static-reflection/compile_fail.sh`). See
 `tests/static-reflection/README.md` and `CORE_CLEANUP_2026-10.md` for the
 supported/legacy split.
 
