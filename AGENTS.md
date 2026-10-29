@@ -13,130 +13,42 @@ demand, not up front).
 
 ## 1. What this branch is
 
-Two coupled goals:
+One goal survives: a **small, opt-in, C++26 static-reflection add-on** that
+serializes annotated flat structs through the public `basic_json` API, proposed
+upstream as a reviewable first PR.
 
-1. **Static reflection (P2996)** — explore rewriting the tagged-union core with
-   C++26 reflection, as a self-contained study (not a replacement of the C++11
-   library).
-2. **C++20 concepts modernization** — replace hand-written SFINAE detection with
-   concepts for the pure-category overloads in the serialization layer, under a
-   `JSON_HAS_CPP_20` dual path.
+**Current state.** The only reflection code on the branch is
+`include/nlohmann/reflection.hpp` — an explicit add-on that `json.hpp` and the
+amalgamated single header do not include, opt-in per type
+(`struct [[=nlohmann::json_serializable{}]] S`), public API only. The four core
+headers that earlier work had modified (`detail/input/lexer.hpp`,
+`detail/input/binary_reader.hpp`, `detail/conversions/{to,from}_json.hpp`) are
+back to the `develop` baseline, the C++20 concepts layer is gone, and
+`single_include/nlohmann/json.hpp` matches `develop`. `tests/CMakeLists.txt` is
+`develop` plus one C++26 doctest target (`test-static_reflection_cpp26`).
+Contract and test matrix: `docs/static-reflection/FLAT_STRUCT_REFLECTION.md`;
+how it got here: `CORE_CLEANUP_2026-10.md`.
 
-**Current state (2026-10-29, clean-core)**: the four core headers that used to
-be modified (`detail/input/lexer.hpp`, `detail/input/binary_reader.hpp`,
-`detail/conversions/to_json.hpp`, `detail/conversions/from_json.hpp`) are back
-to the `develop` baseline. The C++20 concepts layer and the refl2
-catch-all/enum core integration were removed. Reflection is **add-on-only**:
-`<nlohmann/reflection.hpp>` is the only reflection header under `include/` — the
-supported flat-struct extension with per-type annotation. The legacy refl2 codec
-and the binary-mirror headers were **removed from this branch** and are parked,
-unchanged, on the `legacy/reflection-experiments` branch together with their
-experiments. `single_include/nlohmann/json.hpp` is
-regenerated and matches `develop`; the new add-on is not amalgamated.
-`tests/CMakeLists.txt` is `develop` plus one C++26 doctest target
-(`test-static_reflection_cpp26`) for the flat-struct extension. The historical
-milestone paragraphs below describe earlier branch states and are not current
-contracts. See `docs/static-reflection/CORE_CLEANUP_2026-10.md`
-and `docs/static-reflection/FLAT_STRUCT_REFLECTION.md`.
+**Retired.** The branch previously carried a much larger exploration: a
+wide-open `refl2` catch-all wired into `detail/{to,from}_json`, an annotation
+layer (`json_name`/`json_ignore`/`json_default`), enum string mapping,
+reflection-driven MessagePack/UBJSON/BSON/CBOR/BJData codecs, and a
+reflection-backed tagged union. All of it reached `basic_json`'s private
+`json_value` layout through `access_context::unchecked()` — which the upstream
+maintainer has ruled out of scope — and all of it changed behavior for types
+that never opted in. Its code, milestone reports, benchmarks, measurement
+snapshots and defect reproductions are on the
+**`legacy/reflection-experiments`** branch. Do not reintroduce them here.
 
-Status: M0–M3 (reflection) complete & verified; M4 verdict: reflection does not
-replace type_traits, classification in `docs/static-reflection/M4_ASSESSMENT.md`;
-to_json concepts dual-path landed and committed. **M5 shipped**: the refl2
-codec moved into `include/nlohmann/reflection_to_json.hpp` (new experimental
-header) with a `json_name`/`json_ignore`/`json_default` annotation layer, and
-is wired into `detail::{to,from}_json` as reflection-gated catch-alls
-(`__cpp_impl_reflection && __cpp_lib_reflection`, i.e. only g++-16
-`-std=c++26 -freflection`) — arbitrary reflectable structs serialize
-bidirectionally with zero user code, replacing the NLOHMANN_DEFINE_TYPE_*
-macro family (Scenario B of EVALUATION.md; the core catch-all integration was
-removed in 2026-10); **M6**: enumerator-level
-`json_name` annotations replace NLOHMANN_JSON_SERIALIZE_ENUM (compile-time
-enumerator tables; unannotated enums keep the integer path, zero drift);
-**M4B**: the remaining binary formats of the value_t -> byte-code tables
-milestone — reflection-driven MSGPACK / UBJSON (no-optimization mode) / BSON
-writers in `reflection_json.hpp` (primary codes from the reflection-generated
-`kMsgpackCodes`/`kUbjsonCodes`/`kBsonCodes` tables, differential-tested
-byte-identical by `m4_binary.cpp`); **M4B-2**: the BSON READ direction —
-`reflection_bson_parser` dispatches element types through the
-reflection-generated `kBsonsLoad` reverse table (byte code -> {union slot,
-payload kind}), the mirror image of the writer, differential-tested
-byte-identical by `m4b_bson_reader.cpp`; **M4D**: the tagged-union API
-surface is completed in `basic_json_reflection` — `type_name`/`size`/`empty`/
-`at`/`erase`/`clear`/`swap`/all six comparison operators — plus the
-reflection-generated value_t name & ordering tables (`kValueTNames`/
-`kValueTTypeNames`/`kValueTWeights` + `value_t_order`/`value_t_less`) that
-replace the hand-written `value_t.hpp order[]`/`type_name()` switch inside
-the reflection header (identifier-keyed consteval, discarded stays
-unordered), differential-tested by `m4d_api.cpp` (1411 checks, ASan clean);
-**M4E**: the UBJSON write direction is completed — `reflection_ubjson_optimized_serializer`
-adds the `'#'` count / `'$'` type optimized modes (use_type requires
-use_count), the BJData dialect (all numbers/prefixes little-endian, the
-`'u'`/`'m'`/`'M'` width rungs, the bjdx `'$'`-exclusion list, draft3's `'B'`
-binary marker) and the JData ndarray encoding, differential-tested
-byte-identical by `m4e_ubjson_opt.cpp` (630 checks, ASan clean); **M4B-3**:
-the CBOR / MessagePack / UBJSON / BJData READ directions —
-`reflection_cbor_parser` / `reflection_msgpack_parser` /
-`reflection_ubjson_parser` dispatch through the `kCborLoads` /
-`kMsgpackLoads` / `kUbjsonLoads` reverse tables, covering duplicate-key
-last-wins, CBOR store-tag full uint64 subtypes, indefinite/nested strings,
-UBJSON optimized containers, BJData ndarray decode, and library-lexer
-high-precision numbers — differential-tested byte-identical by
-`m4f_binary_readers.cpp` (671 checks, ASan clean); **M7**:
-top-level `std::variant` support in the refl2 codec (`reflection_to_json.hpp`)
-— the oneof wire format `{"index":N,"value":...}`, member recursion, and the
-interaction with the M5 exclusion set/circularity defenses (a `json`
-alternative stays excluded), verified by `probe_variant.cpp` (39 checks,
-ASan clean); **M4D-2**: the tagged-union iteration surface —
-`reflection_iterator<IsConst>` (object/array/primitive modes, mirroring
-iter_impl's 12 switches via type routing), `begin`/`end`/`rbegin`/`rend`,
-`operator[]` (null implicit conversion + array fill-up), `find`/`contains`/
-`count`, `erase(iterator)`/`erase(first,last)` — differential-tested by
-`m4d2_iterators.cpp` (50 checks, ASan clean).
-**Hardening & alignment** (later session): refl2 cold-path fixes — the
-array-like from_json gained an `insert` branch (std::set members were a
-compile error) and `json_name` a consteval ctor with a key-length
-static_assert; library-dedicated array types (`B::binary_t` / C array /
-`std::forward_list` / `std::valarray` / `std::u8string`) now route through
-the adl branch via `is_library_dedicated_array` (they were mis-serialized
-as number arrays / static_assert / compile-error / abort); a negative
-compile-fail harness (`compile_fail/`, auto-discovered cases) plus runtime error-path
-(`probe_negative_runtime.cpp`) and upstream type-surface
-(`probe_type_alignment.cpp`) probes landed. The C++20 concepts modernization
-was completed before the 2026-10 cleanup: the to_json boolean overload was
-`concepts::boolean_like<T,B>` (the last pure-category overload left on
-enable_if); the whole concepts layer was removed by the clean-core refactor.
-The main doctest suite is green (test-udt_cpp11 / test-serialization_cpp11 /
-test-conversions_cpp17).
-**Review pass (2026-08)**: a code review of the unmerged work found and fixed 20 defects —
-most importantly that enabling `JSON_USE_REFLECTION` broke 4 upstream doctest TUs
-(opaque enum -> `std::meta::exception`, lost `noexcept`, a self-dependent atomic
-constraint, the M7 variant invariant), plus `std::abort()` on malformed input, a
-dangling `rbegin()` reference, and JSON/CBOR/BSON output divergences. Top-level
-`std::variant` is now gated behind `JSON_USE_REFLECTION_VARIANT`, gate-on regression
-targets `test-reflection_*_cpp26` compile the upstream TUs with the gate enabled, and
-the full report with verification commands is `docs/static-reflection/REVIEW_2026-08.md`.
-**Standalone flat-struct extension (2026-10, first slice)**: `include/nlohmann/reflection.hpp`
-is an explicit add-on (`json.hpp` and `single_include` do not include it). It
-adds a per-type opt-in `struct [[=nlohmann::json_serializable{}]] S` and a
-small flat-struct serializer built only on the public `basic_json` API
-(`object()`/`operator[]`/`at()`/`get<T>()`) via a constrained
-`adl_serializer<T, void>` partial specialization. Unannotated types keep the
-current behavior; the extension is independent of the legacy
-`JSON_USE_REFLECTION` wide-open catch-all. On non-P2996 toolchains the header
-is inert so the C++11 per-header self-containment check does not regress.
-Scope and test matrix: `docs/static-reflection/FLAT_STRUCT_REFLECTION.md`.
-Design:
-`docs/static-reflection/M5_REFLECTION_TO_JSON.md` (M5/M6),
-`docs/static-reflection/M4D_API_SURFACE.md` (M4D),
-`docs/static-reflection/M4E_UBJSON_OPT.md` (M4E),
-`docs/static-reflection/M4B3_BINARY_READERS.md` (M4B-3),
-`docs/static-reflection/UPSTREAM_INTEGRATION_PLAN.md` (upstream integration strategy),
-`docs/static-reflection/M7_VARIANT.md` (M7),
-`docs/static-reflection/M4D2_ITERATORS.md` (M4D-2),
-`docs/static-reflection/FLAT_STRUCT_REFLECTION.md` (standalone flat-struct
-extension),
-`docs/static-reflection/CORE_CLEANUP_2026-10.md` (clean-core refactor);
-verified facts: `docs/static-reflection/VERIFIED_FACTS.md`.
+Kept because it still applies: the verified compiler facts
+(`VERIFIED_FACTS.md`), the build and toolchain recipes (`BUILD_RECIPES.md`),
+the upstream plan with the maintainer's binding constraints
+(`UPSTREAM_INTEGRATION_PLAN.md`), and the compile-fail / docs-check harnesses
+under `tests/static-reflection/`.
+
+**Next step**, per the maintainer's process: open an issue proposing the
+minimal API (header name, annotation name, macro name) before writing more
+code.
 
 ## 2. Safety boundaries (non-negotiable)
 
@@ -161,18 +73,19 @@ Rules first — the exact commands for the highlighted items are in
   remaining fixtures under `tests/static-reflection/`, and the docs under
   `docs/static-reflection/`. The legacy reflection code lives on the
   `legacy/reflection-experiments` branch — do not reintroduce it here.
-- **Every new overload / concept / trait rewrite must be validated** by the
-  differential / zero-drift probes outlined in `M4_ASSESSMENT.md` §7. The burden
-  is on the change to prove byte-identical behavior, not on reviewers to trust it.
+- **Every behavior claim must be validated, not asserted.** The burden is on the
+  change to prove it: for the extension that means the runtime fixture
+  (`reflection_flat_struct.cpp`, including the `single_include` layout), the
+  negative compile harness (`compile_fail.sh`), the docs check
+  (`check_docs_examples.sh`), and the doctest target. Anything claiming
+  byte-identical output must show the comparison.
 - **Session scratch files live in `.tmp/` or `build/scratch/` (both
   gitignored).** `/tmp` does not survive across tool invocations in this
   environment — never rely on it for anything you need again (experiment
   TUs, negative compile cases, one-off probes, measurement artifacts).
   `.tmp/` is for session drafts/experiments, `build/scratch/` for
-  measurement artifacts (bench binaries, driver output). Anything
-  reproducible belongs in the repo: fixtures under
-  `tests/static-reflection/`, measurement snapshots under
-  `docs/static-reflection/data/` (see EVALUATION.md §5).
+  measurement artifacts. Anything reproducible belongs in the repo: fixtures and
+  harnesses under `tests/static-reflection/`.
 
 ## 3. Commit conventions
 
@@ -185,14 +98,14 @@ Rules first — the exact commands for the highlighted items are in
   Verify with `git log --format='%h %s%n%b' -1 <sha> | grep Signed-off-by`.
 - The branch is a work-in-progress experiment; commits are local until you push.
 - **Pushing from this sandboxed environment**: run `git push` with escalated
-  sandbox permissions (`danger-full-access`). Under the default file policy it
-  fails with
-  `Bad owner or permissions on /etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf`
-  because the sandbox presents the system ssh config as `nobody:nogroup` and
-  ssh refuses to read it. The same command succeeds with escalation
-  (verified: `git push origin feature/static-reflection` -> "Everything
-  up-to-date"). Do not work around it by chowning the system file or by
-  persisting `core.sshCommand` in the checkout.
+  sandbox permissions (`danger-full-access`); the default policy blocks the
+  network and ssh refuses the sandbox-presented system ssh config. Both
+  `origin` (nlohmann/json) and `upstream` (the fork) are configured as HTTPS
+  mirrors (`ghfast.top`), which need credentials this workspace does not have.
+  Push to the fork over SSH with an explicit URL instead — the key is already
+  registered — without changing the remote configuration:
+  `git push git@github.com:joker-charles/json.git <branch>`
+  Never push to `origin`; it is the upstream project.
 
 ## 4. Progressive reading guide (read the reference on demand)
 
@@ -218,34 +131,24 @@ reason to skip it. Load it when you are about to:
 |---|---|
 | Before writing ANY reflection/concepts/serialization code | `docs/static-reflection/VERIFIED_FACTS.md` — verified compiler/type facts (do not re-derive them); generic C++26 facts live in the `modern-cpp` skill |
 | Configuring, building, reproducing, measuring | `docs/static-reflection/BUILD_RECIPES.md` — toolchain, fixture build lines, amalgamate, test suite |
-| Milestone design & verification methodology | `FEASIBILITY.md` (M0–M3) / `M4_ASSESSMENT.md` / `M5_REFLECTION_TO_JSON.md` / `EVALUATION.md` — see §5 |
+| The extension's contract / what to propose upstream | `FLAT_STRUCT_REFLECTION.md` / `UPSTREAM_INTEGRATION_PLAN.md` — see §5 |
 | Working on the main library | §2 safety boundaries above + `BUILD_RECIPES.md` recipes |
 
 ## 5. Doc map
 
-- `docs/static-reflection/VERIFIED_FACTS.md` — verified toolchain/compiler
-  facts for this branch (the long §3 reference, loaded on demand).
+- `docs/static-reflection/FLAT_STRUCT_REFLECTION.md` — the supported
+  extension: per-type `[[=nlohmann::json_serializable{}]]`, public-API-only
+  serializer, scope, test matrix, non-goals.
+- `docs/static-reflection/UPSTREAM_INTEGRATION_PLAN.md` — what PR 1 contains,
+  the maintainer's binding constraints, the open naming questions for the issue.
+- `docs/static-reflection/VERIFIED_FACTS.md` — verified toolchain and P2996
+  facts for this repo (do not re-derive).
 - `docs/static-reflection/BUILD_RECIPES.md` — toolchain, fixture build lines,
-  amalgamate, doctest suite recipes.
-- `docs/static-reflection/FEASIBILITY.md` — P2996 reflection redesign (M0–M3),
-  the mirror-union route, verified patterns & pitfalls.
-- `docs/static-reflection/M4_ASSESSMENT.md` — type_traits classification
-  (A/B/C classes), the layered concepts strategy, composite-concept verdicts.
-- `docs/static-reflection/M5_REFLECTION_TO_JSON.md` — the reflection-driven
-  bidirectional serializer replacing the NLOHMANN_DEFINE_TYPE_* macro family
-  (M5) and the enum string mapping replacing NLOHMANN_JSON_SERIALIZE_ENUM
-  (M6): the catch-all wiring, exact-probe exclusion sets, circularity
-  defenses, the annotation layer, macro↔annotation semantic differences,
-  and the verification matrix.
-- `docs/static-reflection/FLAT_STRUCT_REFLECTION.md` — the standalone
-  `<nlohmann/reflection.hpp>` flat-struct extension: per-type
-  `[[=nlohmann::json_serializable{}]]`, public-API-only serializer,
-  first-slice scope and test matrix.
-- `docs/static-reflection/CORE_CLEANUP_2026-10.md` — the 2026-10 clean-core
-  refactor: core headers restored to `develop`, concepts layer removed,
-  add-on-only layout, verification, and legacy test exclusions.
+  harnesses, doctest target, amalgamate rules.
+- `docs/static-reflection/CORE_CLEANUP_2026-10.md` — how the branch reached its
+  current shape (core restored, legacy code parked).
 - `docs/static-reflection/PRIVATE_MEMBER_REFLECTION_PLAN.md` — planned next
-  slice for explicit private-member access (`json_serializable_private`) while
-  keeping `basic_json` on the public API.
+  slice for explicit private-member access while keeping `basic_json` on the
+  public API.
 - Authoritative C++ feature/API facts (header map, signatures, reflection index):
   the **`modern-cpp` skill**; the local offline cppreference if present.
