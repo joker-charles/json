@@ -155,7 +155,8 @@ The annotation must follow the class key: `struct [[=nlohmann::json_serializable
   `json_default`);
 - enum-level string mapping and variant reflection;
 - binary formats (MessagePack, UBJSON/BJData, BSON, CBOR);
-- private members, base classes, unions, anonymous members;
+- private members, base classes, unions, anonymous members (private-member
+  access is planned separately in `PRIVATE_MEMBER_REFLECTION_PLAN.md`);
 - recursive reflection of unannotated nested structs;
 - custom `basic_json` serializer template parameters;
 - a general C++26 CI matrix (the single `test-static_reflection_cpp26`

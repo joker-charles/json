@@ -243,5 +243,8 @@ reason to skip it. Load it when you are about to:
 - `docs/static-reflection/CORE_CLEANUP_2026-10.md` — the 2026-10 clean-core
   refactor: core headers restored to `develop`, concepts layer removed,
   add-on-only layout, verification, and legacy test exclusions.
+- `docs/static-reflection/PRIVATE_MEMBER_REFLECTION_PLAN.md` — planned next
+  slice for explicit private-member access (`json_serializable_private`) while
+  keeping `basic_json` on the public API.
 - Authoritative C++ feature/API facts (header map, signatures, reflection index):
   the **`modern-cpp` skill**; the local offline cppreference if present.
