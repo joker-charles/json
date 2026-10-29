@@ -159,7 +159,7 @@ message(STATUS "${msg}")
 # *DO* use json_test_set_test_options() above this line
 
 # Standalone flat-struct reflection extension: -freflection only on this
-# C++26 target (never in global flags; see BUILD_RECIPES.md).
+# C++26 target (never in global flags; see docs/static-reflection/README.md).
 if(compiler_supports_cpp_26)
     json_test_set_test_options(test-static_reflection
         CXX_STANDARDS 26
