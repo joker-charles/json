@@ -2,254 +2,142 @@
 
 !!! warning "Experimental"
 
-    Static reflection support is an **experimental, opt-in extension** developed on the
+    Static reflection is an **experimental, opt-in add-on** developed on the
     `feature/static-reflection` branch of the library. It builds on C++26 static
-    reflection (P2996) and is not part of the default library: **nothing changes**
-    unless you explicitly define [`JSON_USE_REFLECTION`](../api/macros/json_use_reflection.md),
-    and even then only the classes you annotate are affected.
+    reflection (P2996) and is **not part of the default library**: it lives in a
+    separate header that `<nlohmann/json.hpp>` and the amalgamated single header
+    do **not** include. Without that include, nothing changes for anyone.
 
-## Why opt-in
+    The extension is C++26-only and, at the time of writing, has exactly one
+    implementation (GCC 16 with `-freflection`). Treat the API as unstable until
+    a second implementation exists.
 
-Making "any reflectable struct serializes automatically" the default would be a
-behavior change for existing user code. The extension therefore follows the
-feature-macro pattern of the project: the reflection path is compiled in only
-when the user asks for it, every behavior change is scoped to explicitly
-annotated types, and the unannotated library behaves exactly as before.
+## The header is explicit, and so is every type
 
-## Enabling
-
-The extension requires a compiler with P2996 support (at the time of writing:
-GCC 16 with `-std=c++26 -freflection`) and the opt-in macro:
+The extension is a single add-on header:
 
 ```cpp
-#define JSON_USE_REFLECTION
 #include <nlohmann/json.hpp>
+#include <nlohmann/reflection.hpp>   // not pulled in by json.hpp
 ```
 
-Without the macro (or without a P2996 compiler), the library compiles and
-behaves byte-identically to the default build.
-
-## Serializing annotated structs
-
-Annotate a class with `[[=refl2::json_serializable{}]]` **after** the
-`struct`/`class` keyword to give it reflection-driven serialization:
+Including it changes nothing by itself. Participation is **per type**: a class
+takes part only if it carries the opt-in annotation
 
 ```cpp
-struct [[=refl2::json_serializable{}]] point
+struct [[=nlohmann::json_serializable{}]] point
 {
-    double x;
-    double y;
+    double x{};
+    double y{};
+};
+```
+
+Every type without that annotation behaves exactly as it does today — it is not
+serializable unless you provide `to_json`/`from_json` or an
+[`adl_serializer`](../api/adl_serializer/index.md) specialization.
+
+## Serializing an annotated struct
+
+Once annotated, a flat struct needs no macro and no hand-written serializer:
+
+```cpp
+struct [[=nlohmann::json_serializable{}]] point
+{
+    double x{};
+    double y{};
 };
 
 json j = point {1.0, 2.0};            // {"x":1.0,"y":2.0}
 auto p = j.get<point>();              // round-trip
 ```
 
-No macro, no hand-written `to_json`/`from_json`, and no
-[`adl_serializer`](../api/adl_serializer/index.md) specialization needed. The
-output is byte-identical to what the
+The output is byte-identical to what the
 [`NLOHMANN_DEFINE_TYPE_*`](../api/macros/nlohmann_define_type_non_intrusive.md)
-macro family produces for the same type (differentially tested).
+macro family produces for the same type (asserted by the `unit-static_reflection`
+doctest target).
 
-## Annotations
+The annotation must follow the `struct`/`class` keyword (`struct [[=...]] S`,
+not `[[=...]] struct S`).
 
-| Annotation | Level | Semantics |
-|---|---|---|
-| `[[=refl2::json_serializable{}]]` | type | opt the class into the reflection path (the only way a class participates) |
-| `[[=refl2::json_name{"key"}]]` | member | override the JSON key (the `_WITH_NAMES` macro semantics) |
-| `[[=refl2::json_ignore{}]]` | member | exclude the member from both directions |
-| `[[=refl2::json_default{}]]` | member | `from_json` falls back to `T{}.member` when the key is missing (the `_WITH_DEFAULT` macro semantics) |
+## What a member may be
+
+The serializer is a constrained
+[`adl_serializer<T, void>`](../api/adl_serializer/index.md) partial
+specialization built **only on the public interface** of `basic_json`
+(`object()`, `operator[]`, `at()`, `get<T>()`). It never reaches into
+`basic_json`'s private layout.
+
+Each member is serialized through the normal path, so a member may be:
+
+- a scalar or string,
+- a library type such as `std::vector<point>`, `std::map<std::string, point>`,
+  `std::optional<int>` or `std::array<int, 3>`,
+- another annotated struct,
+- any type with your own ADL `to_json`/`from_json`.
 
 ```cpp
-struct [[=refl2::json_serializable{}]] person
+struct [[=nlohmann::json_serializable{}]] outer
 {
-    std::string name;
-    int age [[=refl2::json_name{"years"}]];
-    std::string ssn [[=refl2::json_ignore{}]];
-    int score [[=refl2::json_default{}]];
+    int id{};
+    point p;
+    std::vector<point> ps;
+    std::optional<int> opt;
 };
+// {"id":1,"opt":9,"p":{"x":1.0,"y":2.0},"ps":[{"x":3.0,"y":4.0}]}
 ```
 
-Annotations are P3394R4 value annotations. The type-level annotation must
-follow the `struct` keyword (`struct [[=...]] S`, not `[[=...]] struct S`).
+A member whose type has no serialization path is a **compile-time error with an
+actionable message**, not a silently omitted key:
 
-## Enum string mapping
-
-An enum whose enumerators carry `[[=refl2::json_name{"..."}]]` annotations is
-mapped to strings, replacing
-[`NLOHMANN_JSON_SERIALIZE_ENUM`](../api/macros/nlohmann_json_serialize_enum.md):
-
-```cpp
-enum class color
-{
-    red [[=refl2::json_name{"RED"}]],
-    green [[=refl2::json_name{"GREEN"}]]
-};
-
-json j = color::green;                // "GREEN"
-auto c = j.get<color>();
+```text
+error: static assertion failed: json_serializable member is not JSON-serializable;
+provide ADL to_json() or annotate the member type
 ```
 
-An unannotated enum keeps the integer path byte-for-byte.
+This is the property the extension exists for: the
+`NLOHMANN_DEFINE_TYPE_*` macro family fails *open* — a member left out of the
+macro list is silently dropped and never reported. Reflection sees every member,
+so the mistake surfaces at compile time.
 
-## std::variant
+## Scope of the first slice
 
-A `std::variant` **member** of an annotated struct is serialized as the oneof
-wire format `{"index": <active alternative index>, "value": <alternative>}`:
+Deliberately small:
 
-```cpp
-struct [[=refl2::json_serializable{}]] message
-{
-    std::variant<int, std::string> payload;
-};
+- flat structs only: public, non-static data members; no base classes, no
+  unions, no private/protected members, no anonymous members (each reported by
+  its own `static_assert`);
+- no member rename/skip/default annotations, no enum string mapping, no
+  `std::variant` handling, no binary formats.
 
-json j = message {42};                // {"payload":{"index":0,"value":42}}
-```
+Those are later slices and are not part of this header.
 
-A **top-level** `std::variant` additionally needs
-[`JSON_USE_REFLECTION_VARIANT`](../api/macros/json_use_reflection.md#top-level-stdvariant-separate-switch),
-because upstream guarantees that `basic_json` is *not* constructible from a
-`std::variant` (`tests/src/unit-regression2.cpp`, issue #1292) and that
-invariant is preserved by default.
+## Not included
 
-## Inspecting annotations from your own code
+The following were explored on this branch but are **not** features of
+`<nlohmann/reflection.hpp>`, and are documented on their own macro pages
+([`JSON_USE_REFLECTION`](../api/macros/json_use_reflection.md),
+[`JSON_HAS_CPP_26_REFLECTION`](../api/macros/json_has_cpp_26_reflection.md)):
 
-The annotation types are the user-facing half of the extension; the queries
-below are the other half. They let you build annotation-driven tools *outside*
-the codec — JSON Schema generation, validation, documentation, code generation —
-without reaching into an internal namespace.
+- the `JSON_USE_REFLECTION` wide-open catch-all and the `refl2` codec that
+  provides it (`<nlohmann/reflection_to_json.hpp>`, explicit include only,
+  legacy);
+- annotation-driven member renaming/skipping and enum mapping;
+- reflection-driven MessagePack / UBJSON / BSON readers and writers.
 
-| Query | Result |
-|---|---|
-| `refl2::member_count<T>` | number of **serialized** members (members marked `json_ignore` are already excluded) |
-| `refl2::member<T, I>` | the `I`-th serialized member, as a `std::meta::info` (spliceable) |
-| `refl2::member_key<T, I>` | its JSON key — the `json_name` value if present, else the identifier |
-| `refl2::member_has_default<T, I>` | whether it carries `[[=refl2::json_default{}]]` |
-| `refl2::has_annotation<Ann>(entity)` | whether a member or enumerator carries annotation `Ann` |
-| `refl2::enum_count<E>()`, `refl2::enum_has_annotations<E>()`, `refl2::enum_is_enumerable<E>()` | enum facts (guard with `enum_is_enumerable` first — an opaque enum is a hard error) |
-| `refl2::enum_string<E, I>`, `refl2::enum_value<E, I>` | the `I`-th enumerator's mapped string and underlying value |
-
-All of these are compile-time, so a tool built on them costs nothing at run
-time. Because `member_count`/`member`/`member_key` report what the codec
-actually serializes, a tool built on them cannot disagree with the wire format
-about *which* members exist or *what they are called* — that agreement is
-asserted by the `probe_json_schema.cpp` fixture under
-`tests/static-reflection/` on this branch (see the
-[repository](https://github.com/nlohmann/json/blob/feature/static-reflection/tests/static-reflection/probe_json_schema.cpp)).
-
-### Example: generating a JSON Schema
-
-A reflective JSON Schema generator is about 60 lines on top of these queries —
-the annotations already carry everything a schema needs. This is the property
-half; a real generator would add arrays, `optional`, `std::variant`, and ranges.
-
-```cpp
-namespace schema
-{
-template<typename T>
-nlohmann::json object_schema();
-
-template<typename M>
-nlohmann::json scalar_schema()
-{
-    using U = std::remove_cvref_t<M>;
-    if constexpr (std::is_same_v<U, bool>)                  return {{"type", "boolean"}};
-    else if constexpr (std::is_integral_v<U>)               return {{"type", "integer"}};
-    else if constexpr (std::is_floating_point_v<U>)         return {{"type", "number"}};
-    else if constexpr (std::is_same_v<U, std::string>)      return {{"type", "string"}};
-    else                                                    return object_schema<U>();
-}
-
-template<typename T, std::size_t... I>
-nlohmann::json object_schema_impl(std::index_sequence<I...>)
-{
-    nlohmann::json props = nlohmann::json::object();
-    nlohmann::json required = nlohmann::json::array();
-
-    (([&]
-    {
-        using M = typename [: std::meta::type_of(refl2::member<T, I>) :];
-        const std::string key{refl2::member_key<T, I>.data()};
-        props[key] = scalar_schema<M>();
-        // a json_default member may be absent from the input
-        if constexpr (!refl2::member_has_default<T, I>)
-        {
-            required.push_back(key);
-        }
-    }()), ...);
-
-    nlohmann::json s{{"type", "object"}, {"properties", props}};
-    if (!required.empty())
-    {
-        s["required"] = required;
-    }
-    return s;
-}
-
-template<typename T>
-nlohmann::json object_schema()
-{
-    static_assert(refl2::has_annotation<refl2::json_serializable>(^^T),
-                  "requires struct [[=refl2::json_serializable{}]] T");
-    return object_schema_impl<T>(std::make_index_sequence<refl2::member_count<T>>{});
-}
-} // namespace schema
-```
-
-For the `person` struct above it produces (key order as `nlohmann::json` sorts
-objects):
-
-```json
-{
-  "properties": {
-    "location": {
-      "properties": { "x": { "type": "number" }, "y": { "type": "number" } },
-      "required": ["x", "y"],
-      "type": "object"
-    },
-    "name": { "type": "string" },
-    "score": { "type": "integer" },
-    "years": { "type": "integer" }
-  },
-  "required": ["name", "years", "location"],
-  "type": "object"
-}
-```
-
-`ssn` is absent (from `json_ignore`, and so are its index and the schema's
-knowledge of it), `age` appears as `years` (from `json_name`), and `score`
-appears in `properties` but not in `required` (from `json_default`).
-
-## Known divergences from the macro family
-
-The extension is not a byte-for-byte replacement of every macro semantic:
-
-- An annotated enum's `from_json` accepts any integer and throws
-  `type_error.302` for an unknown string, where
-  [`NLOHMANN_JSON_SERIALIZE_ENUM`](../api/macros/nlohmann_json_serialize_enum.md)
-  silently falls back to the first table entry.
-- `[[=refl2::json_default{}]]` falls back to a default-constructed `T{}` when
-  the key is missing; the `_WITH_DEFAULT` macro additionally falls back when
-  the whole JSON value is `null` (not an object).
+They remain separate experiments under `tests/static-reflection/` and are not
+part of the proposed upstream surface.
 
 ## Limitations
 
-- C++26 static reflection is required; the extension compiles only on
-  toolchains providing P2996 (GCC 16+ with `-freflection`).
-- Unions, pointers/self-referential types, and non-default-constructible
-  types on the `from_json` side are not supported (compile-time errors with
-  actionable messages).
-- Private/protected members are only serialized under the explicit
-  unchecked codec (`refl2::codec<true>`), mirroring the `_INTRUSIVE` macro's
-  friend privilege; the default path uses unprivileged reflection (public
-  members only).
-- The extension relies on the library's internal `basic_json::json_value`
-  layout via `access_context::unchecked()` — see the branch's design docs for
-  the stability rationale.
+- Requires a P2996 toolchain: GCC 16 with `-std=c++26 -freflection`. On any
+  other toolchain the header is **inert** — including it compiles, but
+  `nlohmann::json_serializable` does not exist, so annotated code fails at the
+  annotation. The C++11 build contract of the main library is untouched.
+- The extension is not covered by the amalgamated `single_include` header.
+- Experimental: the API may change as further compiler implementations land.
 
 ## Further reading
 
-The design, verification methodology, and milestone reports live in the
-repository's `docs/static-reflection/` directory (not part of this website):
-`FEASIBILITY.md`, `M5_REFLECTION_TO_JSON.md`, `EVALUATION.md`, and
-`UPSTREAM_INTEGRATION_PLAN.md`.
+The design and verification material lives in the repository's
+`docs/static-reflection/` directory (not part of this website), starting with
+`FLAT_STRUCT_REFLECTION.md` and `CORE_CLEANUP_2026-10.md`.

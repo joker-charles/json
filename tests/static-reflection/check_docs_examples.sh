@@ -1,25 +1,20 @@
 #!/usr/bin/env bash
 # check_docs_examples.sh — keep the reflection feature page honest.
 #
-# docs/mkdocs/docs/features/reflection.md carries two fenced blocks that are
-# executable claims about the extension:
+# docs/mkdocs/docs/features/reflection.md carries executable claims about the
+# standalone extension (<nlohmann/reflection.hpp>). Nothing compiled them, so
+# the page could drift from the code silently. This harness closes that loop
+# for the claims the page actually makes:
 #
-#   * a ```cpp block defining `namespace schema` (the JSON Schema generator),
-#   * a ```json block showing what that generator produces for `person`.
+#   1. the annotated struct's documented output — the ```cpp block is extracted
+#      from the page VERBATIM, wrapped in the fixtures the page shows, and
+#      compiled and run; the JSON it prints must match what the page documents;
+#   2. per-type opt-in — an UNANNOTATED type must not become serializable;
+#   3. the actionable static_assert — a member with no serialization path must
+#      fail to compile with the message the page quotes.
 #
-# Nothing compiled them, so the page could drift from the code silently — the
-# documentation would keep asserting behaviour the library no longer had. This
-# harness closes that loop:
-#
-#   1. probe_json_schema.cpp is compiled AND run; it must print PROBE PASSED
-#      (it cross-checks the schema's keys against the codec's real output).
-#   2. the ```cpp block is extracted from the page VERBATIM, wrapped in the
-#      fixtures the page shows, compiled, and run.
-#   3. its output is compared against the ```json block in the page, parsed
-#      rather than string-compared so key order does not matter.
-#
-# A page edit that no longer compiles, or that documents output the code does
-# not produce, fails here.
+# (2) and (3) are negative claims, so they are checked by compiling and
+# requiring failure with the documented diagnostic, not by running.
 #
 # Usage:  GXX=g++-16 bash tests/static-reflection/check_docs_examples.sh
 # Requires: g++-16 (-std=c++26 -freflection) and python3.
@@ -30,7 +25,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$SCRIPT_DIR/../.." && pwd)"
 GXX="${GXX:-g++-16}"
 PAGE="${REPO}/docs/mkdocs/docs/features/reflection.md"
-FIXTURE="${SCRIPT_DIR}/probe_json_schema.cpp"
 OUT_DIR="${OUT_DIR:-${REPO}/build/scratch/docs-check}"
 INCS=(-std=c++26 -freflection -I"${REPO}/include")
 
@@ -48,30 +42,11 @@ check() { # name, rc
 }
 
 [ -f "${PAGE}" ] || { echo "error: feature page not found: ${PAGE}" >&2; exit 1; }
-[ -f "${FIXTURE}" ] || { echo "error: fixture not found: ${FIXTURE}" >&2; exit 1; }
 command -v "${GXX}" >/dev/null 2>&1 || { echo "error: compiler '${GXX}' not found" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "error: python3 required" >&2; exit 1; }
 
-echo "== probe_json_schema.cpp =="
-if "${GXX}" "${INCS[@]}" -O2 -o "${OUT_DIR}/probe_json_schema" "${FIXTURE}" 2>"${OUT_DIR}/probe.err"; then
-    if ! "${OUT_DIR}/probe_json_schema" >"${OUT_DIR}/probe.out" 2>&1; then
-        # the fixture's own cross-check failed: its schema and the codec
-        # disagree about the keys, which is the drift this guards against
-        check "fixture self-check FAILED (schema keys diverge from the codec)" 1
-        sed 's/^/        /' "${OUT_DIR}/probe.out" | head -5
-    elif ! grep -q 'PROBE PASSED' "${OUT_DIR}/probe.out"; then
-        check "fixture ran but did not report PROBE PASSED" 1
-    else
-        check "fixture compiles, runs and self-checks (schema keys == codec keys)" 0
-    fi
-else
-    check "fixture compiles" 1
-    sed 's/^/        /' "${OUT_DIR}/probe.err" | head -5
-fi
-
-echo "== features/reflection.md code block =="
+echo "== features/reflection.md: documented example =="
 python3 - "$PAGE" "$OUT_DIR" "$REPO" "$GXX" <<'PY'
-import json
 import re
 import subprocess
 import sys
@@ -79,38 +54,37 @@ import sys
 page_path, out_dir, repo, gxx = sys.argv[1:5]
 page = open(page_path, encoding="utf-8").read()
 
-cpp_blocks = [b for b in re.findall(r"```cpp\n(.*?)```", page, re.S) if "namespace schema" in b]
-json_blocks = [b for b in re.findall(r"```json\n(.*?)```", page, re.S) if '"properties"' in b]
-if not cpp_blocks or not json_blocks:
-    print("  [FAIL] could not find the schema code block and/or its output block")
+# The page's exemplar: the annotated struct plus its documented serialization.
+blocks = re.findall(r"```cpp\n(.*?)```", page, re.S)
+exemplar = [b for b in blocks if "json_serializable" in b and "double x" in b]
+if not exemplar:
+    print("  [FAIL] could not find the annotated-struct example block")
+    sys.exit(1)
+if "[[=refl2::" in page:
+    print("  [FAIL] the page still documents the legacy 'refl2::' namespace")
     sys.exit(1)
 
-# The page shows only the generator; the fixtures and main() below are the
-# rest of the example, kept here so the extracted block stays verbatim.
-harness = """#define JSON_USE_REFLECTION
-#include <nlohmann/json.hpp>
-#include <meta>
-#include <print>
+harness = """#include <nlohmann/json.hpp>
+#include <nlohmann/reflection.hpp>
+#include <cstdio>
+#include <optional>
 #include <string>
-#include <utility>
+#include <vector>
 
-""" + cpp_blocks[0] + """
-struct [[=refl2::json_serializable{}]] point { double x; double y; };
-struct [[=refl2::json_serializable{}]] person {
-    std::string name;
-    int age [[=refl2::json_name{"years"}]];
-    std::string ssn [[=refl2::json_ignore{}]];
-    int score [[=refl2::json_default{}]];
-    point location;
-};
-int main() { std::println("{}", schema::object_schema<person>().dump(2)); }
+""" + exemplar[0] + """
+int main()
+{
+    const nlohmann::json j = point{1.0, 2.0};
+    std::printf("%s\\n", j.dump().c_str());
+    const auto p = j.get<point>();
+    std::printf("%.1f %.1f\\n", p.x, p.y);
+}
 """
 
 src = f"{out_dir}/doc_example.cpp"
 open(src, "w", encoding="utf-8").write(harness)
 build = subprocess.run(
-    [gxx, "-std=c++26", "-freflection", f"-I{repo}/include",
-     "-o", f"{out_dir}/doc_example", src],
+    [gxx, *("-std=c++26", "-freflection"), f"-I{repo}/include", "-o", f"{out_dir}/doc_example", src],
     capture_output=True, text=True)
 if build.returncode != 0:
     print("  [FAIL] the page's cpp block does not compile")
@@ -123,26 +97,50 @@ if run.returncode != 0:
     print("  [FAIL] the page's cpp block compiles but does not run")
     sys.exit(1)
 
-# Compare parsed, not literal: nlohmann::json sorts object keys, and the page
-# is free to present them in any order as long as the document is the same.
-try:
-    produced = json.loads(run.stdout)
-    documented = json.loads(json_blocks[0])
-except json.JSONDecodeError as exc:
-    print(f"  [FAIL] could not parse produced or documented JSON: {exc}")
+expected = '{"x":1.0,"y":2.0}'
+lines = run.stdout.splitlines()
+if not lines or lines[0] != expected:
+    print("  [FAIL] the documented output is not what the code produces")
+    print(f"        produced  : {lines[0] if lines else '<no output>'}")
+    print(f"        documented: {expected}")
     sys.exit(1)
 
-if produced != documented:
-    print("  [FAIL] the documented JSON is not what the code produces")
-    print("        produced : " + json.dumps(produced, sort_keys=True))
-    print("        documented: " + json.dumps(documented, sort_keys=True))
-    sys.exit(1)
-
-print("  [PASS] the page's cpp block compiles and its documented output matches")
+print("  [PASS] the annotated-struct example compiles and prints the documented JSON")
 sys.exit(0)
 PY
-# the python step prints its own [PASS]/[FAIL] line; only tally the result
-if [ "$?" -eq 0 ]; then pass=$((pass + 1)); else fail=$((fail + 1)); fi
+check "documented example" $?
+
+echo "== per-type opt-in (negative claim) =="
+cat > "${OUT_DIR}/unannotated.cpp" <<'EOF'
+#include <nlohmann/json.hpp>
+#include <nlohmann/reflection.hpp>
+struct plain { int x{}; };
+int main() { nlohmann::json j = plain{1}; }
+EOF
+if "${GXX}" "${INCS[@]}" -fsyntax-only "${OUT_DIR}/unannotated.cpp" 2>"${OUT_DIR}/unannotated.err"; then
+    check "an unannotated type stays non-serializable" 1
+else
+    check "an unannotated type stays non-serializable" 0
+fi
+
+echo "== actionable static_assert (negative claim) =="
+cat > "${OUT_DIR}/bad_member.cpp" <<'EOF'
+#include <nlohmann/json.hpp>
+#include <nlohmann/reflection.hpp>
+struct not_serializable { int v{}; };
+struct [[=nlohmann::json_serializable{}]] holder { not_serializable bad; };
+int main() { nlohmann::json j = holder{{1}}; j.dump(); }
+EOF
+if "${GXX}" "${INCS[@]}" -fsyntax-only "${OUT_DIR}/bad_member.cpp" 2>"${OUT_DIR}/bad_member.err"; then
+    check "a member with no serialization path is a compile error" 1
+else
+    if grep -q "json_serializable member is not JSON-serializable" "${OUT_DIR}/bad_member.err"; then
+        check "a member with no serialization path is a compile error with the documented message" 0
+    else
+        check "a member with no serialization path is a compile error with the documented message" 1
+        sed 's/^/        /' "${OUT_DIR}/bad_member.err" | head -5
+    fi
+fi
 
 printf '\nDOCS EXAMPLE CHECK: %d passed, %d failed\n' "$pass" "$fail"
 exit "$fail"
