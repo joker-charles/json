@@ -114,12 +114,11 @@ Those are later slices and are not part of this header.
 ## Not included
 
 The following were explored on this branch but are **not** features of
-`<nlohmann/reflection.hpp>`, and are documented on their own macro pages
-([`JSON_USE_REFLECTION`](../api/macros/json_use_reflection.md),
-[`JSON_HAS_CPP_26_REFLECTION`](../api/macros/json_has_cpp_26_reflection.md)):
+`<nlohmann/reflection.hpp>`, and are not part of the library at all:
 
 - the `JSON_USE_REFLECTION` wide-open catch-all and the `refl2` codec that
-  provides it — retired and removed from this branch;
+  provided it — retired and removed from this branch, along with its
+  `JSON_HAS_CPP_26_REFLECTION` macro;
 - annotation-driven member renaming/skipping and enum mapping;
 - reflection-driven MessagePack / UBJSON / BSON readers and writers.
 
