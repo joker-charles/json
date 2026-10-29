@@ -1,34 +1,28 @@
 # JSON_HAS_CPP_26_REFLECTION
 
+!!! warning "Removed"
+
+    **This macro is not defined on this branch.** It belonged to an earlier
+    experiment (`refl2`) that has been retired and removed.
+
+## What to use instead
+
+See [static reflection](../features/reflection.md). The supported extension
+does not need a feature macro: including `<nlohmann/reflection.hpp>` is the
+opt-in, and only annotated types are affected.
+
+## Why it was withdrawn
+
+The retired experiment defined `JSON_HAS_CPP_26_REFLECTION` to `1` at the end
+of its codec header once the compiler provided P2996 and the user had defined
+`JSON_USE_REFLECTION`. It existed only so that reflection-gated code inside
+`detail/conversions/{to,from}_json.hpp` could be guarded on one name.
+
+Both the macro and that gated code were removed, and the core conversion
+headers are back on the `develop` baseline, so nothing defines or consumes this
+name today. The retired code and its experiments are preserved on the
+`legacy/reflection-experiments` branch.
+
 ```cpp
-#define JSON_HAS_CPP_26_REFLECTION 1
+#define JSON_HAS_CPP_26_REFLECTION /* removed; no longer defined */
 ```
-
-Read-only indicator that the experimental
-[static reflection extension](../features/reflection.md) is active. It is
-defined to `1` by `reflection_to_json.hpp` when **both** of the following
-hold:
-
-- the compiler provides C++26 static reflection (P2996), i.e.
-  `__cpp_impl_reflection` and `__cpp_lib_reflection` are defined (GCC 16 with
-  `-std=c++26 -freflection`), and
-- the user defined [`JSON_USE_REFLECTION`](json_use_reflection.md).
-
-## Notes
-
-!!! warning "Experimental"
-
-    This macro and the extension behind it are experimental work on the
-    `feature/static-reflection` branch, not part of the released library.
-
-Users normally do not need this macro; it exists so the library's feature
-code (for example the M6 enum string mapping) can be guarded on one name
-instead of repeating the compiler-and-opt-in condition.
-
-It must **not** be defined by hand: the macro gates code in
-`detail/conversions/{to,from}_json.hpp` that refers to the `refl2` namespace,
-so defining it without including the extension header is a compile error
-(`'refl2' has not been declared`) rather than a no-op. It is defined at the
-**end** of `reflection_to_json.hpp`, after `namespace refl2` is complete,
-because the conversions headers are re-entered from that header's own includes
-(`adl_serializer.hpp`).

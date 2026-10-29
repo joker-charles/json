@@ -27,10 +27,11 @@ be modified (`detail/input/lexer.hpp`, `detail/input/binary_reader.hpp`,
 `detail/conversions/to_json.hpp`, `detail/conversions/from_json.hpp`) are back
 to the `develop` baseline. The C++20 concepts layer and the refl2
 catch-all/enum core integration were removed. Reflection is **add-on-only**:
-`<nlohmann/reflection.hpp>` (supported flat-struct, per-type annotation),
-`<nlohmann/reflection_to_json.hpp>` (legacy refl2 codec, explicit include only),
-`<nlohmann/reflection_binary.hpp>` / `reflection_json.hpp` (legacy binary
-mirror, explicit include only). `single_include/nlohmann/json.hpp` is
+`<nlohmann/reflection.hpp>` is the only reflection header under `include/` — the
+supported flat-struct extension with per-type annotation. The legacy refl2 codec
+and the binary-mirror headers were **removed from this branch** and are parked,
+unchanged, on the `legacy/reflection-experiments` branch together with their
+experiments. `single_include/nlohmann/json.hpp` is
 regenerated and matches `develop`; the new add-on is not amalgamated.
 `tests/CMakeLists.txt` is `develop` plus one C++26 doctest target
 (`test-static_reflection_cpp26`) for the flat-struct extension. The historical
@@ -156,10 +157,10 @@ Rules first — the exact commands for the highlighted items are in
   out of the commit.
 - **Repository test suite.** Main-library changes must keep the doctest suite
   green (recipe: `BUILD_RECIPES.md` §"Repository test suite").
-- **Free-experiment region** (safe to change freely): `reflection.hpp`,
-  `reflection_json.hpp`, `reflection_to_json.hpp`, `reflection_binary.hpp`,
-  everything under `tests/static-reflection/`, and the docs under
-  `docs/static-reflection/`.
+- **Free-experiment region** (safe to change freely): `reflection.hpp`, the
+  remaining fixtures under `tests/static-reflection/`, and the docs under
+  `docs/static-reflection/`. The legacy reflection code lives on the
+  `legacy/reflection-experiments` branch — do not reintroduce it here.
 - **Every new overload / concept / trait rewrite must be validated** by the
   differential / zero-drift probes outlined in `M4_ASSESSMENT.md` §7. The burden
   is on the change to prove byte-identical behavior, not on reviewers to trust it.

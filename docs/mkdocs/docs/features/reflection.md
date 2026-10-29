@@ -119,13 +119,12 @@ The following were explored on this branch but are **not** features of
 [`JSON_HAS_CPP_26_REFLECTION`](../api/macros/json_has_cpp_26_reflection.md)):
 
 - the `JSON_USE_REFLECTION` wide-open catch-all and the `refl2` codec that
-  provides it (`<nlohmann/reflection_to_json.hpp>`, explicit include only,
-  legacy);
+  provides it — retired and removed from this branch;
 - annotation-driven member renaming/skipping and enum mapping;
 - reflection-driven MessagePack / UBJSON / BSON readers and writers.
 
-They remain separate experiments under `tests/static-reflection/` and are not
-part of the proposed upstream surface.
+They are parked on the `legacy/reflection-experiments` branch, together with
+their experiments, and are not part of the proposed upstream surface.
 
 ## Limitations
 
