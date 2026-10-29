@@ -2,16 +2,21 @@
 // nlohmann::json user-defined types (the M5 milestone of the
 // feature/static-reflection branch).
 //
+// STATUS (2026-10-29): this header is an EXPLICIT ADD-ON. The core headers no
+// longer include it, and the detail::{to,from}_json catch-all integration was
+// removed. Include it after <nlohmann/json.hpp> (with JSON_USE_REFLECTION) and
+// invoke refl2::codec<false>::to_json/from_json explicitly. The supported
+// opt-in path for new code is <nlohmann/reflection.hpp> (flat structs).
+//
 // WHAT THIS IS
-//   Two constrained catch-all overloads in nlohmann::detail::{to,from}_json
-//   (active only when the compiler provides C++26 static reflection:
-//   g++-16 -std=c++26 -freflection defines __cpp_impl_reflection and
-//   __cpp_lib_reflection; nothing else sees this file) make ANY reflectable
-//   struct serialize/deserialize automatically:
+//   A P2996 codec (g++-16 -std=c++26 -freflection) for reflectable structs,
+//   member annotations, enums and variants. It is invoked explicitly:
 //
 //       struct Point { double x; double y; };
-//       json j = Point{1.0, 2.0};   // {"x":1.0,"y":2.0}  — no macro, no to_json
-//       auto p = j.get<Point>();    // round-trip
+//       json j;
+//       refl2::codec<false>::to_json(j, Point{1.0, 2.0});
+//       Point p{};
+//       refl2::codec<false>::from_json(j, p);
 //
 //   Member-level annotations express the semantics of the
 //   NLOHMANN_DEFINE_TYPE_* macro family (see M5_REFLECTION_TO_JSON.md for the
@@ -66,11 +71,9 @@
 //
 // BUILD
 //   Only compiles under g++-16 -std=c++26 -freflection (it #errors
-//   otherwise). Included by nlohmann/detail/conversions/{to,from}_json.hpp
-//   behind `#if defined(__cpp_impl_reflection) && defined(__cpp_lib_reflection)`.
-//   This header must NOT include <nlohmann/json.hpp> (circular: it is part of
-//   the json.hpp include chain); it only needs adl_serializer.hpp and the
-//   meta traits, both already included before it.
+//   otherwise). Include it after <nlohmann/json.hpp> with JSON_USE_REFLECTION;
+//   it is not part of the json.hpp include chain and must not include json.hpp
+//   itself.
 //
 // COVERAGE BOUNDARY (falls to the priority-0 static_assert):
 //   unions; pointers / self-referential types; non-default-
@@ -89,22 +92,12 @@
     #error "reflection_to_json.hpp requires C++26 static reflection (g++-16 -std=c++26 -freflection)"
 #endif
 
-// Opt-in gate (upstream integration, see UPSTREAM_INTEGRATION_PLAN.md §2.2):
-// the reflection catch-all is a behavior change, so it compiles only when the
-// user EXPLICITLY defines JSON_USE_REFLECTION. The include chain
-// ({to,from}_json.hpp) checks the same macro before including this header;
-// this #error makes a direct include honest instead of silently activating
-// the catch-all.
+// Explicit opt-in: this legacy codec requires JSON_USE_REFLECTION. It is no
+// longer included by the core; the macro now only guards the direct add-on
+// include (the core catch-all integration was removed in 2026-10).
 #if !defined(JSON_USE_REFLECTION)
-    #error "reflection_to_json.hpp requires JSON_USE_REFLECTION to be defined (opt-in C++26 reflection extension)"
+    #error "reflection_to_json.hpp requires JSON_USE_REFLECTION to be defined (explicit add-on opt-in)"
 #endif
-
-// NOTE: JSON_HAS_CPP_26_REFLECTION is defined at the very END of this header
-// (see below), not here. It is consumed by {to,from}_json.hpp to select the
-// reflection enum overloads; defining it before this header's own includes
-// would make a re-entrant include of those files (via adl_serializer.hpp)
-// take the refl2 branch before namespace refl2 exists — the "direct include of
-// a conversions header" order then fails with "'refl2' has not been declared".
 
 #include <array>      // array (compile-time key storage)
 #include <charconv>   // from_chars
@@ -124,6 +117,16 @@
 #include <nlohmann/detail/exceptions.hpp>       // JSON_THROW, type_error (enum from_json)
 #include <nlohmann/detail/meta/cpp_future.hpp>   // is_detected_exact
 #include <nlohmann/detail/meta/type_traits.hpp>  // is_compatible_*, is_specialization_of, ...
+
+// Explicit add-on include order: <nlohmann/json.hpp> has already run
+// macro_unscope.hpp, so JSON_THROW is no longer defined. Keep a local alias for
+// the few exception sites below (and preserve the library macro when this
+// header is included from inside json.hpp's original include chain).
+#ifndef JSON_THROW
+    #define REFL2_THROW(exception) throw exception
+#else
+    #define REFL2_THROW(exception) REFL2_THROW(exception)
+#endif
 
 namespace refl2
 {
@@ -953,7 +956,7 @@ void enum_get_arithmetic(const B& j, U& val)
     }
     else
     {
-        JSON_THROW(nlohmann::detail::type_error::create(
+        REFL2_THROW(nlohmann::detail::type_error::create(
                        302, nlohmann::detail::concat("type must be number, but is ", j.type_name()), &j));
     }
 }
@@ -981,7 +984,7 @@ void deserialize_enum(const B& j, E& e)
                     return;
                 }
             }
-            JSON_THROW(nlohmann::detail::type_error::create(
+            REFL2_THROW(nlohmann::detail::type_error::create(
                            302, nlohmann::detail::concat("cannot parse enum string '", s, "'"), &j));
         }
         // non-string JSON: integer path (mirrors the macro accepting integer
@@ -1142,7 +1145,7 @@ struct codec
         (..., (idx == I ? (handled = true, emplace_and_deserialize<B, T, I>(j, v)) : void()));
         if (!handled)
         {
-            JSON_THROW(nlohmann::detail::type_error::create(
+            REFL2_THROW(nlohmann::detail::type_error::create(
                            302, nlohmann::detail::concat("cannot parse variant: index ",
                                    std::to_string(idx), " out of range (0..",
                                    std::to_string(std::variant_size_v<T> - 1), ")"),
@@ -1198,7 +1201,7 @@ struct codec
         // fixed-size one used to surface at()'s type_error.304 instead.
         if (!j.is_array())
         {
-            JSON_THROW(nlohmann::detail::type_error::create(
+            REFL2_THROW(nlohmann::detail::type_error::create(
                            302, nlohmann::detail::concat("type must be array, but is ", j.type_name()), &j));
         }
         if constexpr (requires { v.push_back(typename T::value_type{}); })
@@ -1252,7 +1255,7 @@ struct codec
         // {"":5} and null/arrays became empty maps.
         if (!j.is_object())
         {
-            JSON_THROW(nlohmann::detail::type_error::create(
+            REFL2_THROW(nlohmann::detail::type_error::create(
                            302, nlohmann::detail::concat("type must be object, but is ", j.type_name()), &j));
         }
         v.clear();
@@ -1431,7 +1434,7 @@ struct codec
             // become 0 (it would collide with a real "0" key and lose data).
             if (ec != std::errc() || ptr != s.data() + s.size())
             {
-                JSON_THROW(nlohmann::detail::type_error::create(
+                REFL2_THROW(nlohmann::detail::type_error::create(
                                302, nlohmann::detail::concat("type must be number, but is \"", s, "\""), nullptr));
             }
             return k;
@@ -1539,45 +1542,4 @@ inline constexpr std::underlying_type_t<E> enum_value = detail::enum_value_v<E, 
 
 } // namespace refl2
 
-// ---------------------------------------------------------------------------
-// The catch-all overloads. Declared in nlohmann::detail BEFORE to_json_fn /
-// from_json_fn (the gated includes in {to,from}_json.hpp sit at the top of
-// those files), so the unqualified call inside the CPO's operator() finds
-// them by ordinary lookup. The requires-clause is the negative mirror of the
-// existing overload sets — for every type the library already handles, one
-// of the existing (more specialized) overloads is selected instead, and for
-// every user-customized type the user's to_json/from_json wins.
-// ---------------------------------------------------------------------------
-NLOHMANN_JSON_NAMESPACE_BEGIN
-namespace detail
-{
-
-template<typename BasicJsonType, typename T>
-requires refl2::detail::to_json_eligible<BasicJsonType, T>::value
-inline void to_json(BasicJsonType& j, const T& v)
-{
-    refl2::codec<false>::to_json(j, v);
-}
-
-template<typename BasicJsonType, typename T>
-requires refl2::detail::from_json_eligible<BasicJsonType, T>::value
-inline void from_json(const BasicJsonType& j, T& v)
-{
-    refl2::codec<false>::from_json(j, v);
-}
-
-} // namespace detail
-NLOHMANN_JSON_NAMESPACE_END
-
-// ---------------------------------------------------------------------------
-// Feature-test macro, defined LAST on purpose (see the note at the top of this
-// header): {to,from}_json.hpp consume it to select the reflection enum
-// overloads, and those files are re-entered from this header's own includes
-// (adl_serializer.hpp -> {from,to}_json.hpp). Defining it only after namespace
-// refl2 is complete makes the direct-include order
-//   #include <nlohmann/detail/conversions/to_json.hpp>
-// compile instead of tripping "'refl2' has not been declared".
-// ---------------------------------------------------------------------------
-#ifndef JSON_HAS_CPP_26_REFLECTION
-    #define JSON_HAS_CPP_26_REFLECTION 1
-#endif
+#undef REFL2_THROW

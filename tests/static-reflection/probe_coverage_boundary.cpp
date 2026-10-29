@@ -150,7 +150,8 @@ int main()
     refl2::codec<false>::to_json(jv2, v2);
     std::printf("variant<int,string> (string alt) serialized: %s\n", jv2.dump().c_str());
     json jv3 = {{"index", 1}, {"value", "back"}};
-    V v3 = jv3.template get<V>();
+    V v3{};
+    refl2::codec<false>::from_json(jv3, v3);
     std::printf("variant round-trip: %s (index=%zu)\n", std::get<std::string>(v3).c_str(), v3.index());
 
     std::printf("\nPROBE COVERAGE DONE\n");
