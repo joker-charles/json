@@ -36,9 +36,8 @@
   actually use P2996 (the reflection fixtures do this via their own build
   lines).
 - Two include layouts: split headers under `-Iinclude`, or the amalgamated
-  single header under `-Isingle_include`. Reflection/concepts work targets the
-  split `-Iinclude` layout (the `#ifdef JSON_HAS_CPP_20` branches only compile
-  there).
+  single header under `-Isingle_include`. Reflection add-on work targets the
+  split `-Iinclude` layout; the add-on headers are not amalgamated.
 - **Add-on entry points (2026-10-29 clean-core)**: the core headers match
   `develop`; there is no catch-all in `detail::{to,from}_json`.
   - `<nlohmann/reflection.hpp>`: explicit include, no `JSON_USE_REFLECTION`;

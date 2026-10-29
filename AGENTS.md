@@ -154,9 +154,10 @@ Rules first — the exact commands for the highlighted items are in
   out of the commit.
 - **Repository test suite.** Main-library changes must keep the doctest suite
   green (recipe: `BUILD_RECIPES.md` §"Repository test suite").
-- **Free-experiment region** (safe to change freely): `concepts.hpp`,
-  `reflection_json.hpp`, `reflection_to_json.hpp`, everything under
-  `tests/static-reflection/`, and the docs under `docs/static-reflection/`.
+- **Free-experiment region** (safe to change freely): `reflection.hpp`,
+  `reflection_json.hpp`, `reflection_to_json.hpp`, `reflection_binary.hpp`,
+  everything under `tests/static-reflection/`, and the docs under
+  `docs/static-reflection/`.
 - **Every new overload / concept / trait rewrite must be validated** by the
   differential / zero-drift probes outlined in `M4_ASSESSMENT.md` §7. The burden
   is on the change to prove byte-identical behavior, not on reviewers to trust it.
