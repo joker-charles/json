@@ -31,6 +31,28 @@ jobs:
       - name: Build
         run: cmake --build build --target ci_test_gcc
 
+  # C++26 static reflection (P2996) is GCC 16-only today; the extension stays
+  # experimental until a second implementation exists. This job pins GCC 16 and
+  # runs the reflection doctest and its negative-compile harness. No other job
+  # definition changes; existing gcc:latest jobs (GCC 16) also build the target.
+  ci_test_reflection_gcc16:
+    runs-on: ubuntu-latest
+    container: gcc:16
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Get latest CMake and ninja
+        uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
+      - name: Run CMake
+        run: cmake -S . -B build -DJSON_CI=On
+      - name: Build and run the reflection doctest
+        run: |
+          cmake --build build --target test-static_reflection_cpp26
+          ./build/tests/test-static_reflection_cpp26
+      - name: Negative-compile harness
+        run: GXX=g++ bash tests/static-reflection/compile_fail.sh
+
   ci_infer:
     runs-on: ubuntu-latest
     steps:
