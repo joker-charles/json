@@ -12,10 +12,14 @@
 
 ## Toolchain and gating
 
-- `-freflection` is what defines `__cpp_impl_reflection` /
-  `__cpp_lib_reflection`; plain `-std=c++26` defines neither and `<meta>` stays
-  empty. The header gates on both macros.
-- `g++-16` is required. The system `g++` (15) has no `<meta>`.
+- `-freflection` defines the language macro `__cpp_impl_reflection`;
+  `__cpp_lib_reflection` is a library macro supplied by libstdc++'s `<version>`
+  (visible here because `json.hpp` includes `<version>` before the gate).
+  Plain `-std=c++26` defines neither and `<meta>` stays empty. The header gates
+  on `JSON_USE_REFLECTION` plus both P2996 macros; defining the macro without
+  P2996 is a single `#error` and compiles nothing else.
+- `g++-16` is required. The system `g++` on this machine is 14.2 and has no
+  `<meta>`.
 - `std::meta::` must be fully qualified; bare `meta::` does not compile.
 
 ## Reflection queries
@@ -42,9 +46,10 @@
   enumerated directly (`nonstatic_data_members_of` throws "not a complete class
   type", even in a `consteval` function). Recover the type first
   (`using B = typename [: type_of(b0) :];`).
-- Bit-fields (`is_bit_field`) serialize fine, but `from_json` cannot bind them
-  to a `T&` (no address). Unnamed bit-fields are not subobjects and are skipped
-  by `subobjects_of`.
+- Named bit-fields serialize and round-trip: `to_json` reads them and
+  `from_json` assigns directly (`value.[:member:] = ...`), so no `T&`/address is
+  formed. (A hand-written serializer that takes a reference cannot.) Unnamed
+  bit-fields are not subobjects and are skipped by `subobjects_of`.
 
 ## Type-level annotations (P3394R4)
 

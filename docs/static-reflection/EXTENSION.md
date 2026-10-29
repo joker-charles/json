@@ -4,9 +4,10 @@ Contract for the only reflection code on this branch. Build and test commands
 are in [`README.md`](README.md); compiler facts in
 [`VERIFIED_FACTS.md`](VERIFIED_FACTS.md).
 
-## Opt-in, twice
+## Opt-in: macro, header, toolchain, annotation
 
 ```cpp
+#define JSON_USE_REFLECTION
 #include <nlohmann/json.hpp>
 #include <nlohmann/reflection.hpp>   // json.hpp does not include it
 
@@ -20,13 +21,19 @@ json j = point {1.0, 2.0};           // {"x":1.0,"y":2.0}
 auto p = j.get<point>();             // round-trip
 ```
 
+- **Macro opt-in**: `JSON_USE_REFLECTION` must be defined before the header is
+  included. It is a presence switch: any definition enables the extension;
+  define it in exactly one place (source or command line). Without it the header
+  is a no-op — the annotation type and the serializer do not exist, and an
+  accidental include changes nothing.
 - **Header opt-in**: not included by `json.hpp`, not amalgamated into
-  `single_include`. Without the include, nothing changes.
+  `single_include`.
 - **Type opt-in**: only annotated classes participate. Unannotated types keep
   exactly today's behavior (no `to_json` → compile error).
-- **No feature macro**: there is no `JSON_USE_REFLECTION`-style switch; the
-  header include is the switch. It is inert where P2996 is unavailable
-  (`__cpp_impl_reflection` / `__cpp_lib_reflection` undefined).
+- **Toolchain opt-in**: with the macro defined, a P2996 toolchain is required
+  (`__cpp_impl_reflection` / `__cpp_lib_reflection`, GCC 16 with
+  `-std=c++26 -freflection`); otherwise the header fails with a clear `#error`.
+  The macro is consulted only by this header; no core header reads it.
 - The annotation must follow the class key — `struct [[=...]] S`; a leading
   `[[=...]] struct S` is ignored by GCC 16 with a warning.
 
@@ -115,7 +122,7 @@ internals; annotation detection uses only query-domain reflection
 |---|---|
 | `tests/src/unit-static_reflection.cpp` (`test-static_reflection_cpp26`) | doctest: plain/nested structs, containers, object semantics, per-type opt-in |
 | `tests/static-reflection/reflection_flat_struct.cpp` | runtime fixture, split and `single_include` layouts |
-| `tests/static-reflection/compile_fail/` + `compile_fail.sh` | the seven rejection guards above |
+| `tests/static-reflection/compile_fail/` + `compile_fail.sh` | the rejection guards above plus the add-on-not-included case (7 TUs) |
 | `tests/static-reflection/check_docs_examples.sh` | keeps the mkdocs page's claims executable |
 
 Non-regression that is part of the contract: `include/nlohmann/detail/**` and

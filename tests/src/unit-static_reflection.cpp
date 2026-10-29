@@ -6,23 +6,29 @@
 // SPDX-FileCopyrightText: 2013-2026 Niels Lohmann <https://nlohmann.me>
 // SPDX-License-Identifier: MIT
 //
-// Doctest coverage for the standalone flat-struct reflection extension
+// Doctest coverage for the flat-struct reflection extension
 // (<nlohmann/reflection.hpp>).
 //
-// This file is the portable subset of the pre-2026-10 catch-all test file:
-// plain/nested structs, library container members, object-access semantics,
-// and per-type opt-in. Member rename/skip/default annotations, enum/variant
-// mapping, binary formats, and the annotation-inspection API are not features
-// of this extension; the legacy explicit fixtures under
-// tests/static-reflection/ document what remains.
+// Coverage: plain/nested structs, library container members, object-access
+// semantics, and per-type opt-in. Member rename/skip/default annotations,
+// enum/variant mapping, binary formats and annotation inspection are out of
+// scope for this first slice; the explicit fixtures under tests/static-reflection/
+// cover the rejection paths.
 //
-// This file references JSON_HAS_CPP_26 in this comment so the doctest harness
-// registers it as a C++26 target; tests/CMakeLists.txt also registers it
-// explicitly with -freflection.
+// The target is registered by tests/CMakeLists.txt for C++26 with -freflection
+// and -DJSON_USE_REFLECTION. The JSON_HAS_CPP_26 string below is also what
+// cmake/test.cmake scans for when it registers unit-*.cpp files; the guard makes
+// a misconfigured build fail loudly instead of compiling zero tests.
 
 #include "doctest_compatibility.h"
 
 #include <nlohmann/reflection.hpp>
+
+#if !defined(JSON_USE_REFLECTION)
+    #error "unit-static_reflection.cpp must be compiled with -DJSON_USE_REFLECTION"
+#elif !defined(JSON_HAS_CPP_26)
+    #error "unit-static_reflection.cpp must be compiled as C++26 with JSON_TEST_KEEP_MACROS defined"
+#else
 
 #include <array>
 #include <map>
@@ -49,10 +55,10 @@ struct [[=nlohmann::json_serializable{}]] Empty
 struct [[=nlohmann::json_serializable{}]] Outer
 {
     int id{};
-    Point p;
-    std::vector<Point> ps;
-    std::map<std::string, Point> m;
-    std::optional<int> opt;
+    Point p{};
+    std::vector<Point> ps{};
+    std::map<std::string, Point> m{};
+    std::optional<int> opt{};
 };
 
 struct Plain
@@ -62,22 +68,22 @@ struct Plain
 
 struct [[=nlohmann::json_serializable{}]] WithVector
 {
-    std::vector<int> v;
+    std::vector<int> v{};
 };
 
 struct [[=nlohmann::json_serializable{}]] WithSet
 {
-    std::set<int> s;
+    std::set<int> s{};
 };
 
 struct [[=nlohmann::json_serializable{}]] WithStringMap
 {
-    std::map<std::string, int> m;
+    std::map<std::string, int> m{};
 };
 
 struct [[=nlohmann::json_serializable{}]] WithArray
 {
-    std::array<int, 3> arr;
+    std::array<int, 3> arr{};
 };
 } // namespace flat
 
@@ -212,3 +218,5 @@ TEST_CASE("flat-struct reflection: container from_json requires the matching JSO
                              json::type_error);
     }
 }
+
+#endif // JSON_USE_REFLECTION && JSON_HAS_CPP_26

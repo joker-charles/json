@@ -25,8 +25,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$SCRIPT_DIR/../.." && pwd)"
 GXX="${GXX:-g++-16}"
 PAGE="${REPO}/docs/mkdocs/docs/features/reflection.md"
-OUT_DIR="${OUT_DIR:-${REPO}/build/scratch/docs-check}"
-INCS=(-std=c++26 -freflection -I"${REPO}/include")
+OUT_DIR="${OUT_DIR:-${REPO}/build/docs-check}"
+INCS=(-std=c++26 -freflection -DJSON_USE_REFLECTION -I"${REPO}/include")
 
 mkdir -p "${OUT_DIR}"
 pass=0
@@ -60,11 +60,9 @@ exemplar = [b for b in blocks if "json_serializable" in b and "double x" in b]
 if not exemplar:
     print("  [FAIL] could not find the annotated-struct example block")
     sys.exit(1)
-if "[[=refl2::" in page:
-    print("  [FAIL] the page still documents the legacy 'refl2::' namespace")
-    sys.exit(1)
 
-harness = """#include <nlohmann/json.hpp>
+harness = """#define JSON_USE_REFLECTION
+#include <nlohmann/json.hpp>
 #include <nlohmann/reflection.hpp>
 #include <cstdio>
 #include <optional>

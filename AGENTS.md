@@ -12,8 +12,8 @@ annotated flat structs through the public `basic_json` API, proposed upstream as
 a reviewable first PR.
 
 Current state: the only reflection code is `include/nlohmann/reflection.hpp`
-(explicit add-on, per-type opt-in, no feature macro). The four core headers and
-`single_include/nlohmann/json.hpp` are byte-identical to `develop`;
+(explicit add-on gated by `JSON_USE_REFLECTION`, per-type opt-in). The four core
+headers and `single_include/nlohmann/json.hpp` are byte-identical to `develop`;
 `tests/CMakeLists.txt` is `develop` plus one C++26 doctest target.
 
 Retired: a wide-open catch-all, a `refl2` annotation codec, enum mapping,

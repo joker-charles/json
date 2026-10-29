@@ -2,18 +2,19 @@
 
 !!! warning "Experimental"
 
-    An **opt-in, per-type add-on**, developed on the `feature/static-reflection`
-    branch. It builds on C++26 static reflection (P2996), lives in a separate
-    header that `<nlohmann/json.hpp>` and the amalgamated single header do
-    **not** include, and is inert without `-freflection`. Only annotated types
-    are affected; everything else behaves exactly as today.
+    An **opt-in, per-type add-on** for C++26 static reflection (P2996). It
+    lives in a separate header that `<nlohmann/json.hpp>` and the amalgamated
+    single header do **not** include, and is enabled by defining
+    `JSON_USE_REFLECTION` before including it (it needs `-freflection`). Only
+    annotated types are affected; everything else behaves exactly as today.
 
     GCC 16 is currently the only implementation, so treat the API as unstable
     until a second one lands.
 
-## Opt-in twice: include the header, annotate the type
+## Opt-in: define the macro, include the header, annotate the type
 
 ```cpp
+#define JSON_USE_REFLECTION
 #include <nlohmann/json.hpp>
 #include <nlohmann/reflection.hpp>   // not pulled in by json.hpp
 
@@ -27,9 +28,10 @@ nlohmann::json j = point {1.0, 2.0};   // {"x":1.0,"y":2.0}
 const auto p = j.get<point>();         // round-trip
 ```
 
-Including the header changes nothing by itself, and a type without the
-annotation keeps today's behavior — it is not serializable unless you provide
-`to_json`/`from_json` or an
+`JSON_USE_REFLECTION` must be defined before the header is included; without
+it the header is a no-op, so including it by accident changes nothing. With the
+macro, a type without the annotation still keeps today's behavior — it is not
+serializable unless you provide `to_json`/`from_json` or an
 [`adl_serializer`](../api/adl_serializer/index.md) specialization.
 
 The annotation must follow the `struct`/`class` keyword (`struct [[=...]] S`;
@@ -79,22 +81,11 @@ classes, no unions, no private/protected or anonymous members, each rejected by
 its own `static_assert`. No member rename/skip/default annotations, no enum
 string mapping, no `std::variant` handling, no binary formats.
 
-Earlier experiments with exactly those features (a wide-open `refl2` catch-all,
-enum mapping, MessagePack/UBJSON/BSON reflection) were retired: they changed
-behavior for types that never opted in and depended on `basic_json`'s private
-layout. They live on the `legacy/reflection-experiments` branch.
-
 ## Limitations
 
-- Requires a P2996 toolchain: GCC 16 with `-std=c++26 -freflection`. Elsewhere
-  the header is **inert** — including it compiles, but
-  `nlohmann::json_serializable` does not exist, so annotated code fails at the
-  annotation. The C++11 build contract of the library is untouched.
+- `JSON_USE_REFLECTION` is required on top of the explicit include. Without it
+  the header is a no-op; with it, a P2996 toolchain is required: GCC 16 with
+  `-std=c++26 -freflection`. On any other toolchain, defining the macro is a
+  clear `#error` instead of a confusing "annotation not declared" later. The
+  C++11 build contract of the library is untouched.
 - Not covered by the amalgamated `single_include` header.
-
-## Further reading
-
-The design and verification material is in the repository's
-`docs/static-reflection/` directory (not part of this website): `EXTENSION.md`
-for the contract, `VERIFIED_FACTS.md` for the toolchain facts, `README.md` for
-build commands and the upstream plan.

@@ -156,16 +156,17 @@ if(test_force)
 endif()
 message(STATUS "${msg}")
 
-# *DO* use json_test_set_test_options() above this line
-
-# Standalone flat-struct reflection extension: -freflection only on this
-# C++26 target (never in global flags; see docs/static-reflection/README.md).
+# Standalone flat-struct reflection extension: -freflection and
+# JSON_USE_REFLECTION only on this C++26 target, never in global flags.
 if(compiler_supports_cpp_26)
     json_test_set_test_options(test-static_reflection
         CXX_STANDARDS 26
+        COMPILE_DEFINITIONS JSON_USE_REFLECTION
         COMPILE_OPTIONS $<$<CXX_COMPILER_ID:GNU>:-freflection>
     )
 endif()
+
+# *DO* use json_test_set_test_options() above this line
 
 json_test_should_build_32bit_test(json_32bit_test json_32bit_test_only "${JSON_32bitTest}")
 file(GLOB files CONFIGURE_DEPENDS src/unit-*.cpp)

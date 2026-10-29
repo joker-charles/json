@@ -5,8 +5,9 @@ the website; the user-facing page is
 `docs/mkdocs/docs/features/reflection.md`.
 
 The branch ships **one** thing: `include/nlohmann/reflection.hpp`, an explicit
-add-on that serializes annotated flat structs through the public `basic_json`
-API. Nothing else under `include/` differs from `develop`.
+add-on behind `JSON_USE_REFLECTION` that serializes annotated flat structs
+through the public `basic_json` API. Nothing else under `include/` differs from
+`develop`.
 
 ## The three documents
 
@@ -43,9 +44,11 @@ cmake --build build-test --target test-static_reflection_cpp26 -j2
 ./build-test/tests/test-static_reflection_cpp26
 ```
 
-The header is inert without P2996 (`-std=c++11` … `-std=c++26` all compile), and
-it is **not** amalgamated: do not add it to
-`tools/amalgamate/config_json.json`.
+The header is a no-op unless `JSON_USE_REFLECTION` is defined (so it compiles
+under `-std=c++11` … `-std=c++26`), and it is **not** amalgamated: do not add it
+to `tools/amalgamate/config_json.json`. The doctest target gets
+`-DJSON_USE_REFLECTION` from `tests/CMakeLists.txt`, the two harness scripts pass
+it per compile, and the runtime fixture defines it in-source.
 
 ## Proposing it upstream
 
@@ -64,15 +67,20 @@ conditions — they are the acceptance criteria for the branch:
 Everything on this branch is scoped to 1–5. What PR 1 contains:
 `include/nlohmann/reflection.hpp`, `tests/src/unit-static_reflection.cpp`, the
 fixtures/harnesses under `tests/static-reflection/`, the feature page, one
-`tests/CMakeLists.txt` target and one nav entry. No CI, core or single-header
-change.
+`tests/CMakeLists.txt` target, one nav entry and one GCC 16 CI job. No
+core-header or single-header change.
 
-Open questions to settle in an issue **before** more code:
+The surface proposed upstream (issue
+[#5959](https://github.com/nlohmann/json/issues/5959), following the
+maintainer's reply in
+[#5384](https://github.com/nlohmann/json/discussions/5384)):
 
 - header name: `<nlohmann/reflection.hpp>`;
-- annotation name: `nlohmann::json_serializable`;
-- whether a feature macro is required on top of the header include (today there
-  is none: including the header is the opt-in);
+- annotation name: `nlohmann::json_serializable`, used as
+  `struct [[=nlohmann::json_serializable{}]] S`;
+- macro name: `JSON_USE_REFLECTION`, undefined by default; a presence switch,
+  so any definition enables it; defining it without P2996 is a `#error`, never a
+  silent no-op;
 - namespace: `nlohmann`, as for the rest of the public API.
 
 ## History

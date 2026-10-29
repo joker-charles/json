@@ -1,7 +1,8 @@
-// reflection_flat_struct.cpp — the standalone flat-struct reflection extension.
+// reflection_flat_struct.cpp — runtime fixture for <nlohmann/reflection.hpp>.
 //
-// This fixture includes ONLY <nlohmann/reflection.hpp> (no separate json.hpp
-// include, no JSON_USE_REFLECTION) and proves the first-slice contract:
+// This fixture opts in with JSON_USE_REFLECTION and includes ONLY
+// <nlohmann/reflection.hpp> (no separate json.hpp include) and proves the
+// extension's contract:
 //
 //   * [[=nlohmann::json_serializable{}]] is a per-type opt-in; unannotated
 //     structs keep the main library's behavior (not constructible into json);
@@ -13,15 +14,17 @@
 //
 // Build (split headers):
 //   g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Iinclude \
-//       -o build/scratch/reflection_flat_struct \
+//       -o /tmp/reflection_flat_struct \
 //       tests/static-reflection/reflection_flat_struct.cpp
-//   ./build/scratch/reflection_flat_struct
+//   /tmp/reflection_flat_struct
 //
 // Build (amalgamated library + split add-on):
 //   g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address \
-//       -Isingle_include -Iinclude -o build/scratch/reflection_flat_struct_single \
+//       -Isingle_include -Iinclude -o /tmp/reflection_flat_struct_single \
 //       tests/static-reflection/reflection_flat_struct.cpp
-//   ./build/scratch/reflection_flat_struct_single
+//   /tmp/reflection_flat_struct_single
+
+#define JSON_USE_REFLECTION
 
 #include <nlohmann/reflection.hpp>
 

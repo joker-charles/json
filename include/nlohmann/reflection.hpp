@@ -6,12 +6,13 @@
 // SPDX-FileCopyrightText: 2013-2026 Niels Lohmann <https://nlohmann.me>
 // SPDX-License-Identifier: MIT
 //
-// Standalone flat-struct serialization extension (feature/static-reflection
-// branch, first slice).
+// Standalone flat-struct serialization add-on (<nlohmann/reflection.hpp>).
 //
 // This is an EXPLICIT ADD-ON: <nlohmann/json.hpp> does not include it, and the
-// amalgamated single header does not ship it. Include it yourself:
+// amalgamated single header does not ship it. Opt in with the feature macro on
+// top of the explicit include:
 //
+//     #define JSON_USE_REFLECTION
 //     #include <nlohmann/reflection.hpp>
 //
 //     struct [[=nlohmann::json_serializable{}]] point
@@ -23,7 +24,7 @@
 //     nlohmann::json j = point{1.0, 2.0}; // {"x":1.0,"y":2.0}
 //     auto p = j.get<point>();
 //
-// Scope of this first slice:
+// Scope:
 //   * opt-in by type: only classes/unions annotated with
 //     [[=nlohmann::json_serializable{}]] participate; every other type keeps
 //     the library's existing behavior byte-for-byte;
@@ -40,22 +41,30 @@
 // BasicJsonType::object(), operator[], at() and get<T>(). It never touches
 // basic_json's private json_value/m_data layout or reflection's unchecked().
 //
-// Build requirement: C++26 static reflection (g++-16 -std=c++26
-// -freflection). On a toolchain without P2996 this header is inert: including
-// it compiles, but nlohmann::json_serializable is not defined and annotated
-// code fails at the annotation. This keeps the C++11 per-header
-// self-containment check green.
+// Opt-in and gating:
+//   * without JSON_USE_REFLECTION this header is a no-op, so an accidental
+//     include changes nothing and the C++11 per-header self-containment check
+//     stays green;
+//   * with JSON_USE_REFLECTION a C++26 P2996 toolchain is required (g++-16
+//     -std=c++26 -freflection); on any other toolchain the header fails with a
+//     clear #error rather than a silent no-op that would surface later as
+//     "json_serializable not declared" at the annotation.
 //
-// The legacy JSON_USE_REFLECTION opt-in (reflection_to_json.hpp's wide-open
-// catch-all) is a separate experiment. This header neither requires nor
-// defines it; do not mix an annotated type with a hand-written/legacy
-// serializer for the same type.
+// JSON_USE_REFLECTION is consulted only by this header; no core header reads
+// it. It is a presence switch: any definition enables the extension, so define
+// it in exactly one place (the source file or the compiler command line) before
+// the first include of this header. Do not mix an annotated type with a
+// hand-written serializer for the same type.
 
 #pragma once
 
+#if defined(JSON_USE_REFLECTION)
+
 #include <nlohmann/json.hpp>
 
-#if defined(__cpp_impl_reflection) && defined(__cpp_lib_reflection)
+#if !defined(__cpp_impl_reflection) || !defined(__cpp_lib_reflection)
+    #error "JSON_USE_REFLECTION requires C++26 static reflection (P2996): use GCC 16 and -std=c++26 -freflection"
+#else
 
 #include <meta>
 #include <string>
@@ -201,4 +210,6 @@ struct adl_serializer<T, void>
 
 NLOHMANN_JSON_NAMESPACE_END
 
-#endif
+#endif // P2996 toolchain
+
+#endif // JSON_USE_REFLECTION
