@@ -73,8 +73,6 @@ find_program(SCAN_BUILD_TOOL NAMES scan-build-15 scan-build-14 scan-build-13 sca
 
 # the individual source files
 file(GLOB_RECURSE SRC_FILES ${PROJECT_SOURCE_DIR}/include/nlohmann/*.hpp)
-# <nlohmann/reflection.hpp> is inert without P2996, so it compiles under C++11
-# and stays in the self-containment check like every other header.
 
 ###############################################################################
 # Thorough check with recent compilers

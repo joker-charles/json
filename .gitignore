@@ -19,8 +19,7 @@
 /build*/
 
 # session scratch files (agent working notes, experiment TUs, negative
-# compile cases, measurement artifacts — NOT reproducible repo content;
-# the committed measurement snapshots live under docs/static-reflection/data/)
+# compile cases, measurement artifacts — never reproducible repo content)
 /.tmp/
 
 # agent workspace memory (session notes, not repo content)
@@ -59,6 +58,9 @@ MODULE.bazel.lock
 
 # user-local CMake presets (machine-specific toolchain, not shared)
 /CMakeUserPresets.json
+
+# agent harness directory
 .dsh/
+
 # python bytecode from test/bench generators
 tests/**/__pycache__/
