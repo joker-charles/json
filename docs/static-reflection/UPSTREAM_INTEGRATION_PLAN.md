@@ -2,6 +2,8 @@
 
 > **目标**：让静态反射相关成果以“可选扩展、默认零行为变化、C++11 完全兼容、通过上游测试/文档/CI 标准”的方式逐步进入 `develop`。
 > **现实预期**：整体静态反射 rewrite 直接合入上游的可能性很低；应拆成小步、可选、可评审的 PR 序列。
+>
+> **2026-10-29 更新（clean-core）**：四个核心头文件已回退到 `develop`，C++20 concepts 层和 refl2 catch-all/enum 核心接入已删除；反射只保留 add-on 头文件（`reflection.hpp` 为当前支持的 flat-struct 扩展，`reflection_to_json.hpp` / `reflection_json.hpp` / `reflection_binary.hpp` 为显式 add-on）。本文以下关于 catch-all 接入和 concepts PR 的内容是历史方案，不再代表当前实现。详见 `CORE_CLEANUP_2026-10.md`。
 
 ## 1. 主库合入的硬性标准
 

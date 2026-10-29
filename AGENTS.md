@@ -22,6 +22,20 @@ Two coupled goals:
    concepts for the pure-category overloads in the serialization layer, under a
    `JSON_HAS_CPP_20` dual path.
 
+**Current state (2026-10-29, clean-core)**: the four core headers that used to
+be modified (`detail/input/lexer.hpp`, `detail/input/binary_reader.hpp`,
+`detail/conversions/to_json.hpp`, `detail/conversions/from_json.hpp`) are back
+to the `develop` baseline. The C++20 concepts layer and the refl2
+catch-all/enum core integration were removed. Reflection is **add-on-only**:
+`<nlohmann/reflection.hpp>` (supported flat-struct, per-type annotation),
+`<nlohmann/reflection_to_json.hpp>` (legacy refl2 codec, explicit include only),
+`<nlohmann/reflection_binary.hpp>` / `reflection_json.hpp` (legacy binary
+mirror, explicit include only). `single_include/nlohmann/json.hpp` is
+regenerated and matches `develop`; the new add-on is not amalgamated. The
+historical milestone paragraphs below describe earlier branch states and are
+not current contracts. See `docs/static-reflection/CORE_CLEANUP_2026-10.md`
+and `docs/static-reflection/FLAT_STRUCT_REFLECTION.md`.
+
 Status: M0–M3 (reflection) complete & verified; M4 verdict: reflection does not
 replace type_traits, classification in `docs/static-reflection/M4_ASSESSMENT.md`;
 to_json concepts dual-path landed and committed. **M5 shipped**: the refl2
@@ -31,7 +45,8 @@ is wired into `detail::{to,from}_json` as reflection-gated catch-alls
 (`__cpp_impl_reflection && __cpp_lib_reflection`, i.e. only g++-16
 `-std=c++26 -freflection`) — arbitrary reflectable structs serialize
 bidirectionally with zero user code, replacing the NLOHMANN_DEFINE_TYPE_*
-macro family (Scenario B of EVALUATION.md); **M6**: enumerator-level
+macro family (Scenario B of EVALUATION.md; the core catch-all integration was
+removed in 2026-10); **M6**: enumerator-level
 `json_name` annotations replace NLOHMANN_JSON_SERIALIZE_ENUM (compile-time
 enumerator tables; unannotated enums keep the integer path, zero drift);
 **M4B**: the remaining binary formats of the value_t -> byte-code tables
@@ -84,10 +99,11 @@ as number arrays / static_assert / compile-error / abort); a negative
 compile-fail harness (`compile_fail/`, auto-discovered cases) plus runtime error-path
 (`probe_negative_runtime.cpp`) and upstream type-surface
 (`probe_type_alignment.cpp`) probes landed. The C++20 concepts modernization
-is completed: the to_json boolean overload is `concepts::boolean_like<T,B>`
-(the last pure-category overload left on enable_if). The main doctest suite
-is green (test-udt_cpp11 / test-serialization_cpp11 / test-conversions_cpp17
-/ test-concepts_dual_cpp20).
+was completed before the 2026-10 cleanup: the to_json boolean overload was
+`concepts::boolean_like<T,B>` (the last pure-category overload left on
+enable_if); the whole concepts layer was removed by the clean-core refactor.
+The main doctest suite is green (test-udt_cpp11 / test-serialization_cpp11 /
+test-conversions_cpp17).
 **Review pass (2026-08)**: a code review of the unmerged work found and fixed 20 defects —
 most importantly that enabling `JSON_USE_REFLECTION` broke 4 upstream doctest TUs
 (opaque enum -> `std::meta::exception`, lost `noexcept`, a self-dependent atomic
@@ -115,8 +131,9 @@ Design:
 `docs/static-reflection/M7_VARIANT.md` (M7),
 `docs/static-reflection/M4D2_ITERATORS.md` (M4D-2),
 `docs/static-reflection/FLAT_STRUCT_REFLECTION.md` (standalone flat-struct
-extension); verified facts:
-`docs/static-reflection/VERIFIED_FACTS.md`.
+extension),
+`docs/static-reflection/CORE_CLEANUP_2026-10.md` (clean-core refactor);
+verified facts: `docs/static-reflection/VERIFIED_FACTS.md`.
 
 ## 2. Safety boundaries (non-negotiable)
 
@@ -220,5 +237,8 @@ reason to skip it. Load it when you are about to:
   `<nlohmann/reflection.hpp>` flat-struct extension: per-type
   `[[=nlohmann::json_serializable{}]]`, public-API-only serializer,
   first-slice scope and test matrix.
+- `docs/static-reflection/CORE_CLEANUP_2026-10.md` — the 2026-10 clean-core
+  refactor: core headers restored to `develop`, concepts layer removed,
+  add-on-only layout, verification, and legacy test exclusions.
 - Authoritative C++ feature/API facts (header map, signatures, reflection index):
   the **`modern-cpp` skill**; the local offline cppreference if present.

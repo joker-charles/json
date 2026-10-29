@@ -7,6 +7,12 @@
 >
 > **How to add a recipe.** New build lines for new fixtures go here (they also
 > live in each fixture's header comment as the authoritative copy).
+>
+> **Current state (2026-10-29, clean-core):** the four previously modified core
+> headers match `develop`; the C++20 concepts layer and the refl2 catch-all
+> core integration were removed. Reflection is add-on-only. See
+> `CORE_CLEANUP_2026-10.md` and `tests/static-reflection/README.md`; build
+> lines that depended on the old catch-all are marked legacy below.
 
 ## Toolchain — trust, don't re-derive
 
@@ -33,18 +39,15 @@
   single header under `-Isingle_include`. Reflection/concepts work targets the
   split `-Iinclude` layout (the `#ifdef JSON_HAS_CPP_20` branches only compile
   there).
-- **Per-type opt-in gate (`JSON_USE_REFLECTION`, UPSTREAM_INTEGRATION_PLAN.md
-  §2.2)**: since the reflection catch-all is a behavior change, it compiles
-  only when the user defines `JSON_USE_REFLECTION` (the compiler must still
-  provide P2996: g++-16 `-std=c++26 -freflection`). Both the include chain
-  (`{to,from}_json.hpp`) and `reflection_to_json.hpp` itself enforce it — a
-  direct include without the macro fails with a clear `#error`. Every
-  reflection fixture defines the macro at the top of its file (before any
-  `#include`), so the build lines below need no extra `-D`; additionally,
-  each struct expected to serialize through the catch-all carries the
-  type-level annotation `[[=refl2::json_serializable{}]]` (annotation AFTER
-  the `struct` keyword; unannotated reflectable structs keep the main
-  library's behavior — compile error).
+- **Add-on entry points (2026-10-29 clean-core)**: the core headers match
+  `develop`; there is no catch-all in `detail::{to,from}_json`.
+  - `<nlohmann/reflection.hpp>`: explicit include, no `JSON_USE_REFLECTION`;
+    per-type `[[=nlohmann::json_serializable{}]]`; inert without P2996.
+  - `<nlohmann/reflection_to_json.hpp>`: legacy refl2 codec, explicit include
+    after `json.hpp` with `JSON_USE_REFLECTION`; invoke
+    `refl2::codec<false>::to_json/from_json` explicitly.
+  - `<nlohmann/reflection_binary.hpp>` / `reflection_json.hpp`: legacy binary
+    mirror, explicit include.
 
 ## Fixture build lines
 
@@ -56,8 +59,7 @@ g++-16 -std=c++26 -freflection -O2 -Isingle_include -Iinclude -o /tmp/p repro_m1
 # M2/M3 differential (vs the real library) + ASan leak check
 g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Iinclude \
   -o /tmp/d tests/static-reflection/m2_diff.cpp && /tmp/d
-# M4 concepts dual-path smoke (compile for -std=c++11/20/26; outputs must match)
-g++-16 -std=c++20 -O0 -Iinclude -o /tmp/s tests/static-reflection/concepts_smoke.cpp && /tmp/s
+# [removed 2026-10] C++20 concepts smoke test: the concepts layer is deleted.
 # M5 macro<->annotation differential + zero drift (reflection vs baseline)
 g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Iinclude \
   -o /tmp/prm_r tests/static-reflection/probe_reflection_replace_macros.cpp && /tmp/prm_r
@@ -100,6 +102,11 @@ printf '#include <nlohmann/reflection.hpp>\nint main(){}\n' | \
 printf '#include <nlohmann/reflection.hpp>\nint main(){}\n' | \
   g++-16 -std=c++26 -Iinclude -x c++ - -fsyntax-only
 ```
+
+The M5/M6/M7/type-optin build lines above are historical: they depended on
+the removed core catch-all and are excluded from the clean-core build. See
+`tests/static-reflection/README.md`. The flat-struct line and the binary-mirror
+lines are current.
 
 The full fixture list lives in `tests/static-reflection/`; each file documents
 its own build line in its header comment. The main-library changes are also
@@ -204,35 +211,29 @@ Configure and build a subset, e.g.:
 cmake -S . -B build-test -DCMAKE_CXX_COMPILER=g++-16 \
   -DJSON_BuildTests=ON -DJSON_MultipleHeaders=ON -DBUILD_TESTING=ON
 cmake --build build-test --target test-udt_cpp11 test-serialization_cpp11 \
-  test-conversions_cpp17 test-concepts_dual_cpp20 -j2
-./build-test/tests/test-concepts_dual_cpp20
+  test-conversions_cpp17 -j2
+./build-test/tests/test-udt_cpp11
+./build-test/tests/test-serialization_cpp11
+./build-test/tests/test-conversions_cpp17
 ```
 
-`tests/src/unit-concepts_dual.cpp` (mentions `JSON_HAS_CPP_20`) registers
-both `_cpp11` and `_cpp20` targets and proves the dual path is behavior-preserving.
+`tests/CMakeLists.txt` matches `develop`: there is no C++26 reflection doctest
+target and no concepts dual-path target in the clean-core tree.
 
-### Static-reflection doctest target (`test-static_reflection_cpp26`)
+### Static-reflection add-on fixtures
 
-`tests/src/unit-static_reflection.cpp` ports the opt-in gate coverage into the
-upstream doctest suite (per-type `[[=refl2::json_serializable{}]]` annotation,
-byte-identical macro-path comparison, M6 enum mapping, M7 variant whitelist).
-It is C++26-only (P2996):
-
-- `tests/CMakeLists.txt` excludes it from the default-standard glob (no
-  C++11/14/17/20/23 targets) and registers it explicitly with
-  `CXX_STANDARDS 26`; `-freflection` is added **only** to that target via
-  `json_test_set_test_options` (never globally).
-- `compiler_supports_cpp_26` is defined only for GCC ≥ 16, so default builds
-  on other compilers never see the target. On g++-16 it is built and run with
-  the ordinary suite:
-  ```sh
-  cmake --build build-test --target test-static_reflection_cpp26 -j2
-  ./build-test/tests/test-static_reflection_cpp26
-  ```
-- For a full C++26 sweep of the whole doctest suite, configure with
-  `-DJSON_TestStandards=26` (the `cxx26-reflect-tests` preset).
+Reflection tests are standalone add-on fixtures, not CTest targets:
+`tests/static-reflection/reflection_flat_struct.cpp` (the supported extension),
+explicit `refl2::codec` probes, binary-mirror fixtures, and the compile-fail
+harness (`GXX=g++-16 bash tests/static-reflection/compile_fail.sh`). See
+`tests/static-reflection/README.md` and `CORE_CLEANUP_2026-10.md` for the
+supported/legacy split.
 
 ### Documentation example check (`check_docs_examples.sh`)
+
+> **Legacy (pre-2026-10):** this compiles the old `probe_json_schema` and the
+> old mkdocs reflection page, which describe the removed catch-all; it is not
+> part of the clean-core build.
 
 `docs/mkdocs/docs/features/reflection.md` contains two fenced blocks that are
 executable claims: the `namespace schema` JSON Schema generator (```cpp) and
