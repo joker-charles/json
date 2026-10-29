@@ -12,6 +12,10 @@ reflection code is **add-on-only**:
 
 ## Supported clean-core fixtures
 
+- `tests/src/unit-static_reflection.cpp` — the C++26 doctest target
+  (`test-static_reflection_cpp26`) for the flat-struct extension. It is the
+  portable subset of the pre-2026-10 catch-all test file: plain/nested
+  structs, library containers, object-access semantics, and per-type opt-in.
 - `reflection_flat_struct.cpp` — the new flat-struct extension (split and
   amalgamated-library layouts).
 - `probe_coverage_boundary.cpp`, `probe_type_alignment.cpp` — explicit

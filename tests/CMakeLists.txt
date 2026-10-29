@@ -52,6 +52,13 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_
     unset(compiler_supports_cpp_20)
 endif()
 
+# GCC 16+ supports C++26 static reflection (P2996) via -std=c++26 -freflection.
+# The flag is added per-target (never globally) for the standalone flat-struct
+# reflection doctest.
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 16.0)
+    set(compiler_supports_cpp_26 TRUE)
+endif()
+
 #############################################################################
 # test_main library with shared code to speed up build and common settings
 #############################################################################
@@ -151,6 +158,15 @@ message(STATUS "${msg}")
 
 # *DO* use json_test_set_test_options() above this line
 
+# Standalone flat-struct reflection extension: -freflection only on this
+# C++26 target (never in global flags; see BUILD_RECIPES.md).
+if(compiler_supports_cpp_26)
+    json_test_set_test_options(test-static_reflection
+        CXX_STANDARDS 26
+        COMPILE_OPTIONS $<$<CXX_COMPILER_ID:GNU>:-freflection>
+    )
+endif()
+
 json_test_should_build_32bit_test(json_32bit_test json_32bit_test_only "${JSON_32bitTest}")
 file(GLOB files CONFIGURE_DEPENDS src/unit-*.cpp)
 if(json_32bit_test_only)
@@ -158,10 +174,19 @@ if(json_32bit_test_only)
 elseif(NOT json_32bit_test)
     list(FILTER files EXCLUDE REGEX src/unit-32bit.cpp)
 endif()
+# unit-static_reflection.cpp is C++26-only (P2996): exclude it from the default
+# standard glob and register it explicitly below with -freflection.
+list(FILTER files EXCLUDE REGEX src/unit-static_reflection.cpp)
 
 foreach(file ${files})
     json_test_add_test_for(${file} MAIN test_main CXX_STANDARDS ${test_cxx_standards} ${test_force})
 endforeach()
+
+if(compiler_supports_cpp_26)
+    json_test_add_test_for(src/unit-static_reflection.cpp
+        MAIN test_main CXX_STANDARDS 26 ${test_force}
+    )
+endif()
 
 if(json_32bit_test_only)
     # Skip all other tests in this file
