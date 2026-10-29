@@ -1,8 +1,9 @@
 # Standalone flat-struct reflection extension (`<nlohmann/reflection.hpp>`)
 
 > **Status:** first slice, feature/static-reflection branch. This document is
-> the scope/contract for the standalone extension. It is not the refl2 codec
-> (`reflection_to_json.hpp`) and not the rjson mirror (`reflection_json.hpp`).
+> the scope/contract for the standalone extension — the only reflection code on
+> this branch. The retired `refl2` codec and the `rjson` binary mirror are
+> preserved on `legacy/reflection-experiments`.
 
 ## 1. Contract
 
@@ -15,8 +16,8 @@ The extension is an **explicit add-on**:
 - `<nlohmann/json.hpp>` does **not** include it.
 - `single_include/nlohmann/json.hpp` does **not** ship it.
 - Not including it changes nothing.
-- It does not require, define, or consult `JSON_USE_REFLECTION`. The legacy
-  refl2 catch-all remains a separate experiment.
+- It does not require, define, or consult any feature macro (`JSON_USE_REFLECTION`
+  and its catch-all were retired and are not on this branch).
 
 Serialization is **opt-in by type**:
 
@@ -135,19 +136,16 @@ The annotation must follow the class key: `struct [[=nlohmann::json_serializable
 - Nested members use `get<Member>()`, so a member must be default-constructible
   or provide a returning `from_json` on the from side.
 
-## 6. Gating and relation to the legacy codec
+## 6. Gating
 
 - Active only when `__cpp_impl_reflection` and `__cpp_lib_reflection` are
   defined (g++-16 `-std=c++26 -freflection`).
 - Without those macros the header is inert; `nlohmann::json_serializable` is
   not declared.
-- `JSON_USE_REFLECTION` (the refl2 catch-all) is independent and remains
-  unchanged. Do not annotate a type that already has a hand-written serializer
-  or a legacy serializer; for an annotated type the extension's
-  `adl_serializer` specialization is used.
-- The old refl2 `reflection_to_json.hpp` / rjson `reflection_json.hpp` codecs
-  are out of scope. The old internal-layout strategy in
-  `UPSTREAM_INTEGRATION_PLAN.md` §2.1/Phase 3 does not apply to this extension.
+- There is no feature macro and no wide-open catch-all on this branch. Do not
+  annotate a type that already has a hand-written serializer or an
+  `adl_serializer` specialization: for an annotated type the extension's
+  specialization is used.
 
 ## 7. Non-goals (later slices)
 
