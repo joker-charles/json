@@ -73,6 +73,10 @@ find_program(SCAN_BUILD_TOOL NAMES scan-build-15 scan-build-14 scan-build-13 sca
 
 # the individual source files
 file(GLOB_RECURSE SRC_FILES ${PROJECT_SOURCE_DIR}/include/nlohmann/*.hpp)
+# The legacy reflection add-on headers are C++26-only (P2996): they are explicit
+# add-ons, not part of the C++11 self-containment contract. The current
+# <nlohmann/reflection.hpp> is inert without P2996 and stays in the list.
+list(FILTER SRC_FILES EXCLUDE REGEX "reflection_(to_json|json|binary)\\.hpp$")
 
 ###############################################################################
 # Thorough check with recent compilers

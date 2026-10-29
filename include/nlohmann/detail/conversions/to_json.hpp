@@ -28,20 +28,6 @@
 #include <nlohmann/detail/meta/std_fs.hpp>
 #include <nlohmann/detail/meta/type_traits.hpp>
 #include <nlohmann/detail/value_t.hpp>
-#ifdef JSON_HAS_CPP_20
-    #include <nlohmann/detail/concepts/concepts.hpp>
-#endif
-
-// C++26 static reflection (P2996): reflection-driven generic to_json for
-// user-defined types. Active only when the compiler provides reflection
-// (g++-16 -std=c++26 -freflection defines __cpp_impl_reflection /
-// __cpp_lib_reflection) AND the user opts in with JSON_USE_REFLECTION
-// (UPSTREAM_INTEGRATION_PLAN.md §2.2); otherwise this include is inert and
-// the C++11 contract is untouched. The catch-all overload below must be
-// declared before to_json_fn (it is) so the CPO's unqualified lookup finds it.
-#if defined(__cpp_impl_reflection) && defined(__cpp_lib_reflection) && defined(JSON_USE_REFLECTION)
-    #include <nlohmann/reflection_to_json.hpp>
-#endif
 
 NLOHMANN_JSON_NAMESPACE_BEGIN
 namespace detail
@@ -314,20 +300,12 @@ void to_json(BasicJsonType& j, const std::optional<T>& opt) noexcept
 }
 #endif
 
-#ifdef JSON_HAS_CPP_20
-template<typename BasicJsonType, concepts::boolean_like<BasicJsonType> T>
-inline void to_json(BasicJsonType& j, T b) noexcept
-{
-    external_constructor<value_t::boolean>::construct(j, b);
-}
-#else
 template<typename BasicJsonType, typename T,
          enable_if_t<std::is_same<T, typename BasicJsonType::boolean_t>::value, int> = 0>
 inline void to_json(BasicJsonType& j, T b) noexcept
 {
     external_constructor<value_t::boolean>::construct(j, b);
 }
-#endif
 
 template < typename BasicJsonType, typename BoolRef,
            enable_if_t <
@@ -342,20 +320,12 @@ inline void to_json(BasicJsonType& j, const BoolRef& b) noexcept
     external_constructor<value_t::boolean>::construct(j, static_cast<typename BasicJsonType::boolean_t>(b));
 }
 
-#ifdef JSON_HAS_CPP_20
-template<typename BasicJsonType, concepts::string_like<BasicJsonType> CompatibleString>
-inline void to_json(BasicJsonType& j, const CompatibleString& s)
-{
-    external_constructor<value_t::string>::construct(j, s);
-}
-#else
 template<typename BasicJsonType, typename CompatibleString,
          enable_if_t<std::is_constructible<typename BasicJsonType::string_t, CompatibleString>::value, int> = 0>
 inline void to_json(BasicJsonType& j, const CompatibleString& s)
 {
     external_constructor<value_t::string>::construct(j, s);
 }
-#endif
 
 template<typename BasicJsonType>
 inline void to_json(BasicJsonType& j, typename BasicJsonType::string_t&& s)
@@ -363,22 +333,12 @@ inline void to_json(BasicJsonType& j, typename BasicJsonType::string_t&& s)
     external_constructor<value_t::string>::construct(j, std::move(s));
 }
 
-#ifdef JSON_HAS_CPP_20
-// C++20 concepts path (modernization): same overload selection as the
-// enable_if_t below, expressed as a named concept for the value category.
-template<typename BasicJsonType, concepts::floating_point FloatType>
-inline void to_json(BasicJsonType& j, FloatType val) noexcept
-{
-    external_constructor<value_t::number_float>::construct(j, static_cast<typename BasicJsonType::number_float_t>(val));
-}
-#else
 template<typename BasicJsonType, typename FloatType,
          enable_if_t<std::is_floating_point<FloatType>::value, int> = 0>
 inline void to_json(BasicJsonType& j, FloatType val) noexcept
 {
     external_constructor<value_t::number_float>::construct(j, static_cast<typename BasicJsonType::number_float_t>(val));
 }
-#endif
 
 template<typename BasicJsonType, typename CompatibleNumberUnsignedType,
          enable_if_t<is_compatible_integer_type<typename BasicJsonType::number_unsigned_t, CompatibleNumberUnsignedType>::value, int> = 0>
@@ -395,33 +355,6 @@ inline void to_json(BasicJsonType& j, CompatibleNumberIntegerType val) noexcept
 }
 
 #if !JSON_DISABLE_ENUM_SERIALIZATION
-#ifdef JSON_HAS_CPP_26_REFLECTION
-// C++26 static reflection (M6): an enum whose enumerators carry
-// [[=refl2::json_name{"..."}]] annotations maps to strings (replacing
-// NLOHMANN_JSON_SERIALIZE_ENUM); an unannotated enum keeps the integer path
-// byte-for-byte (zero drift). JSON_HAS_CPP_26_REFLECTION is defined by
-// reflection_to_json.hpp, i.e. only when the opt-in macro is on.
-// noexcept mirrors the integer-path overload (and the C++20 branch below):
-// upstream's unit-noexcept.cpp asserts noexcept(to_json(json&, enum)) and
-// noexcept(json(enum)), so dropping it here is an observable API change.
-// It is CONDITIONAL because the annotated path allocates (j = string) and may
-// throw, exactly like the NLOHMANN_JSON_SERIALIZE_ENUM it replaces (whose
-// to_json is not noexcept either); an unannotated enum keeps noexcept(true).
-template<typename BasicJsonType, concepts::enum_type EnumType>
-inline void to_json(BasicJsonType& j, EnumType e)
-noexcept(!(refl2::detail::enum_is_enumerable<EnumType>() && refl2::detail::enum_has_annotations<EnumType>()))
-{
-    refl2::detail::serialize_enum(j, e);
-}
-#elif defined(JSON_HAS_CPP_20)
-template<typename BasicJsonType, concepts::enum_type EnumType>
-inline void to_json(BasicJsonType& j, EnumType e) noexcept
-{
-    using underlying_type = typename std::underlying_type<EnumType>::type;
-    static constexpr value_t integral_value_t = std::is_unsigned<underlying_type>::value ? value_t::number_unsigned : value_t::number_integer;
-    external_constructor<integral_value_t>::construct(j, static_cast<underlying_type>(e));
-}
-#else
 template<typename BasicJsonType, typename EnumType,
          enable_if_t<std::is_enum<EnumType>::value, int> = 0>
 inline void to_json(BasicJsonType& j, EnumType e) noexcept
@@ -430,7 +363,6 @@ inline void to_json(BasicJsonType& j, EnumType e) noexcept
     static constexpr value_t integral_value_t = std::is_unsigned<underlying_type>::value ? value_t::number_unsigned : value_t::number_integer;
     external_constructor<integral_value_t>::construct(j, static_cast<underlying_type>(e));
 }
-#endif
 #endif  // JSON_DISABLE_ENUM_SERIALIZATION
 
 template<typename BasicJsonType>
@@ -439,30 +371,6 @@ inline void to_json(BasicJsonType& j, const std::vector<bool>& e)
     external_constructor<value_t::array>::construct(j, e);
 }
 
-#ifdef JSON_HAS_CPP_20
-// C++20 path: layer-3 inline exclusion combinator over layer-2 concepts.
-// The binary / basic_json exclusions stay as traits (they contain non-obvious
-// special cases); the range-view exclusion is a gated bool variable template so
-// that `#if` never appears inside the requires-clause expression.
-#if JSON_HAS_RANGES && !defined(__MINGW32__)
-    template<typename T> constexpr bool not_range_view = !is_compatible_range_view<T>::value;
-#else
-    template<typename T> constexpr bool not_range_view = true;
-#endif
-
-template < typename BasicJsonType, typename CompatibleArrayType >
-requires (concepts::array_like<CompatibleArrayType, BasicJsonType>
-          && !concepts::object_like<CompatibleArrayType, BasicJsonType>
-          && !concepts::string_like<CompatibleArrayType, BasicJsonType>
-          && !std::is_same<typename BasicJsonType::binary_t, CompatibleArrayType>::value
-          && !is_compatible_binary_type<BasicJsonType, CompatibleArrayType>::value
-          && !is_basic_json<CompatibleArrayType>::value
-          && not_range_view<CompatibleArrayType>)
-void to_json(BasicJsonType& j, const CompatibleArrayType& arr)
-{
-    external_constructor<value_t::array>::construct(j, arr);
-}
-#else
 template < typename BasicJsonType, typename CompatibleArrayType,
            enable_if_t < is_compatible_array_type<BasicJsonType,
                          CompatibleArrayType>::value&&
@@ -480,7 +388,6 @@ inline void to_json(BasicJsonType& j, const CompatibleArrayType& arr)
 {
     external_constructor<value_t::array>::construct(j, arr);
 }
-#endif
 
 #if JSON_HAS_RANGES && !defined(__MINGW32__)
 template < typename BasicJsonType, typename T,
@@ -521,22 +428,12 @@ inline void to_json(BasicJsonType& j, typename BasicJsonType::array_t&& arr)
     external_constructor<value_t::array>::construct(j, std::move(arr));
 }
 
-#ifdef JSON_HAS_CPP_20
-template < typename BasicJsonType, typename CompatibleObjectType >
-requires (concepts::object_like<CompatibleObjectType, BasicJsonType>
-          && !is_basic_json<CompatibleObjectType>::value)
-inline void to_json(BasicJsonType& j, const CompatibleObjectType& obj)
-{
-    external_constructor<value_t::object>::construct(j, obj);
-}
-#else
 template < typename BasicJsonType, typename CompatibleObjectType,
            enable_if_t < is_compatible_object_type<BasicJsonType, CompatibleObjectType>::value&& !is_basic_json<CompatibleObjectType>::value, int > = 0 >
 inline void to_json(BasicJsonType& j, const CompatibleObjectType& obj)
 {
     external_constructor<value_t::object>::construct(j, obj);
 }
-#endif
 
 template<typename BasicJsonType>
 inline void to_json(BasicJsonType& j, typename BasicJsonType::object_t&& obj)

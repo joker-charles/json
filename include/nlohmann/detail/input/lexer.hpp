@@ -11,25 +11,16 @@
 #include <array> // array
 #include <clocale> // localeconv
 #include <cstddef> // size_t
-#include <cstdint> // uint8_t (escape_control_character)
+#include <cstdio> // snprintf
 #include <cstdlib> // strtof, strtod, strtold, strtoll, strtoull
 #include <initializer_list> // initializer_list
 #include <string> // char_traits, string
 #include <utility> // move
 #include <vector> // vector
 
-// macro_scope.hpp must come BEFORE the JSON_HAS_CPP_17 test below: it defines
-// that macro, so a standalone include of this header in C++17+ mode would
-// otherwise select the C++11/14 strtoull fallback (and fail to compile, since
-// std::from_chars is never declared) — verified regression vs develop.
-#include <nlohmann/detail/macro_scope.hpp>
-#ifdef JSON_HAS_CPP_17
-    #include <charconv> // from_chars
-    #include <system_error> // errc
-#endif
-
 #include <nlohmann/detail/input/input_adapters.hpp>
 #include <nlohmann/detail/input/position_t.hpp>
+#include <nlohmann/detail/macro_scope.hpp>
 #include <nlohmann/detail/meta/type_traits.hpp>
 
 NLOHMANN_JSON_NAMESPACE_BEGIN
@@ -968,65 +959,6 @@ class lexer : public lexer_base<BasicJsonType>
         f = std::strtold(str, endptr);
     }
 
-    // Parse a non-negative integer token into @a value. Returns false on
-    // overflow (in which case @a value is unspecified). Under C++17+ this uses
-    // the allocation-free, locale-independent std::from_chars; on C++11/14 it
-    // falls back to strtoull/strtoll + errno. Both agree on the overflow
-    // signal, so the caller's "integer overflow -> parse as float" fallback is
-    // behavior-identical (verified against the old C `*to*` conversions).
-#ifdef JSON_HAS_CPP_17
-    template<typename Number, enable_if_t<std::is_unsigned<Number>::value, int> = 0>
-    static bool try_parse_integer(const char* first, const char* last, Number& value) noexcept
-    {
-        const auto [ptr, ec] = std::from_chars(first, last, value);
-        (void)ptr;
-        return ec == std::errc();
-    }
-
-    template < typename Number, enable_if_t < std::is_signed<Number>::value, int > = 0 >
-    static bool try_parse_integer(const char* first, const char* last, Number& value) noexcept
-    {
-        const auto [ptr, ec] = std::from_chars(first, last, value);
-        (void)ptr;
-        return ec == std::errc();
-    }
-#else
-    template<typename Number, enable_if_t<std::is_unsigned<Number>::value, int> = 0>
-    static bool try_parse_integer(const char* str, const char* /*last*/, Number& value) noexcept
-    {
-        char* end = nullptr; // NOLINT(misc-const-correctness,cppcoreguidelines-pro-type-vararg,hicpp-vararg)
-        errno = 0;
-        const auto x = std::strtoull(str, &end, 10);
-        const auto narrowed = static_cast<Number>(x);
-        // Round-trip check: Number may be NARROWER than unsigned long long
-        // (custom basic_json number types). Without it an out-of-range token
-        // would be silently truncated instead of falling through to the float
-        // path — upstream's behavior (`value_unsigned == x`).
-        if (errno == ERANGE || narrowed != x)
-        {
-            return false;
-        }
-        value = narrowed;
-        return true;
-    }
-
-    template < typename Number, enable_if_t < std::is_signed<Number>::value, int > = 0 >
-    static bool try_parse_integer(const char* str, const char* /*last*/, Number& value) noexcept
-    {
-        char* end = nullptr; // NOLINT(misc-const-correctness,cppcoreguidelines-pro-type-vararg,hicpp-vararg)
-        errno = 0;
-        const auto x = std::strtoll(str, &end, 10);
-        const auto narrowed = static_cast<Number>(x);
-        // see the unsigned overload: same round-trip (upstream `value_integer == x`)
-        if (errno == ERANGE || static_cast<long long>(narrowed) != x)
-        {
-            return false;
-        }
-        value = narrowed;
-        return true;
-    }
-#endif
-
     /*!
     @brief scan a number literal
 
@@ -1348,20 +1280,39 @@ scan_number_done:
         unget();
 
         char* endptr = nullptr; // NOLINT(misc-const-correctness,cppcoreguidelines-pro-type-vararg,hicpp-vararg)
+        errno = 0;
 
         // try to parse integers first and fall back to floats
         if (number_type == token_type::value_unsigned)
         {
-            if (try_parse_integer(token_buffer.data(), token_buffer.data() + token_buffer.size(), value_unsigned))
+            const auto x = std::strtoull(token_buffer.data(), &endptr, 10);
+
+            // we checked the number format before
+            JSON_ASSERT(endptr == token_buffer.data() + token_buffer.size());
+
+            if (errno != ERANGE)
             {
-                return token_type::value_unsigned;
+                value_unsigned = static_cast<number_unsigned_t>(x);
+                if (value_unsigned == x)
+                {
+                    return token_type::value_unsigned;
+                }
             }
         }
         else if (number_type == token_type::value_integer)
         {
-            if (try_parse_integer(token_buffer.data(), token_buffer.data() + token_buffer.size(), value_integer))
+            const auto x = std::strtoll(token_buffer.data(), &endptr, 10);
+
+            // we checked the number format before
+            JSON_ASSERT(endptr == token_buffer.data() + token_buffer.size());
+
+            if (errno != ERANGE)
             {
-                return token_type::value_integer;
+                value_integer = static_cast<number_integer_t>(x);
+                if (value_integer == x)
+                {
+                    return token_type::value_integer;
+                }
             }
         }
 
@@ -1603,22 +1554,6 @@ scan_number_done:
         return token_string;
     }
 
-    // Format a control character (< 0x20) as the library's error-token escape
-    // "<U+00XX>". Uses a branch-free uppercase hex nibble table (the same
-    // pattern as serializer::hex_bytes) instead of snprintf("%.4X"),
-    // eliminating the vararg/format-string usage. Output is byte-identical:
-    // control chars are 0x00..0x1F so the codepoint is always two uppercase
-    // hex digits.
-    static std::string escape_control_character(std::uint8_t c)
-    {
-        static constexpr char hex[] = "0123456789ABCDEF";
-        std::string out = "<U+00";
-        out += hex[(c >> 4) & 0x0F];
-        out += hex[c & 0x0F];
-        out += '>';
-        return out;
-    }
-
     /// return the last read token (for errors only).  Will never contain EOF
     /// (an arbitrary value that is not a valid char value, often -1), because
     /// 255 may legitimately occur.  May contain NUL, which should be escaped.
@@ -1634,7 +1569,9 @@ scan_number_done:
             if (static_cast<unsigned char>(c) <= '\x1F')
             {
                 // escape control characters
-                result += escape_control_character(static_cast<std::uint8_t>(c));
+                std::array<char, 9> cs{{}};
+                static_cast<void>((std::snprintf)(cs.data(), cs.size(), "<U+%.4X>", static_cast<unsigned char>(c))); // NOLINT(cppcoreguidelines-pro-type-vararg,hicpp-vararg)
+                result += cs.data();
             }
             else
             {
