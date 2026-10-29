@@ -1,37 +1,91 @@
 # docs/static-reflection — index
 
-Branch-internal documentation for the static-reflection work on
-`feature/static-reflection`. This directory is **not** part of the published
-website (that is `docs/mkdocs/docs/features/reflection.md`).
+Branch-internal documentation for `feature/static-reflection`. Not published on
+the website; the user-facing page is
+`docs/mkdocs/docs/features/reflection.md`.
 
-The branch has one supported deliverable: `<nlohmann/reflection.hpp>`, an
-explicit, per-type-opt-in flat-struct serializer built only on the public
-`basic_json` interface.
+The branch ships **one** thing: `include/nlohmann/reflection.hpp`, an explicit
+add-on that serializes annotated flat structs through the public `basic_json`
+API. Nothing else under `include/` differs from `develop`.
 
-## What to read
+## The three documents
 
-| You want | Read |
+| File | Read it for |
 |---|---|
-| The extension's contract, scope and test matrix | [`FLAT_STRUCT_REFLECTION.md`](FLAT_STRUCT_REFLECTION.md) |
-| What to propose upstream, and under which constraints | [`UPSTREAM_INTEGRATION_PLAN.md`](UPSTREAM_INTEGRATION_PLAN.md) |
-| How the branch got to its current shape | [`CORE_CLEANUP_2026-10.md`](CORE_CLEANUP_2026-10.md) |
-| The planned next slice (private-member access) | [`PRIVATE_MEMBER_REFLECTION_PLAN.md`](PRIVATE_MEMBER_REFLECTION_PLAN.md) |
-| Verified compiler/reflection facts (don't re-derive) | [`VERIFIED_FACTS.md`](VERIFIED_FACTS.md) |
-| Build, test, amalgamate commands | [`BUILD_RECIPES.md`](BUILD_RECIPES.md) |
+| [`EXTENSION.md`](EXTENSION.md) | the contract: opt-in, what serializes, what is rejected and with which diagnostic, semantics, non-goals |
+| [`VERIFIED_FACTS.md`](VERIFIED_FACTS.md) | verified toolchain and P2996 facts — do not re-derive |
+| this file | commands, upstream plan, history |
 
-## What is no longer here
+## Build and test
 
-The branch previously carried a much larger exploration: a wide-open `refl2`
-catch-all wired into `detail/{to,from}_json`, an annotation layer
-(`json_name`/`json_ignore`/`json_default`), enum string mapping, reflection-driven
-MessagePack/UBJSON/BSON/CBOR/BJData readers and writers, and a
-reflection-backed `basic_json_reflection` reimplementation of the tagged union.
-None of it is part of the proposed upstream surface, and all of it reached
-`basic_json`'s private layout through `access_context::unchecked()`.
+Requirements: `g++-16` with `-std=c++26 -freflection` (the default `g++` has no
+`<meta>`). Never put `-freflection` into `CMAKE_CXX_FLAGS`: it leaks into the
+nested cmake tests and breaks their `TryCompile` probes.
 
-That work — code, milestone reports, measurements and defect reproductions —
-is preserved on the **`legacy/reflection-experiments`** branch. Do not
-reintroduce it here; the first PR is deliberately one header and one test file.
+```sh
+# toolchain smoke
+printf 'int main(){}' | g++-16 -std=c++26 -freflection -x c++ - -o /tmp/t
 
-Toolchain hard requirement for anything reflection-related: `g++-16 -std=c++26
--freflection` (see `BUILD_RECIPES.md`).
+# runtime fixture (split headers, then the amalgamated library)
+g++-16 -std=c++26 -freflection -Iinclude -o /tmp/rfs \
+    tests/static-reflection/reflection_flat_struct.cpp && /tmp/rfs
+g++-16 -std=c++26 -freflection -Isingle_include -Iinclude -o /tmp/rfs2 \
+    tests/static-reflection/reflection_flat_struct.cpp && /tmp/rfs2
+
+# negative compile harness and documentation check
+GXX=g++-16 bash tests/static-reflection/compile_fail.sh
+GXX=g++-16 bash tests/static-reflection/check_docs_examples.sh
+
+# doctest target
+cmake -S . -B build-test -DCMAKE_CXX_COMPILER=g++-16 \
+  -DJSON_BuildTests=ON -DJSON_MultipleHeaders=ON -DBUILD_TESTING=ON
+cmake --build build-test --target test-static_reflection_cpp26 -j2
+./build-test/tests/test-static_reflection_cpp26
+```
+
+The header is inert without P2996 (`-std=c++11` … `-std=c++26` all compile), and
+it is **not** amalgamated: do not add it to
+`tools/amalgamate/config_json.json`.
+
+## Proposing it upstream
+
+The maintainer agreed to consider an opt-in, C++26-only extension, under these
+conditions — they are the acceptance criteria for the branch:
+
+1. a separate header, never included by `json.hpp` or `single_include`;
+2. per-type opt-in only (`struct [[=nlohmann::json_serializable{}]] S`),
+   unannotated types unchanged;
+3. public API only — no reflection into `basic_json`'s private members;
+4. no core-header changes in the same effort, and no binary formats;
+5. small first PR — nested types via the normal ADL path plus the actionable
+   `static_assert`; annotation features later;
+6. experimental until a second compiler implements P2996 (only GCC 16 does).
+
+Everything on this branch is scoped to 1–5. What PR 1 contains:
+`include/nlohmann/reflection.hpp`, `tests/src/unit-static_reflection.cpp`, the
+fixtures/harnesses under `tests/static-reflection/`, the feature page, one
+`tests/CMakeLists.txt` target and one nav entry. No CI, core or single-header
+change.
+
+Open questions to settle in an issue **before** more code:
+
+- header name: `<nlohmann/reflection.hpp>`;
+- annotation name: `nlohmann::json_serializable`;
+- whether a feature macro is required on top of the header include (today there
+  is none: including the header is the opt-in);
+- namespace: `nlohmann`, as for the rest of the public API.
+
+## History
+
+Earlier, this branch explored much more: a wide-open catch-all wired into
+`detail/{to,from}_json`, a `refl2` codec with an annotation layer, enum string
+mapping, reflection-driven MessagePack/UBJSON/BSON/CBOR/BJData codecs, and a
+reflection-backed reimplementation of the tagged union. All of it reached
+`basic_json`'s private `json_value` layout through
+`access_context::unchecked()` and changed behavior for types that never opted
+in, so it was retired: the four core headers went back to `develop`, the
+concepts layer and the add-on codecs were removed.
+
+That work — code, milestone reports, benchmarks, measurements and defect
+reproductions — is preserved on the **`legacy/reflection-experiments`** branch.
+Do not reintroduce it here.
