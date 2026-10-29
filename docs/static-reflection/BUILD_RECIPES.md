@@ -87,12 +87,30 @@ g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Iinclude \
 # M4D-2 iterators: begin/end/operator[]/find/erase(iterator)
 g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Isingle_include -Iinclude \
   -o /tmp/m4d2 tests/static-reflection/m4d2_iterators.cpp && /tmp/m4d2
+# Standalone flat-struct reflection extension (explicit add-on; no JSON_USE_REFLECTION)
+g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Iinclude \
+  -o build/scratch/reflection_flat_struct \
+  tests/static-reflection/reflection_flat_struct.cpp && ./build/scratch/reflection_flat_struct
+g++-16 -std=c++26 -freflection -O1 -g -fsanitize=address -Isingle_include -Iinclude \
+  -o build/scratch/reflection_flat_struct_single \
+  tests/static-reflection/reflection_flat_struct.cpp && ./build/scratch/reflection_flat_struct_single
+# inert without P2996 (must compile; nlohmann::json_serializable is not declared)
+printf '#include <nlohmann/reflection.hpp>\nint main(){}\n' | \
+  g++-16 -std=c++11 -Iinclude -x c++ - -fsyntax-only
+printf '#include <nlohmann/reflection.hpp>\nint main(){}\n' | \
+  g++-16 -std=c++26 -Iinclude -x c++ - -fsyntax-only
 ```
 
 The full fixture list lives in `tests/static-reflection/`; each file documents
 its own build line in its header comment. The main-library changes are also
 covered by the repository's doctest unit suite (see "Repository test suite"
 below).
+
+The standalone flat-struct extension (`include/nlohmann/reflection.hpp`) is
+**not** in the `json.hpp` include chain, so it is not amalgamated into
+`single_include/nlohmann/json.hpp`; do not add it to
+`tools/amalgamate/config_json.json`. The split add-on works with the
+amalgamated library via `-Isingle_include -Iinclude`.
 
 ## Single-header regeneration (amalgamate)
 
@@ -236,5 +254,5 @@ tampered code block, broken fixture).
 Pairs with the compile-fail harness:
 
 ```sh
-GXX=g++-16 bash tests/static-reflection/compile_fail.sh   # 12 cases, must fail to compile
+GXX=g++-16 bash tests/static-reflection/compile_fail.sh   # all auto-discovered cases, must fail to compile
 ```

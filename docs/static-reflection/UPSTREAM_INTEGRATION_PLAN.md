@@ -19,6 +19,15 @@
 
 ### 2.1 当前实现依赖私有内部结构
 
+> **Update (2026-10-29) — standalone flat-struct extension**: the new
+> `include/nlohmann/reflection.hpp` extension deliberately does **not** use
+> `unchecked()` on `basic_json::json_value`. It builds/reads values through the
+> public `basic_json` API (`object()`/`operator[]`/`at()`/`get<T>()`) via a
+> constrained `adl_serializer<T, void>` partial specialization. The
+> internal-layout strategy below applies only to the old refl2/rjson
+> experiments, not to the flat-struct extension. See
+> `FLAT_STRUCT_REFLECTION.md`.
+
 `reflection_json.hpp` 用 `access_context::unchecked()` 反射并直接 splice 私有 `basic_json::json_value`。这是**库实现者视角**下的正当用法：P2996 的 `unchecked()` 本来就允许库自身获取私有成员；普通开发者应使用 `unprivileged()`，这是两件不同的事。
 
 `basic_json::json_value` 不是正式契约，但 git 行历史显示该 union 定义自 2020-05-17（`internal_binary_t` → `binary_t` 重命名）以来已超过 6 年未变动。因此可以把它当作**事实上稳定**的内部布局来跟随：即使未来改动，同步更新反射代码即可，预期不会频繁变更。
@@ -98,17 +107,23 @@ g++-16 16.1.0（`-std=c++26 -freflection`）：
   #define JSON_HAS_CPP_26_REFLECTION 1
   #endif
   ```
-- 存储访问策略：作为库内部实现，继续使用 `unchecked()` 反射 `basic_json::json_value`；若上游维护者不接受该内部依赖，再退到受控 `detail` 接口/friend。
+- 存储访问策略（仅旧 refl2 codec）：作为库内部实现，继续使用 `unchecked()` 反射 `basic_json::json_value`；若上游维护者不接受该内部依赖，再退到受控 `detail` 接口/friend。新 flat-struct 扩展不使用该策略，见 §2.1 的 2026-10-29 更新。
 - 每类型 opt-in：类上 `struct [[=refl2::json_serializable{}]] S` 类型级注解
   （P3394R4，GCC 16 支持，见 §2.2），只有被标注的类参与反射路径。
 - 默认行为不变：没有宏时，编译结果与现在的主库完全一致。
+
+> **Flat-struct extension (2026-10-29)**: implemented as an explicit
+> `<nlohmann/reflection.hpp>` add-on with per-type
+> `[[=nlohmann::json_serializable{}]]`; public API only, no
+> `unchecked()`/`json_value`. The old refl2 catch-all/`JSON_USE_REFLECTION`
+> path remains a separate experiment.
 
 **命名空间与头文件拆分（已定路线：独立命名空间）**：
 - `refl2`（序列化 codec）与 `rjson`（二进制格式/反射 API 表面）**保持独立
   命名空间**，不进 `NLOHMANN_JSON_NAMESPACE`；catch-all 重载必须留在
   `nlohmann::detail`（参与重载决议），这一部分不变。
 - 两个入口头，对应 PR 拆分：
-  - `include/nlohmann/reflection.hpp` —— refl2 序列化扩展（PR 2 交付物）；
+  - `include/nlohmann/reflection.hpp` —— standalone flat-struct 扩展（第一版 PR 交付物；旧 refl2 codec 另见 `reflection_to_json.hpp`）；
   - `include/nlohmann/reflection_binary.hpp` —— rjson 二进制/API 扩展（PR 4）。
 - 内部按功能模块拆到 `include/nlohmann/reflection/` 子目录（一个文件一个可
   独立 review 的单元）：`config.hpp`（gate/macro 定义点）、`annotations.hpp`

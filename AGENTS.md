@@ -81,7 +81,7 @@ static_assert; library-dedicated array types (`B::binary_t` / C array /
 `std::forward_list` / `std::valarray` / `std::u8string`) now route through
 the adl branch via `is_library_dedicated_array` (they were mis-serialized
 as number arrays / static_assert / compile-error / abort); a negative
-compile-fail harness (`compile_fail/`, 9 cases) plus runtime error-path
+compile-fail harness (`compile_fail/`, auto-discovered cases) plus runtime error-path
 (`probe_negative_runtime.cpp`) and upstream type-surface
 (`probe_type_alignment.cpp`) probes landed. The C++20 concepts modernization
 is completed: the to_json boolean overload is `concepts::boolean_like<T,B>`
@@ -96,6 +96,16 @@ dangling `rbegin()` reference, and JSON/CBOR/BSON output divergences. Top-level
 `std::variant` is now gated behind `JSON_USE_REFLECTION_VARIANT`, gate-on regression
 targets `test-reflection_*_cpp26` compile the upstream TUs with the gate enabled, and
 the full report with verification commands is `docs/static-reflection/REVIEW_2026-08.md`.
+**Standalone flat-struct extension (2026-10, first slice)**: `include/nlohmann/reflection.hpp`
+is an explicit add-on (`json.hpp` and `single_include` do not include it). It
+adds a per-type opt-in `struct [[=nlohmann::json_serializable{}]] S` and a
+small flat-struct serializer built only on the public `basic_json` API
+(`object()`/`operator[]`/`at()`/`get<T>()`) via a constrained
+`adl_serializer<T, void>` partial specialization. Unannotated types keep the
+current behavior; the extension is independent of the legacy
+`JSON_USE_REFLECTION` wide-open catch-all. On non-P2996 toolchains the header
+is inert so the C++11 per-header self-containment check does not regress.
+Scope and test matrix: `docs/static-reflection/FLAT_STRUCT_REFLECTION.md`.
 Design:
 `docs/static-reflection/M5_REFLECTION_TO_JSON.md` (M5/M6),
 `docs/static-reflection/M4D_API_SURFACE.md` (M4D),
@@ -103,7 +113,9 @@ Design:
 `docs/static-reflection/M4B3_BINARY_READERS.md` (M4B-3),
 `docs/static-reflection/UPSTREAM_INTEGRATION_PLAN.md` (upstream integration strategy),
 `docs/static-reflection/M7_VARIANT.md` (M7),
-`docs/static-reflection/M4D2_ITERATORS.md` (M4D-2); verified facts:
+`docs/static-reflection/M4D2_ITERATORS.md` (M4D-2),
+`docs/static-reflection/FLAT_STRUCT_REFLECTION.md` (standalone flat-struct
+extension); verified facts:
 `docs/static-reflection/VERIFIED_FACTS.md`.
 
 ## 2. Safety boundaries (non-negotiable)
@@ -204,5 +216,9 @@ reason to skip it. Load it when you are about to:
   (M6): the catch-all wiring, exact-probe exclusion sets, circularity
   defenses, the annotation layer, macro↔annotation semantic differences,
   and the verification matrix.
+- `docs/static-reflection/FLAT_STRUCT_REFLECTION.md` — the standalone
+  `<nlohmann/reflection.hpp>` flat-struct extension: per-type
+  `[[=nlohmann::json_serializable{}]]`, public-API-only serializer,
+  first-slice scope and test matrix.
 - Authoritative C++ feature/API facts (header map, signatures, reflection index):
   the **`modern-cpp` skill**; the local offline cppreference if present.
