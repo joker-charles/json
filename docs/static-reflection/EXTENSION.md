@@ -71,13 +71,12 @@ serializer remains the right tool.
 
 ## Implementation: public API only
 
-A constrained partial specialization of the public customization point
-`nlohmann::adl_serializer<T, void>`:
+A SFINAE-constrained partial specialization of the public customization point
+`nlohmann::adl_serializer<T, void>` (no C++20 concepts layer):
 
 ```cpp
 template<typename T>
-    requires detail::reflection_flat::is_annotated_v<T>
-struct adl_serializer<T, void>
+struct adl_serializer<T, std::enable_if_t<detail::reflection_flat::is_annotated_v<T>>>
 {
     template<typename BasicJsonType>
     static void to_json(BasicJsonType& j, const T& value);      // object() + j[key] = m

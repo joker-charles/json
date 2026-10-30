@@ -36,8 +36,9 @@
 //   * no member rename/skip/default annotations, no enum/variant reflection,
 //     no binary formats. Those are later slices.
 //
-// Public API only: the serializer is a constrained partial specialization of
-// nlohmann::adl_serializer<T, void> and builds/reads values through
+// Public API only: the serializer is a SFINAE-constrained partial
+// specialization of nlohmann::adl_serializer<T, void> (no C++20 concepts
+// layer is involved) and builds/reads values through
 // BasicJsonType::object(), operator[], at() and get<T>(). It never touches
 // basic_json's private json_value/m_data layout or reflection's unchecked().
 //
@@ -94,11 +95,17 @@ consteval bool has_json_serializable_annotation(std::meta::info type)
     return false;
 }
 
+template<typename T, typename = void>
+struct is_complete : std::false_type {};
+
+template<typename T>
+struct is_complete<T, std::void_t<decltype(sizeof(T))>> : std::true_type {};
+
 template<typename T>
 inline constexpr bool is_annotated_v =
     !std::is_const_v<T> && !std::is_volatile_v<T> && !std::is_reference_v<T>
     && (std::is_class_v<T> || std::is_union_v<T>)
-    && requires { sizeof(T); }
+    && is_complete<T>::value
     && has_json_serializable_annotation(^^T);
 
 template<typename>
@@ -117,24 +124,36 @@ constexpr void validate_flat_struct()
                   "json_serializable requires all non-static data members to be public");
 }
 
-template<typename BasicJsonType, typename T, std::meta::info member>
-concept member_to_json = requires(BasicJsonType& out, const T& in)
-{
-    out[std::declval<const std::string&>()] = in.[:member:];
-};
+// SFINAE probes: can this member be written/read through the public interface?
+// (No C++20 concepts: a well-formed expression in a void_t argument makes the
+// trait true, substitution failure makes it false.)
+template<typename BasicJsonType, typename T, std::meta::info member, typename = void>
+struct member_to_json : std::false_type {};
 
 template<typename BasicJsonType, typename T, std::meta::info member>
-concept member_from_json = requires(const BasicJsonType& in, T& out)
-{
-    out.[:member:] = in.at(std::declval<const std::string&>()).template get<typename [:std::meta::type_of(member):]>();
-};
+struct member_to_json<BasicJsonType, T, member,
+    std::void_t<decltype(std::declval<BasicJsonType&>()[std::declval<const std::string&>()]
+                         = std::declval<const T&>().[:member:])>> : std::true_type {};
+
+template<typename BasicJsonType, typename T, std::meta::info member, typename = void>
+struct member_from_json : std::false_type {};
+
+template<typename BasicJsonType, typename T, std::meta::info member>
+struct member_from_json<BasicJsonType, T, member,
+    std::void_t<decltype(std::declval<T&>().[:member:]
+                         = std::declval<const BasicJsonType&>()
+                               .at(std::declval<const std::string&>())
+                               .template get<typename [:std::meta::type_of(member):]>())>>
+    : std::true_type {};
 
 } // namespace reflection_flat
 } // namespace detail
 
+// SFINAE-constrained partial specialization: for annotated types the second
+// argument resolves to void, the default of the public adl_serializer
+// customization point, so no C++20 concept is needed.
 template<typename T>
-requires detail::reflection_flat::is_annotated_v<T>
-struct adl_serializer<T, void>
+struct adl_serializer<T, std::enable_if_t<detail::reflection_flat::is_annotated_v<T>>>
 {
     template<typename BasicJsonType>
     static void to_json(BasicJsonType& j, const T& value)
@@ -151,7 +170,7 @@ struct adl_serializer<T, void>
             if constexpr (std::meta::has_identifier(member))
             {
                 const auto key = std::string(std::meta::identifier_of(member));
-                if constexpr (detail::reflection_flat::member_to_json<BasicJsonType, T, member>)
+                if constexpr (detail::reflection_flat::member_to_json<BasicJsonType, T, member>::value)
                 {
                     j[key] = value.[:member:];
                 }
@@ -186,7 +205,7 @@ struct adl_serializer<T, void>
             if constexpr (std::meta::has_identifier(member))
             {
                 const auto key = std::string(std::meta::identifier_of(member));
-                if constexpr (detail::reflection_flat::member_from_json<BasicJsonType, T, member>)
+                if constexpr (detail::reflection_flat::member_from_json<BasicJsonType, T, member>::value)
                 {
                     value.[:member:] = j.at(key).template get<member_type>();
                 }

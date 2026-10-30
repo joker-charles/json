@@ -42,9 +42,10 @@ macro family produces for the same type.
 
 ## Members go through the normal serialization path
 
-The serializer is a constrained
+The serializer is a SFINAE-constrained
 [`adl_serializer<T, void>`](../api/adl_serializer/index.md) partial
-specialization built **only on the public interface** of `basic_json`
+specialization (no C++20 concepts layer) built **only on the public interface**
+of `basic_json`
 (`object()`, `operator[]`, `at()`, `get<T>()`); it never touches
 `basic_json`'s private layout. Each member is therefore serialized exactly as a
 hand-written serializer would do it:
