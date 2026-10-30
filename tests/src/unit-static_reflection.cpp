@@ -85,6 +85,13 @@ struct [[=nlohmann::json_serializable{}]] WithArray
 {
     std::array<int, 3> arr{};
 };
+
+struct [[=nlohmann::json_serializable{}]] NoDefault
+{
+    int x{};
+    NoDefault() = delete;
+    explicit NoDefault(int value) : x(value) {}
+};
 } // namespace flat
 
 // is_annotated_v branch coverage: cv-qualified, reference, non-class and
@@ -104,6 +111,13 @@ static_assert(!nlohmann::detail::reflection_flat::is_annotated_v<flat::Point&>);
 static_assert(!nlohmann::detail::reflection_flat::is_annotated_v<int>);
 static_assert(!nlohmann::detail::reflection_flat::is_annotated_v<incomplete>);
 static_assert(!nlohmann::detail::reflection_flat::is_annotated_v<annotated_forward_declaration>);
+
+union plain_union
+{
+    int integer;
+    float floating;
+};
+static_assert(!nlohmann::detail::reflection_flat::is_annotated_v<plain_union>);
 } // namespace branch_coverage
 
 namespace macro
@@ -184,6 +198,26 @@ TEST_CASE("flat-struct reflection: per-type opt-in and object semantics")
     const auto extra = json::parse(R"({"x":1.0,"y":2.0,"extra":3})").get<flat::Point>();
     CHECK(extra.x == doctest::Approx(1.0));
     CHECK(extra.y == doctest::Approx(2.0));
+}
+
+TEST_CASE("flat-struct reflection: non-object input and no default ctor")
+{
+    SECTION("non-object input reports at()'s type error")
+    {
+        CHECK_THROWS_WITH_AS(static_cast<void>(json(5).get<flat::Point>()),
+                             "[json.exception.type_error.304] cannot use at() with number",
+                             json::type_error);
+    }
+
+    SECTION("from_json into an existing object does not need a default ctor")
+    {
+        static_assert(!std::is_default_constructible_v<flat::NoDefault>);
+        flat::NoDefault value(0);
+        nlohmann::adl_serializer<flat::NoDefault>::from_json(json{{"x", 42}}, value);
+        CHECK(value.x == 42);
+        json::parse(R"({"x":7})").get_to(value);
+        CHECK(value.x == 7);
+    }
 }
 
 TEST_CASE("flat-struct reflection: container from_json requires the matching JSON type")

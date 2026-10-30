@@ -50,6 +50,11 @@ jobs:
         run: |
           cmake --build build --target test-static_reflection_cpp26
           ./build/tests/test-static_reflection_cpp26
+      - name: Runtime fixture (bit-fields, nested members, error paths)
+        run: |
+          g++ -std=c++26 -freflection -Iinclude -o build/reflection_flat_struct \
+              tests/static-reflection/reflection_flat_struct.cpp
+          ./build/reflection_flat_struct
       - name: Negative-compile harness
         run: GXX=g++ bash tests/static-reflection/compile_fail.sh
 

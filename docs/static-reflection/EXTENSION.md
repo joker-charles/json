@@ -45,7 +45,7 @@ auto p = j.get<point>();             // round-trip
 | empty annotated struct | `{}` |
 | member with ADL `to_json`/`from_json`, or a nested annotated type | normal library path |
 | member that is a library type (`std::string`, `std::vector<T>`, `std::array<T,N>`, maps, pairs, …) | normal library path |
-| named bit-field | supported through the public read/assign path |
+| named bit-field | supported (runtime fixture); `from_json` into a narrow bit-field is a narrowing conversion, so `-Wconversion -Werror` builds flag it exactly like hand-written code |
 
 Flat structs only: direct public non-static data members. Base classes are not
 flattened, and unannotated nested structs are not reflected — annotate the
@@ -121,7 +121,7 @@ internals; annotation detection uses only query-domain reflection
 |---|---|
 | `tests/src/unit-static_reflection.cpp` (`test-static_reflection_cpp26`) | doctest: plain/nested structs, containers, object semantics, per-type opt-in |
 | `tests/static-reflection/reflection_flat_struct.cpp` | runtime fixture, split and `single_include` layouts |
-| `tests/static-reflection/compile_fail/` + `compile_fail.sh` | the rejection guards above in **both directions**, the add-on-not-included case and the macro-without-P2996 #error (10 TUs) |
+| `tests/static-reflection/compile_fail/` + `compile_fail.sh` | the rejection guards above in **both directions**, the add-on-not-included case and the macro-without-P2996 #error (12 TUs) |
 | `tests/static-reflection/check_docs_examples.sh` | keeps the mkdocs page's claims executable |
 
 Non-regression that is part of the contract: `include/nlohmann/detail/**` and

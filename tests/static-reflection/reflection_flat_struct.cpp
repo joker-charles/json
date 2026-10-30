@@ -50,6 +50,12 @@ struct [[ = nlohmann::json_serializable {}]] empty
 {
 };
 
+struct [[ = nlohmann::json_serializable {}]] bit_fields
+{
+    unsigned a : 4;
+    unsigned b : 4;
+};
+
 namespace adl
 {
 struct widget
@@ -157,7 +163,14 @@ int main()
     const auto pe = extra.get<point>();
     check("extra keys are ignored", pe.x == 1.0 && pe.y == 2.0);
 
-    std::printf("\n[5] generic BasicJsonType\n");
+    std::printf("\n[6] named bit-fields\n");
+    const bit_fields bf{1u, 2u};
+    json jbf = bf;
+    check("bit-field: to_json", jbf.dump() == R"({"a":1,"b":2})");
+    const auto bf2 = jbf.get<bit_fields>();
+    check("bit-field: from_json", bf2.a == 1u && bf2.b == 2u);
+
+    std::printf("\n[7] generic BasicJsonType\n");
     nlohmann::ordered_json oj = p;
     check("ordered_json: to_json", oj.at("x").get<double>() == 1.5);
     const auto op = oj.get<point>();

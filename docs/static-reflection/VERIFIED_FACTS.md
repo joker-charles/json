@@ -48,7 +48,9 @@
   (`using B = typename [: type_of(b0) :];`).
 - Named bit-fields serialize and round-trip: `to_json` reads them and
   `from_json` assigns directly (`value.[:member:] = ...`), so no `T&`/address is
-  formed. (A hand-written serializer that takes a reference cannot.) Unnamed
+  formed. Under `-Wconversion -Werror` that assignment is a narrowing
+  conversion, exactly as hand-written `value.field = ...` would be, so the
+  doctest TU does not instantiate it; the runtime fixture does. Unnamed
   bit-fields are not subobjects and are skipped by `subobjects_of`.
 
 ## Type-level annotations (P3394R4)
