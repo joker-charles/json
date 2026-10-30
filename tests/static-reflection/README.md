@@ -1,6 +1,9 @@
-# Static-reflection fixtures
+# Static-reflection fixtures (branch-local)
 
-Fixtures and harnesses for `<nlohmann/reflection.hpp>`.
+Verification tooling for `<nlohmann/reflection.hpp>`. **Not part of the upstream
+PR**: upstream tests live in `tests/src/unit-static_reflection.cpp` (doctest,
+gated on `JSON_USE_REFLECTION`); these fixtures and harnesses stay on the
+branch for development-time negative-compile and round-trip checks.
 
 | File | Purpose |
 |---|---|

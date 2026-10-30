@@ -75,6 +75,21 @@ That is the property the extension exists for: `NLOHMANN_DEFINE_TYPE_*` fails
 *open* — a member left out of the macro list is dropped without a word, whereas
 reflection sees every member and the mistake surfaces at compile time.
 
+### Rejected at compile time
+
+| Input | Diagnostic |
+|---|---|
+| union | `json_serializable does not support unions` |
+| any base class (public, protected, private, virtual) | `… does not support base classes` |
+| private/protected data member | `… requires all non-static data members to be public` |
+| anonymous member (no identifier) | `… does not support anonymous members` |
+| member type with no serialization path | `… member is not JSON-serializable; provide ADL to_json() or annotate the member type` |
+| member type with no deserialization path | `… member is not JSON-deserializable; provide ADL from_json() or annotate the member type` |
+
+A missing key throws `out_of_range` (403); a non-object input reports
+`type_error` 304 from `at()`; extra keys are ignored — the same object
+semantics as `NLOHMANN_DEFINE_TYPE_*`.
+
 ## Scope
 
 Deliberately small: flat structs only — public, non-static data members, no base
@@ -89,4 +104,7 @@ string mapping, no `std::variant` handling, no binary formats.
   `-std=c++26 -freflection`. On any other toolchain, defining the macro is a
   clear `#error` instead of a confusing "annotation not declared" later. The
   C++11 build contract of the library is untouched.
+- Named bit-fields serialize and round-trip, but `from_json` into a narrow
+  bit-field is a narrowing conversion, so `-Wconversion -Werror` builds flag it
+  exactly like hand-written code.
 - Not covered by the amalgamated `single_include` header.

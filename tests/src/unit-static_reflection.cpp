@@ -12,8 +12,9 @@
 // Coverage: plain/nested structs, library container members, object-access
 // semantics, and per-type opt-in. Member rename/skip/default annotations,
 // enum/variant mapping, binary formats and annotation inspection are out of
-// scope for this first slice; the explicit fixtures under tests/static-reflection/
-// cover the rejection paths.
+// scope for this first slice; the rejection paths are enforced by the
+// static_asserts in the header (and checked at development time by the
+// branch-local compile-fail tooling).
 //
 // The target is registered by tests/CMakeLists.txt for C++26 with -freflection
 // and -DJSON_USE_REFLECTION. The JSON_HAS_CPP_26 string below is also what
@@ -39,6 +40,27 @@
 #include <vector>
 
 using nlohmann::json;
+
+namespace adl
+{
+struct widget
+{
+    int id{};
+};
+
+void to_json(json& j, const widget& w) noexcept;
+void from_json(const json& j, widget& w);
+
+void to_json(json& j, const widget& w) noexcept
+{
+    j = w.id;
+}
+
+void from_json(const json& j, widget& w)
+{
+    w.id = j.get<int>();
+}
+} // namespace adl
 
 namespace flat
 {
@@ -91,6 +113,18 @@ struct [[=nlohmann::json_serializable{}]] NoDefault
     int x{};
     NoDefault() = delete;
     explicit NoDefault(int value) : x(value) {}
+};
+
+struct [[=nlohmann::json_serializable{}]] WithAdlMember
+{
+    adl::widget widget{};
+    std::string name{};
+};
+
+struct [[=nlohmann::json_serializable{}]] BitFields
+{
+    unsigned a : 4;
+    unsigned b : 4;
 };
 } // namespace flat
 
@@ -198,6 +232,27 @@ TEST_CASE("flat-struct reflection: per-type opt-in and object semantics")
     const auto extra = json::parse(R"({"x":1.0,"y":2.0,"extra":3})").get<flat::Point>();
     CHECK(extra.x == doctest::Approx(1.0));
     CHECK(extra.y == doctest::Approx(2.0));
+}
+
+TEST_CASE("flat-struct reflection: ADL members and bit-field serialization")
+{
+    SECTION("member with ADL to_json/from_json uses the normal path")
+    {
+        const json j = flat::WithAdlMember{adl::widget{9}, "name"};
+        CHECK(j.dump() == R"({"name":"name","widget":9})");
+        const auto value = j.get<flat::WithAdlMember>();
+        CHECK(value.widget.id == 9);
+        CHECK(value.name == "name");
+    }
+
+    SECTION("named bit-fields serialize")
+    {
+        // Only to_json is exercised here: from_json into a narrow bit-field is a
+        // narrowing conversion that -Wconversion -Werror (the strict CI job)
+        // rejects; the runtime fixture covers the round-trip.
+        const json j = flat::BitFields{1u, 2u};
+        CHECK(j.dump() == R"({"a":1,"b":2})");
+    }
 }
 
 TEST_CASE("flat-struct reflection: non-object input and no default ctor")

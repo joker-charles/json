@@ -1,8 +1,9 @@
 # docs/static-reflection — index
 
 Branch-internal documentation for `feature/static-reflection`. Not published on
-the website; the user-facing page is
-`docs/mkdocs/docs/features/reflection.md`.
+the website and **not part of the upstream PR**; everything users see ships in
+`docs/mkdocs/docs/features/reflection.md` (per the maintainer's layout
+condition).
 
 The branch ships **one** thing: `include/nlohmann/reflection.hpp`, an explicit
 add-on behind `JSON_USE_REFLECTION` that serializes annotated flat structs
@@ -65,9 +66,11 @@ conditions — they are the acceptance criteria for the branch:
 6. experimental until a second compiler implements P2996 (only GCC 16 does).
 
 Everything on this branch is scoped to 1–5. What PR 1 contains:
-`include/nlohmann/reflection.hpp`, `tests/src/unit-static_reflection.cpp`, the
-fixtures/harnesses under `tests/static-reflection/`, the feature page, one
-`tests/CMakeLists.txt` target, one nav entry and one GCC 16 CI job. No
+`include/nlohmann/reflection.hpp`, `tests/src/unit-static_reflection.cpp`
+(doctest, gated on `JSON_USE_REFLECTION`), the feature page under
+`docs/mkdocs/docs/`, one `tests/CMakeLists.txt` target, one nav entry and one
+GCC 16 CI job. The fixtures/harnesses under `tests/static-reflection/` and this
+directory are branch-local verification notes and are not shipped. No
 core-header or single-header change.
 
 The surface proposed upstream (issue

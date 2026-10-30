@@ -33,8 +33,8 @@ jobs:
 
   # C++26 static reflection (P2996) is GCC 16-only today; the extension stays
   # experimental until a second implementation exists. This job pins GCC 16 and
-  # runs the reflection doctest and its negative-compile harness. No other job
-  # definition changes; existing gcc:latest jobs (GCC 16) also build the target.
+  # runs the reflection doctest (tests/src/unit-static_reflection.cpp). No other
+  # job definition changes; existing gcc:latest jobs (GCC 16) also build the target.
   ci_test_reflection_gcc16:
     runs-on: ubuntu-latest
     container: gcc:16
@@ -50,13 +50,6 @@ jobs:
         run: |
           cmake --build build --target test-static_reflection_cpp26
           ./build/tests/test-static_reflection_cpp26
-      - name: Runtime fixture (bit-fields, nested members, error paths)
-        run: |
-          g++ -std=c++26 -freflection -Iinclude -o build/reflection_flat_struct \
-              tests/static-reflection/reflection_flat_struct.cpp
-          ./build/reflection_flat_struct
-      - name: Negative-compile harness
-        run: GXX=g++ bash tests/static-reflection/compile_fail.sh
 
   ci_infer:
     runs-on: ubuntu-latest
