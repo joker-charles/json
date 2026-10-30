@@ -87,6 +87,18 @@ struct [[=nlohmann::json_serializable{}]] WithArray
 };
 } // namespace flat
 
+// is_annotated_v branch coverage: cv-qualified, reference, non-class and
+// incomplete types must not select the reflection serializer.
+namespace branch_coverage
+{
+struct incomplete;
+static_assert(!nlohmann::detail::reflection_flat::is_annotated_v<const flat::Point>);
+static_assert(!nlohmann::detail::reflection_flat::is_annotated_v<volatile flat::Point>);
+static_assert(!nlohmann::detail::reflection_flat::is_annotated_v<flat::Point&>);
+static_assert(!nlohmann::detail::reflection_flat::is_annotated_v<int>);
+static_assert(!nlohmann::detail::reflection_flat::is_annotated_v<incomplete>);
+} // namespace branch_coverage
+
 namespace macro
 {
 struct Point

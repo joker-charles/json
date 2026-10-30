@@ -121,7 +121,7 @@ internals; annotation detection uses only query-domain reflection
 |---|---|
 | `tests/src/unit-static_reflection.cpp` (`test-static_reflection_cpp26`) | doctest: plain/nested structs, containers, object semantics, per-type opt-in |
 | `tests/static-reflection/reflection_flat_struct.cpp` | runtime fixture, split and `single_include` layouts |
-| `tests/static-reflection/compile_fail/` + `compile_fail.sh` | the rejection guards above plus the add-on-not-included case (7 TUs) |
+| `tests/static-reflection/compile_fail/` + `compile_fail.sh` | the rejection guards above in **both directions**, the add-on-not-included case and the macro-without-P2996 #error (10 TUs) |
 | `tests/static-reflection/check_docs_examples.sh` | keeps the mkdocs page's claims executable |
 
 Non-regression that is part of the contract: `include/nlohmann/detail/**` and
