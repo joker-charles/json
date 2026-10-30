@@ -13,8 +13,10 @@ branch for development-time negative-compile and round-trip checks.
 
 The doctest target lives in the main suite:
 `tests/src/unit-static_reflection.cpp` (`test-static_reflection_cpp26`), which
-gets `-DJSON_USE_REFLECTION` from `tests/CMakeLists.txt`. The runtime fixture
-defines the macro in-source; the two harness scripts pass it per compile.
+gets `-DJSON_USE_REFLECTION` from `tests/CMakeLists.txt`. It is registered only
+for multi-header builds (`JSON_MultipleHeaders=ON`, the default): a
+`single_include`-only build does not ship the add-on. The runtime fixture defines
+the macro in-source; the two harness scripts pass it per compile.
 
 ```sh
 GXX=g++-16 bash tests/static-reflection/compile_fail.sh

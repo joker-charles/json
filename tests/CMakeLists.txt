@@ -158,7 +158,9 @@ message(STATUS "${msg}")
 
 # Standalone flat-struct reflection extension: -freflection and
 # JSON_USE_REFLECTION only on this C++26 target, never in global flags.
-if(compiler_supports_cpp_26)
+# The add-on lives in include/ only: a single-header build (JSON_MultipleHeaders=OFF)
+# has no <nlohmann/reflection.hpp>, so do not register the target there.
+if(compiler_supports_cpp_26 AND JSON_MultipleHeaders)
     json_test_set_test_options(test-static_reflection
         CXX_STANDARDS 26
         COMPILE_DEFINITIONS JSON_USE_REFLECTION
@@ -183,7 +185,7 @@ foreach(file ${files})
     json_test_add_test_for(${file} MAIN test_main CXX_STANDARDS ${test_cxx_standards} ${test_force})
 endforeach()
 
-if(compiler_supports_cpp_26)
+if(compiler_supports_cpp_26 AND JSON_MultipleHeaders)
     json_test_add_test_for(src/unit-static_reflection.cpp
         MAIN test_main CXX_STANDARDS 26 ${test_force}
     )
