@@ -69,6 +69,10 @@
   never a subobject of it.
 - Enum/enumerator annotations, if they are ever added, must be placed after the
   identifier (`green [[=json_name{"GREEN"}]] = 2`); GCC rejects the leading form.
+- Annotations on a **forward declaration** are visible to `annotations_of()`,
+  so `is_annotated_v` must check completeness (`is_complete`) before querying:
+  without the guard an annotated `struct S;` would select the serializer for an
+  incomplete type. Locked by a `static_assert` in `unit-static_reflection.cpp`.
 
 ## What is deliberately not used
 

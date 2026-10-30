@@ -92,11 +92,18 @@ struct [[=nlohmann::json_serializable{}]] WithArray
 namespace branch_coverage
 {
 struct incomplete;
+
+// Annotations on a forward declaration are visible to annotations_of(), so the
+// is_complete guard is load-bearing: without it is_annotated_v would be true
+// here and the serializer would be selected for an incomplete type.
+struct [[=nlohmann::json_serializable{}]] annotated_forward_declaration;
+
 static_assert(!nlohmann::detail::reflection_flat::is_annotated_v<const flat::Point>);
 static_assert(!nlohmann::detail::reflection_flat::is_annotated_v<volatile flat::Point>);
 static_assert(!nlohmann::detail::reflection_flat::is_annotated_v<flat::Point&>);
 static_assert(!nlohmann::detail::reflection_flat::is_annotated_v<int>);
 static_assert(!nlohmann::detail::reflection_flat::is_annotated_v<incomplete>);
+static_assert(!nlohmann::detail::reflection_flat::is_annotated_v<annotated_forward_declaration>);
 } // namespace branch_coverage
 
 namespace macro
