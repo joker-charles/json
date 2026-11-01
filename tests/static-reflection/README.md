@@ -13,6 +13,8 @@ Fixtures and harnesses for `<nlohmann/reflection.hpp>` and, on the
 | `boundary_matrix.cpp` | Q2 positive boundaries: named/unnamed bit-fields, non-default-constructible `from_json(existing)`, standalone polymorphic type |
 | `semantics_matrix.cpp` | Q3 contract: missing / null / wrong type / extra key / optional, plus plain-macro parity and the `WITH_DEFAULT` gap |
 | `migration_matrix.cpp` | Q4 evidence: `WITH_NAMES` key change, `WITH_DEFAULT` missing-key behavior, `ONLY_SERIALIZE` from_json gap |
+| `delegation_matrix.cpp` | maintainer's "type's own to_json/from_json delegates" pattern: C1/C2/C3-constrained bypass the wrapper |
+| `delegation_matrix_wide.cpp` | same pattern under `JSON_REFLECTION_NAMESPACE_UNCONSTRAINED`: the wrapper runs and delegates |
 | `optin_odr/` | two TUs where only one sees `enable<T>`; both compile but disagree on `is_constructible` (ODR/visibility hazard) |
 | `compile_fail/` + `compile_fail.sh` | annotation negative cases; each must fail with the diagnostic on its `EXPECT-DIAG:` line; also the P2996 `#error` |
 | `namespace_compile_fail/` + `namespace_compile_fail.sh` | namespace negative cases: using-only is not an opt-in, enable-after-use, private/base/union/reference/const/unsupported members, nested type not enabled, unconstrained hard error, generic ambiguity |

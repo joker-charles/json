@@ -63,6 +63,10 @@ build_run boundary_matrix "$SCRIPT_DIR/boundary_matrix.cpp" "${INCS[@]}"
 build_run semantics_matrix "$SCRIPT_DIR/semantics_matrix.cpp" "${INCS[@]}"
 build_run migration_matrix "$SCRIPT_DIR/migration_matrix.cpp" "${INCS[@]}"
 
+printf '\n== delegation use case (own to_json/from_json delegates) ==\n'
+build_run delegation_matrix "$SCRIPT_DIR/delegation_matrix.cpp" "${INCS[@]}"
+build_run delegation_matrix_wide "$SCRIPT_DIR/delegation_matrix_wide.cpp" "${INCS[@]}"
+
 printf '\n== ODR / visibility TUs (each must compile independently) ==\n'
 run odr_a "$GXX" -std=c++26 -freflection -fsyntax-only "${INCS[@]}" "$SCRIPT_DIR/optin_odr/a.cpp"
 run odr_b "$GXX" -std=c++26 -freflection -fsyntax-only "${INCS[@]}" "$SCRIPT_DIR/optin_odr/b.cpp"
