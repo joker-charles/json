@@ -19,6 +19,23 @@ annotation is optional sugar. C3 has a constrained and an unconstrained mode:
 only the unconstrained mode makes `using` an opt-in by itself. The proposal
 below uses the unconstrained mode.
 
+### At a glance
+
+| Criterion | C1 annotation | C2 `enable<T>` | C3 `using` (unconstrained) |
+|---|---|---|---|
+| Opt-in unit | type | type | namespace |
+| Third-party type | no | **yes** | yes, if the namespace can be reopened |
+| Type definition depends on nlohmann | yes | no | no |
+| Needs `using` | no | no | yes (using-declaration) |
+| Custom serializer / own-serializer delegation | bypassed | bypassed | **composes / runs** |
+| ODR/visibility | travels with the type | external, shared header | external + using declaration |
+| Unsupported type after opt-in | targeted `static_assert` | targeted `static_assert` | hard error in the serializer body |
+| Recommendation | optional sugar | optional safety mode | **primary** |
+
+The recommendation follows from the delegation row: C3 is the only route where
+a type's own serializer can call the plain functions. The cost is the
+namespace-wide caveat; C2 remains the safe per-type fallback.
+
 ### Results
 
 1. **Third-party types.** `enable<T>` is one declaration in a serialization
