@@ -186,11 +186,13 @@ B1 (`tests/static-reflection/measure_optin.sh`):
 
 | | text | data | bss |
 |---|---|---|---|
-| annotation | 76,991 | 136 | 0 |
-| `enable<T>` | 76,991 | 136 | 0 |
+| annotation | 77,007 | 136 | 0 |
+| `enable<T>` | 77,007 | 136 | 0 |
 
 The two objects are the same size, which is expected: both front-ends call the
-same `detail::reflection_flat::to_object/from_object` core. A three-run `-O0`
+same `detail::reflection_flat::to_object/from_object` core. The absolute text
+size varies slightly with the compiler/run; the comparable fact is the C1/C2
+identity, reproduced by `measure_optin.sh`. A three-run `-O0`
 wall-time check was 2.36–2.62 s (A) vs 2.32–2.41 s (B1) — within run-to-run
 noise on this machine; no claim of a systematic difference is made.
 

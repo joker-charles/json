@@ -69,7 +69,8 @@ namespace-wide caveat; C2 remains the safe per-type fallback.
    type definition and does not have this hazard.
 
 6. **Same-core codegen.** A 40-type `-O2` object is byte-size identical for C1
-   and C2 (text 76,991 / data 136 / bss 0), as expected from the shared core.
+   and C2 (text ≈77k / data 136 / bss 0; 77,007 in the latest clean-archive
+   run), as expected from the shared core.
    This is **not** a claim of zero overhead versus the macro path: the legacy
    branch already measured that reflection carries a per-type cost.
 
