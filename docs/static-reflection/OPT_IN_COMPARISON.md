@@ -240,6 +240,33 @@ Consequently v1 is a **complement**, not a drop-in replacement; replacement
 would require rename/skip/default/one-way and private/INTRUSIVE-equivalent
 slices first.
 
+### 2.9 Delegation use case
+
+The maintainer's request explicitly includes using the plain functions from a
+type's own `to_json`/`from_json`. `tests/static-reflection/delegation_matrix.cpp`
+and `delegation_matrix_wide.cpp` test that pattern with a wrapper that
+delegates and sets a marker:
+
+| Route | Own wrapper runs? | Can delegate? |
+|---|---|---|
+| C1 annotation | no — annotation `adl_serializer` specialization wins | n/a |
+| C2 `enable<T>` | no — forwarding `adl_serializer` specialization wins | n/a |
+| C3 `using` + `enable<T>` (constrained) | no — forwarding specialization wins | n/a |
+| C3 `using` (unconstrained) | **yes** — non-template ADL wrapper wins | **yes** (marker present) |
+
+This is a hard constraint on the recommendation: **C2 primary cannot satisfy
+the "own serializer delegates" use case.** The viable options are:
+
+1. use C3 unconstrained for such types and accept its namespace-wide caveat;
+2. add a C2 variant that removes the forwarding specialization and requires
+   `using` as well (two declarations; the custom serializer then wins and can
+   delegate);
+3. declare the delegation pattern out of scope and document that C1/C2 own the
+   type.
+
+The first two must be decided by the maintainer; the current comparison cannot
+choose between them on evidence alone.
+
 ---
 
 ## 3. Recommendation
@@ -247,9 +274,11 @@ slices first.
 1. **Keep the plain functions as the implementation surface**:
    `nlohmann::reflection::to_json/from_json` are directly callable and are the
    one place that builds/reads values.
-2. **Make per-type `enable<T>` the primary opt-in.** It is the only route that
-   covers types you do not own, needs one declaration, does not require
-   reopening a namespace, and keeps the data definition free of nlohmann.
+2. **Make per-type `enable<T>` the primary opt-in for plain types.** It is the
+   only route that covers types you do not own, needs one declaration, does not
+   require reopening a namespace, and keeps the data definition free of
+   nlohmann. It is **not** sufficient for types whose own serializer delegates
+   to the plain functions (see §2.9).
 3. **Keep annotation as optional sugar** for owned types (one line on the
    definition), implemented through the same core. If the maintainer prefers a
    single mechanism, dropping annotation is possible without changing the core.
@@ -260,12 +289,16 @@ slices first.
    "safety off" choice, not as the primary API.
 5. **Decide the custom-serializer precedence before upstreaming.** Either
    document "enable/annotation own the type; do not combine with custom
-   serializers", or add a compile-time diagnostic. Silently ignoring a
-   hand-written `to_json` is the one behavior in this comparison that is hard to
-   defend.
+   serializers", or add a compile-time diagnostic. If the maintainer requires
+   the delegation use case, the forwarding specialization is the wrong design
+   and the no-forwarding + `using` variant (or C3 unconstrained) is required.
 6. **Document the ODR/visibility rule** for `enable<T>`/`using`, and recommend
    putting the opt-in in a shared header. Annotation remains the safer choice
    when the type definition is the only shared declaration.
+7. **Ask the maintainer to choose the delegation answer explicitly**: C3
+   unconstrained + caveat, C2 without forwarding + `using`, or "own serializer
+   is out of scope". This is the one remaining API-shape decision that the
+   evidence cannot make for them.
 
 A possible upstream surface:
 
