@@ -1,120 +1,143 @@
-# Draft comment for issue #5959 — opt-in comparison
+## Opt-in comparison (requested in #5384)
 
-> This is a comment-ready draft. It updates the annotation-only proposal in
-> #5959 with the comparison requested in #5384. It has not been posted.
+Following your reply in #5384, I built the three opt-in routes on the same
+public-API-only core (no core-header changes, no private `json_value`
+reflection) and compared them. The code, fixtures and full result table are in
+my local `reflection-opt-in-compare` experiment branch; I can push/link it if
+useful. The summary below is the proposed direction.
 
-I built the opt-in routes on the same public-API-only core (no core-header
-changes, no private `json_value` reflection) and compared them. Code, fixtures
-and the full result table are on the `reflection-opt-in-compare` experiment
-branch; a summary follows.
-
-## What was compared
+### What was compared
 
 | Route | How a type opts in | Needs `using`? | Works for a type you don't own? |
 |---|---|---|---|
-| A annotation | `struct [[=nlohmann::json_serializable{}]] S` | no | no |
-| B1 `enable<T>` | `template<> inline constexpr bool enable<S> = true;` in `nlohmann::reflection` | no | **yes** |
-| B2 namespace `using` | `using nlohmann::reflection::to_json/from_json;` in the type's namespace | yes | yes, if the namespace can be reopened |
+| C1 annotation | `struct [[=nlohmann::json_serializable{}]] S` | no | no |
+| C2 `enable<T>` | `template<> inline constexpr bool enable<S> = true;` in `nlohmann::reflection` | no | **yes** |
+| C3 namespace `using` | `using nlohmann::reflection::to_json/from_json;` in the type's namespace | yes | yes, if the namespace can be reopened |
 
-B1 and B2 both call the same plain functions
-`nlohmann::reflection::to_json/from_json`; annotation is now optional sugar over
-the same core. B2 has a constrained and an unconstrained mode: only the
-unconstrained mode makes `using` an opt-in by itself.
+All three call the same `nlohmann::reflection::to_json/from_json` core;
+annotation is optional sugar. C3 has a constrained and an unconstrained mode:
+only the unconstrained mode makes `using` an opt-in by itself. The proposal
+below uses the unconstrained mode.
 
-## Results
+### Results
 
-1. **Third-party types are the decisive difference.** `enable<T>` is one
-   declaration in a serialization header and requires neither an annotation nor
-   reopening the type's namespace. That is the case annotation cannot serve.
-2. **`using` alone is namespace-wide, not per-type.** With the functions
-   constrained on `enable<T>`/annotation, `using` alone does not opt a type in;
-   it is only a visibility declaration. With unconstrained functions, `using`
-   opts in every class in the namespace, and unsupported types fail inside the
-   serializer body — the caveat you raised is real and is covered by
-   `namespace_compile_fail/cf_wide_private_member.cpp`.
+1. **Third-party types.** `enable<T>` is one declaration in a serialization
+   header and requires neither an annotation nor reopening the type's
+   namespace. C3 also covers third-party types, but only when their namespace
+   can be reopened to add the using-declaration.
+
+2. **`using` is namespace-wide, not per-type.** With unconstrained functions,
+   `using` opts in every complete class/union in that namespace; unsupported
+   types fail inside the serializer body. This is the caveat you raised, and it
+   is covered by `namespace_compile_fail/cf_wide_private_member.cpp`. A
+   non-template custom serializer still wins, so a type with its own
+   `to_json`/`from_json` is unaffected.
+
 3. **Precedence differs by route.** Annotation and `enable<T>` select an
    `adl_serializer` specialization and therefore bypass a hand-written ADL
    `to_json`/`from_json`. Namespace `using` goes through ADL, so the
    non-template custom serializer wins. A fully generic custom `to_json` plus
    the unconstrained `using` route is ambiguous.
-4. **ODR/visibility.** `using` and `enable<T>` must be visible before first use
+
+4. **Delegation is the decisive difference for the primary route.** A type's
+   own `to_json`/`from_json` that delegates to `nlohmann::reflection::to_json`
+   is **bypassed** by annotation, `enable<T>`, and `using` + `enable<T>`; it
+   runs only with unconstrained namespace `using`
+   (`delegation_matrix.cpp` / `delegation_matrix_wide.cpp`). This is why the
+   proposed primary is C3, not C2.
+
+5. **ODR/visibility.** `using` and `enable<T>` must be visible before first use
    and consistently in every TU; a two-TU fixture shows `is_constructible`
-   disagreeing when one TU does not see the enable. Annotation travels with the
+   disagreeing when one TU does not see the opt-in. Annotation travels with the
    type definition and does not have this hazard.
-5. **Same-core codegen.** A 40-type `-O2` object is byte-size identical for A and
-   B1 (text 76,991 / data 136 / bss 0), as expected from the shared core. This is
-   **not** a claim of zero overhead versus the macro path: the legacy branch
-   already measured that reflection carries a per-type cost; see the branch's
-   evidence appendix.
-6. **Diagnostics.** Enabled types get the same targeted `static_assert` as
-   annotation for union/base/private/reference/const/unsupported members.
-   Reference and const members are rejected explicitly rather than failing in
-   the library's `get<T&>()` internals.
-7. **Wire contract.** Missing key → 403, non-object/array/null input → 304,
+
+6. **Same-core codegen.** A 40-type `-O2` object is byte-size identical for C1
+   and C2 (text 76,991 / data 136 / bss 0), as expected from the shared core.
+   This is **not** a claim of zero overhead versus the macro path: the legacy
+   branch already measured that reflection carries a per-type cost.
+
+7. **Diagnostics.** Opted-in types get targeted `static_assert`s for
+   union/base/private/reference/const/unsupported members. Reference and const
+   members are rejected explicitly rather than failing in the library's
+   `get<T&>()` internals.
+
+8. **Wire contract.** Missing key → 403, non-object/array/null input → 304,
    extra keys ignored; a missing key for `std::optional` is 403, not `nullopt`;
    a present `null` still gives `nullopt`.
-8. **Complement, not replacement.** `WITH_NAMES`, `WITH_DEFAULT` and
+
+9. **Complement, not replacement.** `WITH_NAMES`, `WITH_DEFAULT` and
    `ONLY_SERIALIZE` have no reflection-v1 equivalent (`migration_matrix.cpp`),
    so a drop-in replacement would need later slices.
-9. **Delegation is the remaining hard constraint.** A type's own
-   `to_json`/`from_json` that delegates to `nlohmann::reflection::to_json` is
-   **bypassed** by annotation, `enable<T>`, and `using` + `enable<T>` (the
-   `adl_serializer` specialization wins). It runs only with unconstrained
-   namespace `using` (`delegation_matrix.cpp` / `delegation_matrix_wide.cpp`).
-   So the per-type `enable<T>` route cannot satisfy the "own serializer
-   delegates" use case without a design change.
 
-## Proposal
+### Proposal: C3 unconstrained as the primary layer
 
-Keep the plain functions as the implementation surface. The current
-recommendation is **per-type `enable<T>` for plain types**, with annotation as
-optional sugar; namespace `using` stays an explicit experimental mode:
+Use the plain functions as the primary layer, and opt a namespace in with one
+using-declaration pair:
 
 ```cpp
 #define JSON_USE_REFLECTION
-#include <nlohmann/reflection.hpp>
-#include <nlohmann/reflection_namespace.hpp>   // experiment branch; may be merged
+#include <nlohmann/reflection.hpp>   // plain functions, unconstrained
 
-// owned type: one-line sugar (or the enable<T> form)
-struct [[=nlohmann::json_serializable{}]] point { double x, y; };
+namespace dto
+{
+struct point { double x, y; };
 
-// unowned type: one-line registration, no annotation, no `using`
+// one declaration pair per namespace; all reflectable class/union types
+// in `dto` are now serializable, and a custom serializer still wins
+using nlohmann::reflection::to_json;
+using nlohmann::reflection::from_json;
+}
+
+nlohmann::json j = dto::point{1.0, 2.0};   // {"x":1.0,"y":2.0}
+```
+
+The namespace is the boundary, and that is deliberate:
+
+- the using-declaration must be `using nlohmann::reflection::to_json;` /
+  `using nlohmann::reflection::from_json;` — a `using namespace
+  nlohmann::reflection;` directive is not found by ADL;
+- it must appear in the type's own namespace, before the first use, and in
+  every TU;
+- it covers complete class/union types in that namespace (a non-inline nested
+  namespace needs its own declaration);
+- private/protected members, bases, unions, anonymous members, reference/const
+  members and unserializable member types are hard errors;
+- a fully generic custom `to_json` plus the reflection template is ambiguous;
+  a non-template custom serializer is fine.
+
+I recommend a dedicated DTO/transport namespace rather than a general domain
+namespace, precisely because the opt-in is namespace-wide.
+
+The per-type alternatives remain available when the namespace is not a good
+boundary:
+
+```cpp
+// optional safety mode: one type, no `using` required
 namespace nlohmann::reflection
 {
 template<> inline constexpr bool enable<third_party::widget> = true;
 }
+
+// optional sugar for an owned type
+struct [[=nlohmann::json_serializable{}]] owned { int id{}; };
 ```
 
-I would **not** make namespace-wide `using` the default opt-in: in the
-constrained form it is only visibility, and in the unconstrained form it changes
-behavior for every type in the namespace. It can stay available as an explicit
-experimental mode.
+The experiment currently exposes the unconstrained mode behind
+`JSON_REFLECTION_NAMESPACE_UNCONSTRAINED`; if this direction is accepted, that
+should become the default and the constrained mode can remain as an explicit
+safety opt-in. The experiment ships two headers
+(`reflection.hpp` + `reflection_namespace.hpp`); they can be merged into one
+before the PR.
 
-**The one API-shape decision I cannot make for you is delegation.** The
-maintainer's use case "call the plain functions from a type's own
-`to_json`/`from_json`" is not satisfied by annotation or `enable<T>`: their
-`adl_serializer` specialization runs instead of the wrapper. The options are:
+### Note on the issue body
 
-1. use unconstrained namespace `using` for such types, accepting the
-   whole-namespace caveat;
-2. remove the forwarding specialization and require `using` + `enable<T>`
-   (two declarations; the custom serializer wins and can delegate);
-3. declare the delegation pattern out of scope and document that the opt-in
-   owns the type.
-
-If delegation is in scope, option 2 may be the cleanest compromise; if it is
-not, the current C2 recommendation stands.
-
-## Note on the issue body
-
-The original #5959 body is annotation-only and predates the comparison. Two
+The original #5959 body is annotation-only and predates this comparison. Two
 prototype claims there are now stale: the feature-macro gate and the GCC 16 CI
 job are implemented on the feature branch, and the negative-compile harness now
-has 13 annotation + 15 namespace cases (including reference/const guards). This
-comment is the comparison requested in #5384; the body can be updated after the
-opt-in surface is settled.
+has 13 annotation + 15 namespace cases (including reference/const guards). I can
+update the body once the opt-in surface is settled.
 
-## Verification
+### Verification
 
 - `GXX=g++-16 bash tests/static-reflection/optin_matrix.sh` — 15/15 groups
   pass (annotation baseline, namespace routes in split and `single_include`
@@ -129,17 +152,14 @@ opt-in surface is settled.
   two delegation fixtures cover the contract and the macro gaps.
 - The existing annotation doctest target still passes: 4 cases / 35 assertions.
 
-## Questions
+### Questions
 
-1. Namespace name: `nlohmann::reflection`?
-2. `enable<T>` spelling/mechanism: variable template, trait class, or an ADL
-   customization point that does not open `nlohmann`?
-3. Annotation: keep as sugar, or drop?
-4. **Delegation:** is "a type's own `to_json`/`from_json` delegates to the
-   plain functions" in scope? If yes, choose unconstrained `using` (caveat),
-   or the no-forwarding `enable<T>` + `using` variant (two declarations), or
-   leave it out.
-5. Custom-serializer conflict (if delegation is out of scope): compile-time
-   diagnostic or documented "opt-in wins"?
-6. Namespace-wide `using`: keep as an experimental mode, or drop it?
-7. One header or two (`reflection.hpp` + `reflection_namespace.hpp`)?
+1. **Primary opt-in:** is the namespace-wide `using` caveat acceptable as the
+   primary surface? If not, C2 remains the fallback.
+2. Namespace name: `nlohmann::reflection`?
+3. If C2 is kept as a safety mode: `enable<T>` spelling/mechanism, and should it
+   stay in the same header?
+4. Annotation: keep as sugar, or drop?
+5. Header packaging: one `<nlohmann/reflection.hpp>` or two?
+6. If the namespace-wide caveat is rejected but delegation is required: should
+   we add the no-forwarding `enable<T>` + `using` variant instead?
