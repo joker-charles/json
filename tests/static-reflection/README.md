@@ -10,9 +10,12 @@ Fixtures and harnesses for `<nlohmann/reflection.hpp>` and, on the
 | `reflection_namespace.cpp` | namespace-route fixture: annotation, `enable<T>` without `using`, third-party type, custom ADL precedence, nested/container members, `ordered_json`, error semantics, direct qualified calls |
 | `optin_conflicts.cpp` | precedence matrix: annotation / `enable<T>` / `using` × custom ADL / `NLOHMANN_DEFINE_TYPE_*` / explicit `adl_serializer` |
 | `optin_namespace_wide.cpp` | `JSON_REFLECTION_NAMESPACE_UNCONSTRAINED` mode: `using` alone opts in; custom and macro precedence |
+| `boundary_matrix.cpp` | Q2 positive boundaries: named/unnamed bit-fields, non-default-constructible `from_json(existing)`, standalone polymorphic type |
+| `semantics_matrix.cpp` | Q3 contract: missing / null / wrong type / extra key / optional, plus plain-macro parity and the `WITH_DEFAULT` gap |
+| `migration_matrix.cpp` | Q4 evidence: `WITH_NAMES` key change, `WITH_DEFAULT` missing-key behavior, `ONLY_SERIALIZE` from_json gap |
 | `optin_odr/` | two TUs where only one sees `enable<T>`; both compile but disagree on `is_constructible` (ODR/visibility hazard) |
 | `compile_fail/` + `compile_fail.sh` | annotation negative cases; each must fail with the diagnostic on its `EXPECT-DIAG:` line; also the P2996 `#error` |
-| `namespace_compile_fail/` + `namespace_compile_fail.sh` | namespace negative cases: using-only is not an opt-in, enable-after-use, private/base/union/unsupported members, nested type not enabled, unconstrained hard error, generic ambiguity |
+| `namespace_compile_fail/` + `namespace_compile_fail.sh` | namespace negative cases: using-only is not an opt-in, enable-after-use, private/base/union/reference/const/unsupported members, nested type not enabled, unconstrained hard error, generic ambiguity |
 | `optin_matrix.sh` | runs all of the above, both include layouts, plus the annotation baseline |
 | `measure_optin.sh` | generates N annotation/enable types, compares `-O2` object text/data/bss (expected identical) |
 | `check_docs_examples.sh` | compiles the mkdocs page's examples and checks its claims |
