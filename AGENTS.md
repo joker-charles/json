@@ -11,10 +11,19 @@ One goal: a **small, opt-in, C++26 static-reflection add-on** that serializes
 annotated flat structs through the public `basic_json` API, proposed upstream as
 a reviewable first PR.
 
-Current state: the only reflection code is `include/nlohmann/reflection.hpp`
-(explicit add-on gated by `JSON_USE_REFLECTION`, per-type opt-in). The four core
-headers and `single_include/nlohmann/json.hpp` are byte-identical to `develop`;
+Current state: the upstream-facing reflection code is
+`include/nlohmann/reflection.hpp` (explicit add-on gated by
+`JSON_USE_REFLECTION`, per-type annotation opt-in). The four core headers and
+`single_include/nlohmann/json.hpp` are byte-identical to `develop`;
 `tests/CMakeLists.txt` is `develop` plus one C++26 doctest target.
+
+On the **`reflection-opt-in-compare` experiment branch only**, there is a second
+add-on: `include/nlohmann/reflection_namespace.hpp` adds the reflection-namespace
+opt-in routes (`nlohmann::reflection::enable<T>`, namespace `using`, optional
+annotation sugar) on the same public-API-only core. It is evidence for the
+maintainer's comparison request in discussion #5384, not part of upstream PR 1.
+See `docs/static-reflection/OPT_IN_COMPARISON.md`; do not fold it into the
+annotation PR until the opt-in style is decided.
 
 Retired: a wide-open catch-all, a `refl2` annotation codec, enum mapping,
 reflection-driven binary formats and a reflection-backed tagged union — all of
@@ -32,12 +41,14 @@ branch; do not reintroduce it here.
   (`make amalgamate`). The reflection add-on is deliberately not amalgamated.
 - **The doctest suite stays green**, and the extension's own gates must hold:
   the runtime fixture (both include layouts), `compile_fail.sh`,
-  `check_docs_examples.sh` and `test-static_reflection_cpp26`.
+  `namespace_compile_fail.sh`, `optin_matrix.sh`, `check_docs_examples.sh` and
+  `test-static_reflection_cpp26`.
 - **No behavior claims without proof.** Anything asserted as byte-identical must
   show the comparison; the compile-fail harness exists so rejection paths are
   proven, not assumed.
 - **Free-experiment region**: `include/nlohmann/reflection.hpp`,
-  `tests/static-reflection/`, `docs/static-reflection/`.
+  `include/nlohmann/reflection_namespace.hpp`, `tests/static-reflection/`,
+  `docs/static-reflection/`.
 - **Scratch files** go in `.tmp/` or `build/scratch/` (both gitignored). `/tmp`
   does not survive between tool invocations here.
 

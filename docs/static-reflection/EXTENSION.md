@@ -1,8 +1,15 @@
 # The extension: `<nlohmann/reflection.hpp>`
 
-Contract for the only reflection code on this branch. Build and test commands
+Contract for the annotation front-end on this branch. Build and test commands
 are in [`README.md`](README.md); compiler facts in
 [`VERIFIED_FACTS.md`](VERIFIED_FACTS.md).
+
+> **Experiment-branch note.** `reflection-opt-in-compare` adds
+> `<nlohmann/reflection_namespace.hpp>`, which keeps this contract's
+> public-API-only core and adds `nlohmann::reflection::enable<T>` and namespace
+> `using` as alternative opt-in routes (annotation becomes optional sugar). The
+> comparison is in [`OPT_IN_COMPARISON.md`](OPT_IN_COMPARISON.md); the
+> annotation contract below is unchanged.
 
 ## Opt-in: macro, header, toolchain, annotation
 

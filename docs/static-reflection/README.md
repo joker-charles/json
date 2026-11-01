@@ -4,16 +4,26 @@ Branch-internal documentation for `feature/static-reflection`. Not published on
 the website; the user-facing page is
 `docs/mkdocs/docs/features/reflection.md`.
 
-The branch ships **one** thing: `include/nlohmann/reflection.hpp`, an explicit
-add-on behind `JSON_USE_REFLECTION` that serializes annotated flat structs
-through the public `basic_json` API. Nothing else under `include/` differs from
-`develop`.
+The branch's upstream-facing extension is **one** header:
+`include/nlohmann/reflection.hpp`, an explicit add-on behind
+`JSON_USE_REFLECTION` that serializes annotated flat structs through the public
+`basic_json` API. Nothing else under `include/` differs from `develop`.
 
-## The three documents
+On this **experiment branch** (`reflection-opt-in-compare`) there is a second
+add-on, `include/nlohmann/reflection_namespace.hpp`: it keeps the same
+public-API-only core and adds the reflection-namespace opt-in routes requested
+in discussion #5384 (`enable<T>`, namespace `using`, optional annotation
+sugar). The comparison and recommendation are in
+[`OPT_IN_COMPARISON.md`](OPT_IN_COMPARISON.md); the comment-ready issue update is
+[`API_ISSUE_5959_UPDATE.md`](API_ISSUE_5959_UPDATE.md).
+
+## The documents
 
 | File | Read it for |
 |---|---|
-| [`EXTENSION.md`](EXTENSION.md) | the contract: opt-in, what serializes, what is rejected and with which diagnostic, semantics, non-goals |
+| [`EXTENSION.md`](EXTENSION.md) | the annotation contract: opt-in, what serializes, what is rejected and with which diagnostic, semantics, non-goals |
+| [`OPT_IN_COMPARISON.md`](OPT_IN_COMPARISON.md) | annotation vs `enable<T>` vs namespace `using`: scope, precedence, ODR, diagnostics, size, recommendation |
+| [`API_ISSUE_5959_UPDATE.md`](API_ISSUE_5959_UPDATE.md) | comment-ready update for #5959 (not posted) |
 | [`VERIFIED_FACTS.md`](VERIFIED_FACTS.md) | verified toolchain and P2996 facts — do not re-derive |
 | this file | commands, upstream plan, history |
 
@@ -36,6 +46,13 @@ g++-16 -std=c++26 -freflection -Isingle_include -Iinclude -o /tmp/rfs2 \
 # negative compile harness and documentation check
 GXX=g++-16 bash tests/static-reflection/compile_fail.sh
 GXX=g++-16 bash tests/static-reflection/check_docs_examples.sh
+
+# opt-in comparison: runtime fixtures (split + single_include), precedence,
+# ODR TUs and both negative harnesses
+GXX=g++-16 bash tests/static-reflection/optin_matrix.sh
+
+# namespace negative harness alone
+GXX=g++-16 bash tests/static-reflection/namespace_compile_fail.sh
 
 # doctest target
 cmake -S . -B build-test -DCMAKE_CXX_COMPILER=g++-16 \
@@ -82,6 +99,13 @@ maintainer's reply in
   so any definition enables it; defining it without P2996 is a `#error`, never a
   silent no-op;
 - namespace: `nlohmann`, as for the rest of the public API.
+
+**This experiment branch does not change that upstream PR 1 surface.** The
+namespace header and the comparison are branch-local evidence for the question
+the maintainer asked in #5384; if `enable<T>` is chosen as the primary route,
+the annotation header and the namespace header can be merged or PR 1 can be
+revised before upstreaming. See
+[`OPT_IN_COMPARISON.md`](OPT_IN_COMPARISON.md) §3 for the recommendation.
 
 ## History
 

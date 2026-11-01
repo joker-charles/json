@@ -11,6 +11,12 @@
     GCC 16 is currently the only implementation, so treat the API as unstable
     until a second one lands.
 
+    The opt-in surface itself is under evaluation: this page documents the
+    per-type annotation prototype, while the reflection-namespace routes
+    (`enable<T>` / `using`) are compared in the branch's
+    `docs/static-reflection/OPT_IN_COMPARISON.md`. The annotation API shown
+    here is the one proposed in issue #5959 until that comparison is settled.
+
 ## Opt-in: define the macro, include the header, annotate the type
 
 ```cpp
