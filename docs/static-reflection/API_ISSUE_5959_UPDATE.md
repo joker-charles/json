@@ -2,9 +2,9 @@
 
 Following your reply in #5384, I built the three opt-in routes on the same
 public-API-only core (no core-header changes, no private `json_value`
-reflection) and compared them. The code, fixtures and full result table are in
-my local `reflection-opt-in-compare` experiment branch; I can push/link it if
-useful. The summary below is the proposed direction.
+reflection) and compared them. The code, fixtures and full result table are on the
+[`reflection-opt-in-compare`](https://github.com/joker-charles/json/tree/reflection-opt-in-compare) experiment branch. The summary below is
+the proposed direction.
 
 ### What was compared
 
