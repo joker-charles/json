@@ -146,6 +146,77 @@ struct member_from_json<BasicJsonType, T, member,
                                .template get<typename [:std::meta::type_of(member):]>())>>
     : std::true_type {};
 
+// The serialization core, shared by every opt-in front-end (annotation,
+// reflection-namespace `enable<T>`, reflection-namespace `using`). It is
+// deliberately independent of how the front-end found the type: both
+// directions build/read values only through the public basic_json interface.
+template<typename BasicJsonType, typename T>
+void to_object(BasicJsonType& j, const T& value)
+{
+    j = BasicJsonType::object();
+    template for (constexpr auto member : std::define_static_array(
+                      std::meta::nonstatic_data_members_of(
+                          ^^T, std::meta::access_context::unprivileged())))
+    {
+        using member_type = typename [:std::meta::type_of(member):];
+
+        if constexpr (std::meta::has_identifier(member))
+        {
+            const auto key = std::string(std::meta::identifier_of(member));
+            if constexpr (member_to_json<BasicJsonType, T, member>::value)
+            {
+                j[key] = value.[:member:];
+            }
+            else
+            {
+                static_assert(
+                    dependent_false<member_type>,
+                    "json_serializable member is not JSON-serializable; "
+                    "provide ADL to_json() or annotate the member type");
+            }
+        }
+        else
+        {
+            static_assert(
+                dependent_false<member_type>,
+                "json_serializable does not support anonymous members");
+        }
+    }
+}
+
+template<typename BasicJsonType, typename T>
+void from_object(const BasicJsonType& j, T& value)
+{
+    template for (constexpr auto member : std::define_static_array(
+                      std::meta::nonstatic_data_members_of(
+                          ^^T, std::meta::access_context::unprivileged())))
+    {
+        using member_type = typename [:std::meta::type_of(member):];
+
+        if constexpr (std::meta::has_identifier(member))
+        {
+            const auto key = std::string(std::meta::identifier_of(member));
+            if constexpr (member_from_json<BasicJsonType, T, member>::value)
+            {
+                value.[:member:] = j.at(key).template get<member_type>();
+            }
+            else
+            {
+                static_assert(
+                    dependent_false<member_type>,
+                    "json_serializable member is not JSON-deserializable; "
+                    "provide ADL from_json() or annotate the member type");
+            }
+        }
+        else
+        {
+            static_assert(
+                dependent_false<member_type>,
+                "json_serializable does not support anonymous members");
+        }
+    }
+}
+
 } // namespace reflection_flat
 } // namespace detail
 
@@ -159,71 +230,14 @@ struct adl_serializer<T, std::enable_if_t<detail::reflection_flat::is_annotated_
     static void to_json(BasicJsonType& j, const T& value)
     {
         detail::reflection_flat::validate_flat_struct<T>();
-
-        j = BasicJsonType::object();
-        template for (constexpr auto member : std::define_static_array(
-                          std::meta::nonstatic_data_members_of(
-                              ^^T, std::meta::access_context::unprivileged())))
-        {
-            using member_type = typename [:std::meta::type_of(member):];
-
-            if constexpr (std::meta::has_identifier(member))
-            {
-                const auto key = std::string(std::meta::identifier_of(member));
-                if constexpr (detail::reflection_flat::member_to_json<BasicJsonType, T, member>::value)
-                {
-                    j[key] = value.[:member:];
-                }
-                else
-                {
-                    static_assert(
-                        detail::reflection_flat::dependent_false<member_type>,
-                        "json_serializable member is not JSON-serializable; "
-                        "provide ADL to_json() or annotate the member type");
-                }
-            }
-            else
-            {
-                static_assert(
-                    detail::reflection_flat::dependent_false<member_type>,
-                    "json_serializable does not support anonymous members");
-            }
-        }
+        detail::reflection_flat::to_object(j, value);
     }
 
     template<typename BasicJsonType>
     static void from_json(const BasicJsonType& j, T& value)
     {
         detail::reflection_flat::validate_flat_struct<T>();
-
-        template for (constexpr auto member : std::define_static_array(
-                          std::meta::nonstatic_data_members_of(
-                              ^^T, std::meta::access_context::unprivileged())))
-        {
-            using member_type = typename [:std::meta::type_of(member):];
-
-            if constexpr (std::meta::has_identifier(member))
-            {
-                const auto key = std::string(std::meta::identifier_of(member));
-                if constexpr (detail::reflection_flat::member_from_json<BasicJsonType, T, member>::value)
-                {
-                    value.[:member:] = j.at(key).template get<member_type>();
-                }
-                else
-                {
-                    static_assert(
-                        detail::reflection_flat::dependent_false<member_type>,
-                        "json_serializable member is not JSON-deserializable; "
-                        "provide ADL from_json() or annotate the member type");
-                }
-            }
-            else
-            {
-                static_assert(
-                    detail::reflection_flat::dependent_false<member_type>,
-                    "json_serializable does not support anonymous members");
-            }
-        }
+        detail::reflection_flat::from_object(j, value);
     }
 };
 
