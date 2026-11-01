@@ -53,10 +53,13 @@ auto p = j.get<point>();             // round-trip
 | member with ADL `to_json`/`from_json`, or a nested annotated type | normal library path |
 | member that is a library type (`std::string`, `std::vector<T>`, `std::array<T,N>`, maps, pairs, …) | normal library path |
 | named bit-field | supported through the public read/assign path |
+| non-default-constructible type | `from_json(j, existing_value)` works; `json.get<T>()` keeps the library's default-constructibility rule |
+| standalone polymorphic type (no base) | data members only; the dynamic type is not part of the format |
 
 Flat structs only: direct public non-static data members. Base classes are not
 flattened, and unannotated nested structs are not reflected — annotate the
-element type instead.
+element type instead. Unnamed bit-fields are not subobjects and are not
+emitted.
 
 ## Rejected, with an actionable diagnostic
 
@@ -66,6 +69,8 @@ element type instead.
 | any base class (public/protected/private/virtual) | `… does not support base classes` |
 | private/protected data member | `… requires all non-static data members to be public` |
 | anonymous member (no identifier) | `… does not support anonymous members` |
+| reference data member | `… does not support reference members; use a value member or a custom serializer` |
+| const data member | `… does not support const data members; use a non-const member or a custom serializer` |
 | member type not serializable | `… member is not JSON-serializable; provide ADL to_json() or annotate the member type` |
 | member type not deserializable | `… member is not JSON-deserializable; provide ADL from_json() or annotate the member type` |
 
@@ -104,10 +109,14 @@ internals; annotation detection uses only query-domain reflection
 - `to_json` always produces an object; keys are member identifiers; ordering is
   the normal `object_t` ordering.
 - `from_json` uses `at`: missing key → `out_of_range` (403), non-object JSON →
-  `type_error` (304), extra keys ignored.
+  `type_error` (304), extra keys ignored. This also means a missing key for an
+  `std::optional` member is 403, not `nullopt`; a present `null` still gives
+  `nullopt`. A `null` or array at the top level is 304.
 - No rename/skip/default annotations in this slice; a missing key is an error.
-- `json.get<T>()` requires `T` default-constructible (the library's existing
-  constraint); `from_json(j, existing_value)` does not.
+  The macro family's `_WITH_DEFAULT` behavior is not available in v1.
+- `json.get<T>()` requires `T` default-constructible for a reflected type (the
+  serializer provides the `void from_json(const json&, T&)` form);
+  `from_json(j, existing_value)` does not.
 - Nested members go through `get<Member>()`, so they must be
   default-constructible or provide a returning `from_json`.
 

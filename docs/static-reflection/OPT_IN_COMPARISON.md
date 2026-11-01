@@ -197,6 +197,49 @@ same `detail::reflection_flat::to_object/from_object` core. A three-run `-O0`
 wall-time check was 2.36–2.62 s (A) vs 2.32–2.41 s (B1) — within run-to-run
 noise on this machine; no claim of a systematic difference is made.
 
+### 2.7 Boundary evidence
+
+`tests/static-reflection/boundary_matrix.cpp` and the two negative harnesses
+cover the shared access/type contract:
+
+| Case | Result |
+|---|---|
+| named bit-field | supported, round-trips (`{"x":3,"y":7}`) |
+| unnamed bit-field | not a subobject, not emitted |
+| non-default-constructible | `from_json(existing)` works; `json.get<T>()` keeps the library's default-constructibility rule |
+| standalone polymorphic type (no base) | data members only; dynamic type is not part of the format |
+| private/protected, any base, union, anonymous member | rejected with the existing targeted `static_assert` |
+| reference member | rejected: `does not support reference members; use a value member or a custom serializer` |
+| const data member | rejected: `does not support const data members; use a non-const member or a custom serializer` |
+
+The reference/const guards were added after the experiment showed their
+`from_json` previously failed with a library-internal error
+(`get() cannot be used with reference types`) rather than an actionable
+diagnostic. They apply to all three opt-in routes because the core is shared.
+
+### 2.8 Semantics and migration evidence
+
+`tests/static-reflection/semantics_matrix.cpp` locks the wire contract:
+
+| Input | Reflection | Plain macro |
+|---|---|---|
+| missing scalar / nested key | 403 | 403 |
+| missing `optional` key | **403** | 403 |
+| present `null` for `optional` | `nullopt` | `nullopt` |
+| `null`/wrong scalar type | 302 | 302 |
+| wrong container type | 302 | 302 |
+| top-level array / null | 304 | 304 |
+| extra key | ignored | ignored |
+
+`_WITH_DEFAULT` remains a real gap: missing keys are filled from a default
+object there, while reflection v1 throws 403. `tests/static-reflection/
+migration_matrix.cpp` also shows `WITH_NAMES` renames keys and
+`ONLY_SERIALIZE` omits `from_json`, neither of which reflection v1 can express.
+
+Consequently v1 is a **complement**, not a drop-in replacement; replacement
+would require rename/skip/default/one-way and private/INTRUSIVE-equivalent
+slices first.
+
 ---
 
 ## 3. Recommendation

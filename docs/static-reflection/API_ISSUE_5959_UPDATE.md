@@ -41,10 +41,21 @@ unconstrained mode makes `using` an opt-in by itself.
    and consistently in every TU; a two-TU fixture shows `is_constructible`
    disagreeing when one TU does not see the enable. Annotation travels with the
    type definition and does not have this hazard.
-5. **No codegen cost.** A 40-type `-O2` object is byte-size identical for A and
-   B1 (text 76,921 / data 136 / bss 0), as expected from the shared core.
+5. **Same-core codegen.** A 40-type `-O2` object is byte-size identical for A and
+   B1 (text 76,991 / data 136 / bss 0), as expected from the shared core. This is
+   **not** a claim of zero overhead versus the macro path: the legacy branch
+   already measured that reflection carries a per-type cost; see the branch's
+   evidence appendix.
 6. **Diagnostics.** Enabled types get the same targeted `static_assert` as
-   annotation for union/base/private/unsupported members.
+   annotation for union/base/private/reference/const/unsupported members.
+   Reference and const members are rejected explicitly rather than failing in
+   the library's `get<T&>()` internals.
+7. **Wire contract.** Missing key → 403, non-object/array/null input → 304,
+   extra keys ignored; a missing key for `std::optional` is 403, not `nullopt`;
+   a present `null` still gives `nullopt`.
+8. **Complement, not replacement.** `WITH_NAMES`, `WITH_DEFAULT` and
+   `ONLY_SERIALIZE` have no reflection-v1 equivalent (`migration_matrix.cpp`),
+   so a drop-in replacement would need later slices.
 
 ## Proposal
 
