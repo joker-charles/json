@@ -160,6 +160,13 @@ void to_object(BasicJsonType& j, const T& value)
     {
         using member_type = typename [:std::meta::type_of(member):];
 
+        static_assert(!std::is_reference_v<member_type>,
+                      "json_serializable does not support reference members; "
+                      "use a value member or a custom serializer");
+        static_assert(!std::is_const_v<member_type>,
+                      "json_serializable does not support const data members; "
+                      "use a non-const member or a custom serializer");
+
         if constexpr (std::meta::has_identifier(member))
         {
             const auto key = std::string(std::meta::identifier_of(member));
@@ -192,6 +199,13 @@ void from_object(const BasicJsonType& j, T& value)
                           ^^T, std::meta::access_context::unprivileged())))
     {
         using member_type = typename [:std::meta::type_of(member):];
+
+        static_assert(!std::is_reference_v<member_type>,
+                      "json_serializable does not support reference members; "
+                      "use a value member or a custom serializer");
+        static_assert(!std::is_const_v<member_type>,
+                      "json_serializable does not support const data members; "
+                      "use a non-const member or a custom serializer");
 
         if constexpr (std::meta::has_identifier(member))
         {
